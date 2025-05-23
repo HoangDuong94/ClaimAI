@@ -1,110 +1,75 @@
 sap.ui.define([
-    "sap/ui/core/Fragment",
-    "sap/m/MessageToast",
-    "sap/ui/model/json/JSONModel",
-    "sap/m/Popover", // Popover explizit importieren, falls nicht schon durch Fragment
-    "sap/m/PlacementType" // Für die Platzierung des Popovers
-], function (Fragment, MessageToast, JSONModel, Popover, PlacementType) {
+    "sap/m/MessageToast"
+], function (MessageToast) {
     "use strict";
 
-    var oChatPopover; // Wird jetzt ein Popover sein
-    var oChatModel;
-    var fragmentControllerInstance; // Für die Event-Handler im Fragment
-
-    function initializeChatIfNeeded(pageController, oOpeningControl) { // oOpeningControl ist der Button
-        if (!oChatModel) {
-            oChatModel = new JSONModel({
-                chatHistory: [],
-                userInput: ""
-            });
+    function getFEAppComponent(oController) {
+        // oController ist hier die FE Page Controller Extension
+        if (oController && oController.getOwnerComponent && oController.getOwnerComponent().getAppComponent) {
+            return oController.getOwnerComponent().getAppComponent();
         }
-        pageController._view.setModel(oChatModel, "chat");
+        console.error("Could not get FE AppComponent from controller", oController);
+        return null;
+    }
 
-        if (!oChatPopover) {
-            fragmentControllerInstance = {
-                _pageController: pageController,
-                _openingControl: oOpeningControl, // Merken für späteres Schließen, falls nötig
-
-                // Keine explizite Schließen-Aktion vom Popover-Inhalt, da Klick außerhalb schließt
-                // Aber wir behalten die Send-Logik
-                onSendChatMessageInPopover: function () { // Umbenannt zur Klarheit
-                    var sUserInput = oChatModel.getProperty("/userInput");
-                    if (!sUserInput || !sUserInput.trim()) {
-                        MessageToast.show("Please enter a message.");
-                        return;
-                    }
-                    var aHistory = oChatModel.getProperty("/chatHistory");
-                    aHistory.push({ type: "user", text: sUserInput });
-                    oChatModel.setProperty("/chatHistory", aHistory);
-                    oChatModel.setProperty("/userInput", "");
-
-                    var oExtensionAPI = this._pageController.getExtensionAPI();
-                    
-                    aHistory.push({ type: "assistant", text: "Thinking..." });
-                    oChatModel.setProperty("/chatHistory", aHistory);
+    // Diese Funktion wird aufgerufen, wenn die Extension initialisiert wird
+    // oder bevor die AI-Funktion das erste Mal gebraucht wird.
+    function ensureAISendFunctionRegistered(oPageController) {
+        var oFEAppComponent = getFEAppComponent(oPageController);
+        if (oFEAppComponent && oFEAppComponent.registerAISendFunction && !oFEAppComponent._aiSendFunctionFromCustomAction) { // Nur einmal registrieren
+            oFEAppComponent.registerAISendFunction(
+                // Diese Funktion wird von der Component aufgerufen und hat den korrekten Scope
+                function(sPrompt, oChatModelToUpdate) { // this ist hier die oPageController Instanz
+                    var oExtensionAPI = this.getExtensionAPI(); // 'this' ist hier die CustomActions Instanz
+                    var aHistory = oChatModelToUpdate.getProperty("/chatHistory"); // "Thinking..." ist schon drin
 
                     oExtensionAPI.invokeAction("StammtischService.callClaude", {
-                        parameters: { prompt: sUserInput }
+                        parameters: { prompt: sPrompt }
                     }).then(function (oResultContext) {
                         var resultData = oResultContext.getObject();
                         var sResponse = (resultData && resultData.response) ? resultData.response : "No valid response.";
-                        aHistory.pop();
+                        aHistory.pop(); // "Thinking..." entfernen
                         aHistory.push({ type: "assistant", text: sResponse });
-                        oChatModel.setProperty("/chatHistory", aHistory);
-                    }).catch(function (oError) {
-                        console.error("AI Action Error:", oError);
-                        MessageToast.show("Error calling AI: " + (oError.message || "Unknown error"));
-                        aHistory.pop();
-                        aHistory.push({ type: "assistant", text: "Error: Could not get response." });
-                        oChatModel.setProperty("/chatHistory", aHistory);
-                    });
-                },
-                // Diese Methode wird vom Popover selbst aufgerufen, wenn er geschlossen wird
-                // (z.B. durch Klick außerhalb)
-                afterPopoverClose: function() {
-                    console.log("Chat Popover closed");
-                    // Hier könnte Aufräumlogik stehen, falls nötig
-                }
-            };
-
-            return Fragment.load({
-                id: pageController._view.getId() + "--aiChatPopover", // Eindeutige ID
-                name: "sap.stammtisch.ui.app.ext.AIChatPopover",   // NEUER FRAGMENTNAME
-                controller: fragmentControllerInstance
-            }).then(function (oLoadedPopover) {
-                oChatPopover = oLoadedPopover;
-                pageController._view.addDependent(oChatPopover);
-                // Event-Handler für das Schließen des Popovers registrieren
-                oChatPopover.attachAfterClose(fragmentControllerInstance.afterPopoverClose, fragmentControllerInstance);
-                return oChatPopover;
-            });
+                        oChatModelToUpdate.setProperty("/chatHistory", aHistory);
+                        oChatModelToUpdate.refresh(true);
+                        if (window.triggerChatScroll) window.triggerChatScroll();
+                    }.bind(this)).catch(function (oError) {
+                        console.error("AI Action Error from CustomActions:", oError);
+                        aHistory.pop(); // "Thinking..." entfernen
+                        aHistory.push({ type: "assistant", text: "Error: " + (oError.message || "Unknown AI error") });
+                        oChatModelToUpdate.setProperty("/chatHistory", aHistory);
+                        oChatModelToUpdate.refresh(true);
+                        if (window.triggerChatScroll) window.triggerChatScroll();
+                    }.bind(this));
+                }.bind(oPageController) // Wichtig: 'this' der äußeren Funktion (oPageController) binden!
+            );
+            console.log("AI Send function registered from CustomActions.");
         }
-        return Promise.resolve(oChatPopover);
     }
 
+
     return {
-        onOpenAIChatDialog: function (oEvent) { // oEvent ist hier das Button-Press-Event
-            var pageController = this; // 'this' ist der FE Page Controller
-            var oButton = oEvent.getSource(); // Der Button, der geklickt wurde
-
-            console.log("onOpenAIChatDialog (for Popover) called. Page Controller:", pageController);
-
-            initializeChatIfNeeded(pageController, oButton).then(function(popoverInstance){
-                if (popoverInstance) {
-                    popoverInstance.setModel(oChatModel, "chat");
-                    if (popoverInstance.isOpen()) {
-                        popoverInstance.close();
-                    } else {
-                        // Popover relativ zum geklickten Button öffnen
-                        popoverInstance.openBy(oButton);
+        // Wird vom Button im Manifest aufgerufen
+        onToggleChatSidePanel: function (/*oEvent*/) { // 'this' ist der FE Page Controller (Extension)
+            var oFEAppComponent = getFEAppComponent(this);
+            if (oFEAppComponent) {
+                var oDynamicSideContent = oFEAppComponent.getDynamicSideContent();
+                if (oDynamicSideContent) {
+                    oDynamicSideContent.toggleSideContent();
+                    // Sicherstellen, dass die AI-Sende-Funktion registriert ist,
+                    // falls das Panel geöffnet wird und Chat-Funktionalität benötigt wird.
+                    if (oDynamicSideContent.getSideContentVisible()) {
+                         ensureAISendFunctionRegistered(this);
+                         if (window.triggerChatScroll) window.triggerChatScroll(); // Ggf. zum Boden scrollen
                     }
                 } else {
-                    MessageToast.show("Could not load chat popover.");
+                    MessageToast.show("SidePanel control not found via FE Component.");
                 }
-            }).catch(function(err){
-                MessageToast.show("Error initializing chat: " + err.message);
-                console.error("Error initializing chat:", err);
-            });
+            } else {
+                MessageToast.show("FE Application Component not found.");
+            }
         }
+
+        // Die onSendChatMessageInSidePanel ist nicht mehr hier, sondern im oChatFragmentController in main.js
     };
 });

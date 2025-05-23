@@ -6,8 +6,10 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Stammtisch Verwaltung</title>
     <style>
-        html, body, body > div, #container, #container-uiarea {
+        html, body, #appHost { /* Wichtig: appHost soll die volle Höhe einnehmen */
             height: 100%;
+            margin: 0;
+            padding: 0;
         }
     </style>
     <script
@@ -17,19 +19,14 @@
         data-sap-ui-resourceroots='{
             "sap.stammtisch.ui.app": "./"
         }'
-        data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"
+        data-sap-ui-oninit="module:sap/stammtisch/ui/app/main"
         data-sap-ui-compatVersion="edge"
         data-sap-ui-async="true"
         data-sap-ui-frameOptions="trusted"
     ></script>
 </head>
-<body class="sapUiBody sapUiSizeCompact" id="content">
-    <div
-        data-sap-ui-component
-        data-name="sap.stammtisch.ui.app"
-        data-id="container"
-        data-settings='{"id" : "sap.stammtisch.ui.app"}'
-        data-handle-validation="true"
-    ></div>
+<body class="sapUiBody sapUiSizeCompact">
+    <!-- Platzhalter für unsere App-Struktur, die von main.js gefüllt wird -->
+    <div id="appHost"></div>
 </body>
 </html>

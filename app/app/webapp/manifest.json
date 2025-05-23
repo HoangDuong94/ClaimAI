@@ -157,7 +157,7 @@
               },
               "actions": {
                 "AIChatActionStammtischOP": {
-                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onToggleChatSidePanel",
                   "text": "{{btnTextAIChat}}",
                   "visible": true,
                   "enabled": true,
