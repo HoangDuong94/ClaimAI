@@ -1,9 +1,189 @@
 <core:FragmentDefinition
     xmlns="sap.m"
     xmlns:core="sap.ui.core"
-    xmlns:l="sap.ui.layout">
-    <Text
-        id="chatSidePanelContent"
-        text="Test"
-        class="sapUiSmallMargin" />
+    xmlns:l="sap.ui.layout"
+    xmlns:f="sap.f">
+   <VBox height="100%" class="modernChatContainer">
+        
+        <!-- Modern Chat Header -->
+        <HBox class="modernChatHeader" justifyContent="SpaceBetween" alignItems="Center">
+            <HBox alignItems="Center">
+                <core:Icon src="sap-icon://robot" class="modernHeaderIcon"/>
+                <VBox class="sapUiTinyMarginBegin">
+                    <Title text="AI Assistant" level="H5" class="modernHeaderTitle"/>
+                    <Text text="Online" class="modernHeaderStatus"/>
+                </VBox>
+            </HBox>
+            <HBox>
+                <Button 
+                    icon="sap-icon://refresh" 
+                    type="Transparent" 
+                    tooltip="New Chat"
+                    press="onClearChatHistory"
+                    class="modernHeaderButton"/>
+                <Button 
+                    icon="sap-icon://menu2" 
+                    type="Transparent" 
+                    tooltip="Options"
+                    class="modernHeaderButton"/>
+            </HBox>
+        </HBox>
+
+        <!-- Modern Chat Messages Area -->
+        <ScrollContainer 
+            id="chatHistoryScrollContainerInSidePanel"
+            height="100%" 
+            vertical="true" 
+            horizontal="false"
+            class="modernChatMessagesContainer">
+            
+            <VBox class="modernMessagesWrapper">
+                <!-- Chat Messages List -->
+                <List 
+                    id="chatMessagesList"
+                    items="{chat>/chatHistory}"
+                    showSeparators="None"
+                    mode="None"
+                    class="modernMessagesList">
+                    
+                    <CustomListItem class="modernMessageItem">
+                        <content>
+                            <!-- User Message -->
+                            <VBox visible="{= ${chat>type} === 'user' }" class="modernUserMessageContainer">
+                                <HBox justifyContent="End" class="modernMessageRow">
+                                    <VBox class="modernUserMessage">
+                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernUserText"/>
+                                        <Text text="{chat>timestamp}" class="modernTimestamp modernUserTimestamp"/>
+                                    </VBox>
+                                    <Avatar 
+                                        src="" 
+                                        initials="You" 
+                                        displaySize="XS" 
+                                        backgroundColor="Accent6"
+                                        class="modernUserAvatar"/>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- Assistant Message -->
+                            <VBox visible="{= ${chat>type} === 'assistant' }" class="modernAssistantMessageContainer">
+                                <HBox justifyContent="Start" class="modernMessageRow">
+                                    <Avatar 
+                                        src="" 
+                                        initials="AI" 
+                                        displaySize="XS" 
+                                        backgroundColor="Accent1"
+                                        class="modernAssistantAvatar"/>
+                                    <VBox class="modernAssistantMessage">
+                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernAssistantText"/>
+                                        <HBox justifyContent="SpaceBetween" alignItems="Center" class="modernMessageFooter">
+                                            <Text text="{chat>timestamp}" class="modernTimestamp modernAssistantTimestamp"/>
+                                            <HBox class="modernMessageActions" visible="{= ${chat>text} !== 'Thinking...' }">
+                                                <Button 
+                                                    icon="sap-icon://copy" 
+                                                    type="Transparent" 
+                                                    tooltip="Copy"
+                                                    press="onCopyMessage"
+                                                    class="modernActionButton"/>
+                                                <Button 
+                                                    icon="sap-icon://thumb-up" 
+                                                    type="Transparent" 
+                                                    tooltip="Like"
+                                                    class="modernActionButton"/>
+                                                <Button 
+                                                    icon="sap-icon://thumb-down" 
+                                                    type="Transparent" 
+                                                    tooltip="Dislike"
+                                                    class="modernActionButton"/>
+                                            </HBox>
+                                        </HBox>
+                                    </VBox>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- System Message -->
+                            <VBox visible="{= ${chat>type} === 'system' }" class="modernSystemMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <VBox class="modernSystemMessage">
+                                        <Text text="{chat>text}" class="modernSystemText"/>
+                                    </VBox>
+                                </HBox>
+                            </VBox>
+                        </content>
+                    </CustomListItem>
+                </List>
+                
+                <!-- Modern Typing Indicator -->
+                <HBox 
+                    visible="{chat>/isTyping}" 
+                    justifyContent="Start" 
+                    class="modernTypingContainer modernMessageRow">
+                    <Avatar 
+                        src="" 
+                        initials="AI" 
+                        displaySize="XS" 
+                        backgroundColor="Accent1"
+                        class="modernAssistantAvatar"/>
+                    <VBox class="modernTypingMessage">
+                        <HBox class="modernTypingDots">
+                            <core:HTML content="
+                                &lt;div class='modernTypingIndicator'&gt;
+                                    &lt;span&gt;&lt;/span&gt;
+                                    &lt;span&gt;&lt;/span&gt;
+                                    &lt;span&gt;&lt;/span&gt;
+                                &lt;/div&gt;
+                            "/>
+                        </HBox>
+                    </VBox>
+                </HBox>
+            </VBox>
+        </ScrollContainer>
+
+        <!-- Modern Input Area -->
+        <VBox class="modernInputContainer">
+            <!-- Input Row -->
+            <HBox class="modernInputRow" alignItems="End">
+                <Button 
+                    icon="sap-icon://attachment" 
+                    type="Transparent" 
+                    tooltip="Attach files"
+                    press="onAttachFile"
+                    class="modernInputActionButton"
+                    enabled="false"/>
+                
+                <VBox class="modernInputWrapper" width="100%">
+                    <TextArea
+                        id="chatInputField"
+                        value="{chat>/userInput}"
+                        placeholder="Message AI Assistant..."
+                        rows="1"
+                        maxLength="4000"
+                        width="100%"
+                        growing="true"
+                        growingMaxLines="6"
+                        submit="onSendChatMessageInSidePanel"
+                        class="modernInputField"/>
+                </VBox>
+                
+                <Button
+                    id="sendButton"
+                    icon="{= ${chat>/userInput}.length > 0 ? 'sap-icon://paper-plane' : 'sap-icon://microphone' }"
+                    type="Transparent"
+                    press="{= ${chat>/userInput}.length > 0 ? 'onSendChatMessageInSidePanel' : 'onVoiceInput' }"
+                    enabled="true"
+                    class="modernSendButton"/>
+            </HBox>
+            
+            <!-- Input Footer -->
+            <HBox justifyContent="SpaceBetween" class="modernInputFooter">
+                <Text text="{= ${chat>/userInput}.length + ' / 4000'}" class="modernCharCounter"/>
+                <HBox alignItems="Center">
+                    <Text text="{chat>/statusMessage}" class="modernStatusMessage"/>
+                    <core:Icon 
+                        src="sap-icon://lightning" 
+                        class="modernPowerIcon" 
+                        tooltip="Powered by AI"/>
+                </HBox>
+            </HBox>
+        </VBox>
+    </VBox>
 </core:FragmentDefinition>

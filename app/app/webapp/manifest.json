@@ -78,7 +78,11 @@
       }
     },
     "resources": {
-      "css": []
+      "css": [
+        {
+          "uri": "css/customStyles.css"
+        }
+      ]
     },
     "routing": {
       "config": {},
@@ -126,7 +130,7 @@
                       "text": "{{btnTextAIChat}}",
                       "visible": true,
                       "enabled": true,
-                      "requiresSelection": false 
+                      "requiresSelection": false
                     }
                   }
                 }
@@ -135,8 +139,8 @@
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         },
@@ -161,15 +165,15 @@
                   "text": "{{btnTextAIChat}}",
                   "visible": true,
                   "enabled": true,
-                  "requiresSelection": false 
+                  "requiresSelection": false
                 }
               }
             }
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         },
@@ -187,15 +191,15 @@
                   "text": "{{btnTextAIChat}}",
                   "visible": true,
                   "enabled": true,
-                  "requiresSelection": false 
+                  "requiresSelection": false
                 }
               }
             }
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         }
