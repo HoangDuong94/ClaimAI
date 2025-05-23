@@ -123,15 +123,6 @@
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable"
-                  },
-                  "actions": {
-                    "AIChatAction": {
-                      "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
-                      "text": "{{btnTextAIChat}}",
-                      "visible": true,
-                      "enabled": true,
-                      "requiresSelection": false
-                    }
                   }
                 }
               }

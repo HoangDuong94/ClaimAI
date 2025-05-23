@@ -45,10 +45,12 @@ app/package.json
 app/README.md
 app/ui5.yaml
 app/webapp/Component.js
-app/webapp/ext/AIChatPopover.fragment.xml
+app/webapp/css/customStyles.css
+app/webapp/ext/ChatSidePanelContent.fragment.xml
 app/webapp/ext/CustomActions.js
 app/webapp/i18n/i18n.properties
 app/webapp/index.html
+app/webapp/main.js
 app/webapp/manifest.json
 app/webapp/test/flpSandbox.html
 app/webapp/test/integration/FirstJourney.js
@@ -238,197 +240,855 @@ server:
 </file>
 
 <file path="app/webapp/Component.js">
-sap.ui.define(
-    ["sap/fe/core/AppComponent"],
-    function (Component) {
-        "use strict";
+sap.ui.define([
+    "sap/fe/core/AppComponent"
+    // JSONModel wird nicht mehr hier direkt benötigt, kommt von außen
+], function (AppComponent) {
+    "use strict";
 
-        return Component.extend("sap.stammtisch.ui.app.Component", {
-            metadata: {
-                manifest: "json"
+    return AppComponent.extend("sap.stammtisch.ui.app.Component", {
+        metadata: {
+            manifest: "json"
+        },
+
+        _oChatModelExternal: null,
+        _oDynamicSideContentExternal: null,
+        _aiSendFunctionFromCustomAction: null, // Für den AI Call aus CustomAction
+
+        init: function () {
+            // Standard FE Initialisierung
+            AppComponent.prototype.init.apply(this, arguments);
+            console.log("Fiori Elements Component 'sap.stammtisch.ui.app' initialized.");
+        },
+
+        // Wird von main.js aufgerufen
+        setExternalDependencies: function(oChatModel, oDynamicSideContent) {
+            this._oChatModelExternal = oChatModel;
+            this._oDynamicSideContentExternal = oDynamicSideContent;
+        },
+
+        getChatModel: function() {
+            return this._oChatModelExternal;
+        },
+
+        getDynamicSideContent: function() {
+            return this._oDynamicSideContentExternal;
+        },
+
+        // Wird von CustomActions.js aufgerufen, um die Sende-Logik zu registrieren
+        registerAISendFunction: function(fnSend) {
+            this._aiSendFunctionFromCustomAction = fnSend;
+        },
+
+        // Wird von main.js (ChatFragmentController) aufgerufen
+        invokeAIActionOnCurrentPage: function(sPrompt, oChatModelToUpdate) {
+            if (this._aiSendFunctionFromCustomAction) {
+                // Ruft die in CustomActions.js definierte Funktion auf,
+                // die den korrekten `this`-Kontext (ExtensionAPI) hat.
+                this._aiSendFunctionFromCustomAction(sPrompt, oChatModelToUpdate);
+            } else {
+                console.error("AI Send function from CustomAction not registered on FE component.");
+                var aHistory = oChatModelToUpdate.getProperty("/chatHistory");
+                aHistory.pop(); // "Thinking..." entfernen
+                aHistory.push({ type: "assistant", text: "Error: AI Call handler not registered." });
+                oChatModelToUpdate.setProperty("/chatHistory", aHistory);
+                oChatModelToUpdate.refresh(true);
+                if (window.triggerChatScroll) window.triggerChatScroll();
             }
-        });
-    }
-);
+        }
+    });
+});
 </file>
 
-<file path="app/webapp/ext/AIChatPopover.fragment.xml">
+<file path="app/webapp/css/customStyles.css">
+/* SAP Horizon Theme Chat Interface - Vereinfacht */
+
+/* SAP Horizon Design Tokens */
+:root {
+  /* Primary Colors */
+  --sapHorizon-Blue-Primary: #0070F2;
+  --sapHorizon-Blue-Secondary: #E7F3FF;
+  --sapHorizon-Blue-Accent: #004B9E;
+  
+  /* Neutral Colors */
+  --sapHorizon-Neutral-100: #FFFFFF;
+  --sapHorizon-Neutral-200: #F5F6F7;
+  --sapHorizon-Neutral-300: #EAECEF;
+  --sapHorizon-Neutral-400: #D5D9DD;
+  --sapHorizon-Neutral-500: #8396A8;
+  --sapHorizon-Neutral-600: #556B82;
+  --sapHorizon-Neutral-700: #354A5F;
+  --sapHorizon-Neutral-800: #1D2D3E;
+  
+  /* Semantic Colors */
+  --sapHorizon-Success: #30914C;
+  --sapHorizon-Warning: #E76B00;
+  --sapHorizon-Error: #BB0000;
+  --sapHorizon-Information: #0070F2;
+  
+  /* SAP Horizon Spacing */
+  --sapHorizon-Space-Tiny: 0.25rem;
+  --sapHorizon-Space-Small: 0.5rem;
+  --sapHorizon-Space-Medium: 1rem;
+  --sapHorizon-Space-Large: 1.5rem;
+  --sapHorizon-Space-XLarge: 2rem;
+  
+  /* SAP Horizon Typography */
+  --sapHorizon-FontFamily: "72", "72full", Arial, Helvetica, sans-serif;
+  --sapHorizon-FontSize-Small: 0.75rem;
+  --sapHorizon-FontSize-Medium: 0.875rem;
+  --sapHorizon-FontSize-Large: 1rem;
+  --sapHorizon-FontSize-XLarge: 1.25rem;
+  
+  /* SAP Horizon Shadows */
+  --sapHorizon-Shadow-Level1: 0 0.125rem 0.5rem 0 rgba(29, 45, 62, 0.1);
+  --sapHorizon-Shadow-Level2: 0 0.25rem 1rem 0 rgba(29, 45, 62, 0.15);
+  --sapHorizon-Shadow-Level3: 0 0.5rem 1.5rem 0 rgba(29, 45, 62, 0.2);
+  
+  /* SAP Horizon Border Radius */
+  --sapHorizon-BorderRadius-Small: 0.25rem;
+  --sapHorizon-BorderRadius-Medium: 0.5rem;
+  --sapHorizon-BorderRadius-Large: 0.75rem;
+}
+
+/* Container Styles */
+.modernChatContainer {
+  background: var(--sapHorizon-Neutral-200);
+  font-family: var(--sapHorizon-FontFamily);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header Styles */
+.modernChatHeader {
+  background: var(--sapHorizon-Neutral-100);
+  border-bottom: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large) var(--sapHorizon-Space-XLarge);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.modernHeaderIcon {
+  font-size: 1.5rem;
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+.modernHeaderTitle {
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-800);
+  margin: 0;
+  line-height: 1.25;
+  font-size: var(--sapHorizon-FontSize-Large);
+}
+
+.modernHeaderStatus {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Success);
+  font-weight: 500;
+}
+
+.modernHeaderButton {
+  min-width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  margin-left: var(--sapHorizon-Space-Tiny);
+  color: var(--sapHorizon-Neutral-600);
+}
+
+.modernHeaderButton:hover {
+  background-color: var(--sapHorizon-Blue-Secondary);
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+/* Messages Container */
+.modernChatMessagesContainer {
+  flex: 1;
+  background: transparent;
+}
+
+.modernMessagesWrapper {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: var(--sapHorizon-Space-XLarge);
+  min-height: 100%;
+}
+
+.modernMessagesList {
+  background: transparent;
+}
+
+.modernMessageItem {
+  background: transparent;
+  margin-bottom: var(--sapHorizon-Space-Large);
+  border: none;
+}
+
+.modernMessageRow {
+  align-items: flex-start;
+  gap: var(--sapHorizon-Space-Medium);
+}
+
+/* User Messages */
+.modernUserMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernUserMessage {
+  background: var(--sapHorizon-Blue-Primary);
+  color: var(--sapHorizon-Neutral-100);
+  padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small) var(--sapHorizon-BorderRadius-Large);
+  max-width: 70%;
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernUserMessage:hover {
+  box-shadow: var(--sapHorizon-Shadow-Level2);
+}
+
+.modernUserText {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.5;
+  color: var(--sapHorizon-Neutral-100) !important;
+  word-wrap: break-word;
+}
+
+.modernUserTimestamp {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: rgba(255, 255, 255, 0.8);
+  margin-top: var(--sapHorizon-Space-Tiny);
+  text-align: right;
+}
+
+.modernUserAvatar {
+  margin-top: 2px;
+}
+
+/* Assistant Messages */
+.modernAssistantMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernAssistantMessage {
+  background: var(--sapHorizon-Neutral-100);
+  border: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small);
+  max-width: 75%;
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+  position: relative;
+}
+
+.modernAssistantMessage:hover {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: var(--sapHorizon-Shadow-Level2);
+}
+
+.modernAssistantMessage:hover .modernMessageActions {
+  opacity: 1;
+}
+
+.modernAssistantText {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.6;
+  color: var(--sapHorizon-Neutral-800) !important;
+  word-wrap: break-word;
+}
+
+.modernMessageFooter {
+  margin-top: var(--sapHorizon-Space-Small);
+}
+
+.modernAssistantTimestamp {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-500);
+}
+
+.modernMessageActions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  gap: var(--sapHorizon-Space-Tiny);
+}
+
+.modernActionButton {
+  min-width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-600);
+}
+
+.modernActionButton:hover {
+  background-color: var(--sapHorizon-Blue-Secondary);
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+.modernAssistantAvatar {
+  margin-top: 2px;
+}
+
+/* System Messages */
+.modernSystemMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Medium);
+}
+
+.modernSystemMessage {
+  background: var(--sapHorizon-Blue-Secondary);
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  max-width: 80%;
+}
+
+.modernSystemText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Blue-Accent);
+  text-align: center;
+  font-style: italic;
+}
+
+/* Typing Indicator */
+.modernTypingContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernTypingMessage {
+  background: var(--sapHorizon-Neutral-100);
+  border: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernTypingIndicator {
+  display: flex;
+  align-items: center;
+  gap: var(--sapHorizon-Space-Tiny);
+}
+
+.modernTypingDot {
+  width: 0.5rem !important;
+  height: 0.5rem !important;
+  border-radius: 50%;
+  background-color: var(--sapHorizon-Blue-Primary);
+  font-size: 0 !important; /* Hide any icon content */
+  min-width: 0.5rem;
+  min-height: 0.5rem;
+}
+
+.modernTypingDot1 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+  animation-delay: -0.32s;
+}
+
+.modernTypingDot2 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+  animation-delay: -0.16s;
+}
+
+.modernTypingDot3 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+}
+
+@keyframes horizonTypingBounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.modernTypingText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-600);
+  margin-left: var(--sapHorizon-Space-Small);
+  font-style: italic;
+}
+
+/* Input Area */
+.modernInputContainer {
+  background: var(--sapHorizon-Neutral-100);
+  border-top: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large) var(--sapHorizon-Space-XLarge);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernInputRow {
+  gap: var(--sapHorizon-Space-Medium);
+  align-items: flex-end;
+}
+
+.modernInputWrapper {
+  flex: 1;
+}
+
+.modernInputField {
+  border: 1px solid var(--sapHorizon-Neutral-400);
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  background: var(--sapHorizon-Neutral-100);
+  transition: all 0.2s ease;
+  resize: none;
+}
+
+.modernInputField:focus {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: 0 0 0 2px var(--sapHorizon-Blue-Secondary);
+}
+
+.modernInputField:focus-within {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: 0 0 0 2px var(--sapHorizon-Blue-Secondary);
+}
+
+.modernInputField textarea {
+  padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large) !important;
+  border: none !important;
+  outline: none !important;
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.5;
+  font-family: var(--sapHorizon-FontFamily);
+  color: var(--sapHorizon-Neutral-800);
+}
+
+.modernSendButton {
+  min-width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  background: var(--sapHorizon-Blue-Primary);
+  color: var(--sapHorizon-Neutral-100);
+  transition: all 0.2s ease;
+}
+
+.modernSendButton:hover {
+  background: var(--sapHorizon-Blue-Accent);
+  transform: scale(1.02);
+}
+
+.modernSendButton:active {
+  transform: scale(0.98);
+}
+
+/* Input Footer - Minimal Design */
+.modernInputFooter {
+  margin-top: var(--sapHorizon-Space-Small);
+  padding: var(--sapHorizon-Space-Tiny) var(--sapHorizon-Space-Small);
+  background: transparent;
+  border: none;
+  min-height: 1.2rem;
+}
+
+.modernCharCounter {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Warning);
+  font-weight: 500;
+  margin-right: var(--sapHorizon-Space-Small);
+}
+
+.modernStatusMessage {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-500);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Scrollbar Styling - SAP Horizon */
+.modernChatMessagesContainer .sapMScrollCont {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sapHorizon-Neutral-400) transparent;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb {
+  background-color: var(--sapHorizon-Neutral-400);
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sapHorizon-Neutral-500);
+}
+
+/* Animations */
+.modernMessageItem {
+  animation: horizonFadeInUp 0.3s ease-out;
+}
+
+@keyframes horizonFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Focus Management for Accessibility */
+.modernHeaderButton:focus,
+.modernActionButton:focus,
+.modernSendButton:focus {
+  outline: 2px solid var(--sapHorizon-Blue-Primary);
+  outline-offset: 2px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .modernMessagesWrapper {
+    padding: var(--sapHorizon-Space-Large);
+  }
+  
+  .modernUserMessage,
+  .modernAssistantMessage {
+    max-width: 85%;
+  }
+  
+  .modernInputContainer {
+    padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  }
+  
+  .modernChatHeader {
+    padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  }
+}
+
+/* Additional SAP Horizon Message Types */
+.modernInfoMessageContainer,
+.modernWarningMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Medium);
+}
+
+.modernInfoMessage {
+  background: var(--sapHorizon-Blue-Secondary);
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  gap: var(--sapHorizon-Space-Small);
+}
+
+.modernInfoIcon {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  color: var(--sapHorizon-Information);
+}
+
+.modernInfoText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Blue-Accent);
+  font-weight: 500;
+}
+
+.modernWarningMessage {
+  background: #FFF4E6;
+  border: 1px solid var(--sapHorizon-Warning);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  gap: var(--sapHorizon-Space-Small);
+}
+
+.modernWarningIcon {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  color: var(--sapHorizon-Warning);
+}
+
+.modernWarningText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: #8B4000;
+  font-weight: 500;
+}
+</file>
+
+<file path="app/webapp/ext/ChatSidePanelContent.fragment.xml">
 <core:FragmentDefinition
     xmlns="sap.m"
     xmlns:core="sap.ui.core"
-    xmlns:l="sap.ui.layout">
-    <Popover
-        id="aiChatPopoverControl"
-        title="AI Chat Assistant"
-        placement="Auto"
-        contentWidth="400px"
-        contentHeight="350px"
-        resizable="true"
-        showHeader="true"> <!-- showHeader=true, damit der Titel angezeigt wird -->
-        <!-- initialFocus="chatInputInPopover" --> <!-- Optional: Fokus auf Eingabefeld setzen -->
-        <content>
-            <VBox fitContainer="true" justifyContent="SpaceBetween" height="100%">
-                <ScrollContainer
-                    height="calc(100% - 60px)"
-                    width="100%"
-                    horizontal="false"
-                    vertical="true"
-                    class="sapUiSmallMarginTopBottom">
-                    <List
-                        id="chatHistoryListInPopover"
-                        items="{chat>/chatHistory}"
-                        showSeparators="None"
-                        class="sapUiSmallMarginBeginEnd">
-                        <CustomListItem>
-                            <HBox class="sapUiSmallMarginBeginEnd sapUiTinyMarginTopBottom"
-                                  justifyContent="{= ${chat>type} === 'user' ? 'End' : 'Start' }">
-                                <VBox>
-                                    <Text text="{chat>text}" class="sapUiSmallMarginBottom"
-                                          wrapping="true"
-                                          width="auto"
-                                          textAlign="{= ${chat>type} === 'user' ? 'End' : 'Start' }" />
-                                    <Label text="{= ${chat>type} === 'user' ? 'You' : 'Assistant' }"
-                                           design="{= ${chat>type} === 'user' ? 'Bold' : 'Standard' }"
-                                           class="sapUiTinyMarginBottom"/>
-                                </VBox>
-                            </HBox>
-                        </CustomListItem>
-                    </List>
-                </ScrollContainer>
-                <Bar>
-                    <contentMiddle>
-                        <Input
-                            id="chatInputInPopover"
-                            value="{chat>/userInput}"
-                            placeholder="Type your message..."
-                            width="100%"
-                            submit=".onSendChatMessageInPopover"/> <!-- Methode im Fragment-Controller -->
-                    </contentMiddle>
-                    <contentRight>
-                        <Button icon="sap-icon://paper-plane" press=".onSendChatMessageInPopover" tooltip="Send"/>
-                    </contentRight>
-                </Bar>
+    xmlns:l="sap.ui.layout"
+    xmlns:f="sap.f">
+    
+    <VBox height="100%" class="modernChatContainer">
+        <!-- SAP Horizon Chat Header -->
+        <HBox class="modernChatHeader" justifyContent="SpaceBetween" alignItems="Center">
+            <HBox alignItems="Center">
+                <core:Icon src="sap-icon://discussion-2" class="modernHeaderIcon"/>
+                <VBox class="sapUiTinyMarginBegin">
+                    <Title text="SAP AI Assistant" level="H5" class="modernHeaderTitle"/>
+                    <Text text="Bereit zu helfen" class="modernHeaderStatus"/>
+                </VBox>
+            </HBox>
+            <HBox>
+                <Button 
+                    icon="sap-icon://restart" 
+                    type="Transparent" 
+                    tooltip="Neuer Chat"
+                    press="onClearChatHistory"
+                    class="modernHeaderButton"
+                    ariaLabel="Neuen Chat starten"/>
+                <Button 
+                    icon="sap-icon://action-settings" 
+                    type="Transparent" 
+                    tooltip="Einstellungen"
+                    class="modernHeaderButton"
+                    ariaLabel="Einstellungen öffnen"/>
+            </HBox>
+        </HBox>
+
+        <!-- Chat Messages Area -->
+        <ScrollContainer 
+            id="chatHistoryScrollContainerInSidePanel"
+            height="100%" 
+            vertical="true" 
+            horizontal="false"
+            class="modernChatMessagesContainer">
+            
+            <VBox class="modernMessagesWrapper">
+                <!-- Chat Messages List -->
+                <List 
+                    id="chatMessagesList"
+                    items="{chat>/chatHistory}"
+                    showSeparators="None"
+                    mode="None"
+                    class="modernMessagesList">
+                    
+                    <CustomListItem class="modernMessageItem">
+                        <content>
+                            <!-- User Message -->
+                            <VBox visible="{= ${chat>type} === 'user' }" class="modernUserMessageContainer">
+                                <HBox justifyContent="End" class="modernMessageRow">
+                                    <VBox class="modernUserMessage">
+                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernUserText"/>
+                                        <Text text="{chat>timestamp}" class="modernTimestamp modernUserTimestamp"/>
+                                    </VBox>
+                                    <Avatar 
+                                        src="" 
+                                        initials="Sie" 
+                                        displaySize="XS" 
+                                        backgroundColor="Accent6"
+                                        imageFitType="Cover"
+                                        class="modernUserAvatar"/>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- Assistant Message -->
+                            <VBox visible="{= ${chat>type} === 'assistant' }" class="modernAssistantMessageContainer">
+                                <HBox justifyContent="Start" class="modernMessageRow">
+                                    <Avatar 
+                                        src="" 
+                                        initials="AI" 
+                                        displaySize="XS" 
+                                        backgroundColor="Accent1"
+                                        imageFitType="Cover"
+                                        class="modernAssistantAvatar"/>
+                                    <VBox class="modernAssistantMessage">
+                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernAssistantText"/>
+                                        <HBox justifyContent="SpaceBetween" alignItems="Center" class="modernMessageFooter">
+                                            <Text text="{chat>timestamp}" class="modernTimestamp modernAssistantTimestamp"/>
+                                            <HBox class="modernMessageActions" visible="{= ${chat>text} !== 'Thinking...' }">
+                                                <Button 
+                                                    icon="sap-icon://copy" 
+                                                    type="Transparent" 
+                                                    tooltip="Kopieren"
+                                                    press="onCopyMessage"
+                                                    class="modernActionButton"
+                                                    ariaLabel="Nachricht kopieren"/>
+                                                <Button 
+                                                    icon="sap-icon://thumb-up" 
+                                                    type="Transparent" 
+                                                    tooltip="Gefällt mir"
+                                                    class="modernActionButton"
+                                                    ariaLabel="Positive Bewertung"/>
+                                                <Button 
+                                                    icon="sap-icon://thumb-down" 
+                                                    type="Transparent" 
+                                                    tooltip="Gefällt mir nicht"
+                                                    class="modernActionButton"
+                                                    ariaLabel="Negative Bewertung"/>
+                                            </HBox>
+                                        </HBox>
+                                    </VBox>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- System Message -->
+                            <VBox visible="{= ${chat>type} === 'system' }" class="modernSystemMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <VBox class="modernSystemMessage">
+                                        <Text text="{chat>text}" class="modernSystemText"/>
+                                    </VBox>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- Info Message -->
+                            <VBox visible="{= ${chat>type} === 'info' }" class="modernInfoMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <HBox class="modernInfoMessage" alignItems="Center">
+                                        <core:Icon src="sap-icon://information" class="modernInfoIcon"/>
+                                        <Text text="{chat>text}" class="modernInfoText"/>
+                                    </HBox>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- Warning Message -->
+                            <VBox visible="{= ${chat>type} === 'warning' }" class="modernWarningMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <HBox class="modernWarningMessage" alignItems="Center">
+                                        <core:Icon src="sap-icon://warning" class="modernWarningIcon"/>
+                                        <Text text="{chat>text}" class="modernWarningText"/>
+                                    </HBox>
+                                </HBox>
+                            </VBox>
+                        </content>
+                    </CustomListItem>
+                </List>
+                
+                <!-- Typing Indicator -->
+                <HBox 
+                    visible="{chat>/isTyping}" 
+                    justifyContent="Start" 
+                    class="modernTypingContainer modernMessageRow">
+                    <Avatar 
+                        src="" 
+                        initials="AI" 
+                        displaySize="XS" 
+                        backgroundColor="Accent1"
+                        class="modernAssistantAvatar"/>
+                    <VBox class="modernTypingMessage">
+                        <HBox alignItems="Center">
+                            <VBox class="modernTypingIndicator">
+                                <core:Icon src="" class="modernTypingDot modernTypingDot1"/>
+                                <core:Icon src="" class="modernTypingDot modernTypingDot2"/>
+                                <core:Icon src="" class="modernTypingDot modernTypingDot3"/>
+                            </VBox>
+                            <Text text="AI Assistant schreibt..." class="modernTypingText"/>
+                        </HBox>
+                    </VBox>
+                </HBox>
             </VBox>
-        </content>
-        <!-- Popover haben typischerweise keine expliziten Schließen-Buttons im Footer,
-             sie schließen durch Klick außerhalb oder ESC.
-             Man könnte aber einen hinzufügen, wenn gewünscht. -->
-        <!-- <endButton>
-            <Button text="Close" press="onClosePopoverSomehow" />
-        </endButton> -->
-    </Popover>
+        </ScrollContainer>
+
+        <!-- Simple Input Area -->
+        <VBox class="modernInputContainer">
+            <!-- Input Row -->
+            <HBox class="modernInputRow" alignItems="End">
+                <VBox class="modernInputWrapper" width="100%">
+                    <TextArea
+                        id="chatInputField"
+                        value="{chat>/userInput}"
+                        placeholder="Nachricht an SAP AI Assistant..."
+                        rows="3"
+                        maxLength="4000"
+                        width="100%"
+                        growing="true"
+                        growingMaxLines="6"
+                        submit="onSendChatMessageInSidePanel"
+                        class=""
+                        ariaLabel="Chat Eingabe"/>
+                </VBox>
+                
+                <Button
+                    id="sendButton"
+                    icon="sap-icon://paper-plane"
+                    type="Transparent"
+                    press="onSendChatMessageInSidePanel"
+                    enabled="{= ${chat>/userInput}.length > 0 }"
+                    class=""
+                    ariaLabel="Nachricht senden"/>
+            </HBox>
+            
+            <!-- Minimaler Input Footer -->
+            <HBox justifyContent="End" alignItems="Center" class="modernInputFooter">
+                <Text text="{= ${chat>/userInput}.length}/4000" class="modernCharCounter" visible="{= ${chat>/userInput}.length > 3800 }"/>
+                <Text text="{chat>/statusMessage}" class="modernStatusMessage"/>
+            </HBox>
+        </VBox>
+    </VBox>
 </core:FragmentDefinition>
 </file>
 
 <file path="app/webapp/ext/CustomActions.js">
 sap.ui.define([
-    "sap/ui/core/Fragment",
-    "sap/m/MessageToast",
-    "sap/ui/model/json/JSONModel",
-    "sap/m/Popover", // Popover explizit importieren, falls nicht schon durch Fragment
-    "sap/m/PlacementType" // Für die Platzierung des Popovers
-], function (Fragment, MessageToast, JSONModel, Popover, PlacementType) {
+    "sap/m/MessageToast"
+], function (MessageToast) {
     "use strict";
 
-    var oChatPopover; // Wird jetzt ein Popover sein
-    var oChatModel;
-    var fragmentControllerInstance; // Für die Event-Handler im Fragment
-
-    function initializeChatIfNeeded(pageController, oOpeningControl) { // oOpeningControl ist der Button
-        if (!oChatModel) {
-            oChatModel = new JSONModel({
-                chatHistory: [],
-                userInput: ""
-            });
+    function getFEAppComponent(oController) {
+        // oController ist hier die FE Page Controller Extension
+        if (oController && oController.getOwnerComponent && oController.getOwnerComponent().getAppComponent) {
+            return oController.getOwnerComponent().getAppComponent();
         }
-        pageController._view.setModel(oChatModel, "chat");
+        console.error("Could not get FE AppComponent from controller", oController);
+        return null;
+    }
 
-        if (!oChatPopover) {
-            fragmentControllerInstance = {
-                _pageController: pageController,
-                _openingControl: oOpeningControl, // Merken für späteres Schließen, falls nötig
-
-                // Keine explizite Schließen-Aktion vom Popover-Inhalt, da Klick außerhalb schließt
-                // Aber wir behalten die Send-Logik
-                onSendChatMessageInPopover: function () { // Umbenannt zur Klarheit
-                    var sUserInput = oChatModel.getProperty("/userInput");
-                    if (!sUserInput || !sUserInput.trim()) {
-                        MessageToast.show("Please enter a message.");
-                        return;
-                    }
-                    var aHistory = oChatModel.getProperty("/chatHistory");
-                    aHistory.push({ type: "user", text: sUserInput });
-                    oChatModel.setProperty("/chatHistory", aHistory);
-                    oChatModel.setProperty("/userInput", "");
-
-                    var oExtensionAPI = this._pageController.getExtensionAPI();
-                    
-                    aHistory.push({ type: "assistant", text: "Thinking..." });
-                    oChatModel.setProperty("/chatHistory", aHistory);
+    // Diese Funktion wird aufgerufen, wenn die Extension initialisiert wird
+    // oder bevor die AI-Funktion das erste Mal gebraucht wird.
+    function ensureAISendFunctionRegistered(oPageController) {
+        var oFEAppComponent = getFEAppComponent(oPageController);
+        if (oFEAppComponent && oFEAppComponent.registerAISendFunction && !oFEAppComponent._aiSendFunctionFromCustomAction) { // Nur einmal registrieren
+            oFEAppComponent.registerAISendFunction(
+                // Diese Funktion wird von der Component aufgerufen und hat den korrekten Scope
+                function(sPrompt, oChatModelToUpdate) { // this ist hier die oPageController Instanz
+                    var oExtensionAPI = this.getExtensionAPI(); // 'this' ist hier die CustomActions Instanz
+                    var aHistory = oChatModelToUpdate.getProperty("/chatHistory"); // "Thinking..." ist schon drin
 
                     oExtensionAPI.invokeAction("StammtischService.callClaude", {
-                        parameters: { prompt: sUserInput }
+                        parameters: { prompt: sPrompt }
                     }).then(function (oResultContext) {
                         var resultData = oResultContext.getObject();
                         var sResponse = (resultData && resultData.response) ? resultData.response : "No valid response.";
-                        aHistory.pop();
+                        aHistory.pop(); // "Thinking..." entfernen
                         aHistory.push({ type: "assistant", text: sResponse });
-                        oChatModel.setProperty("/chatHistory", aHistory);
-                    }).catch(function (oError) {
-                        console.error("AI Action Error:", oError);
-                        MessageToast.show("Error calling AI: " + (oError.message || "Unknown error"));
-                        aHistory.pop();
-                        aHistory.push({ type: "assistant", text: "Error: Could not get response." });
-                        oChatModel.setProperty("/chatHistory", aHistory);
-                    });
-                },
-                // Diese Methode wird vom Popover selbst aufgerufen, wenn er geschlossen wird
-                // (z.B. durch Klick außerhalb)
-                afterPopoverClose: function() {
-                    console.log("Chat Popover closed");
-                    // Hier könnte Aufräumlogik stehen, falls nötig
-                }
-            };
-
-            return Fragment.load({
-                id: pageController._view.getId() + "--aiChatPopover", // Eindeutige ID
-                name: "sap.stammtisch.ui.app.ext.AIChatPopover",   // NEUER FRAGMENTNAME
-                controller: fragmentControllerInstance
-            }).then(function (oLoadedPopover) {
-                oChatPopover = oLoadedPopover;
-                pageController._view.addDependent(oChatPopover);
-                // Event-Handler für das Schließen des Popovers registrieren
-                oChatPopover.attachAfterClose(fragmentControllerInstance.afterPopoverClose, fragmentControllerInstance);
-                return oChatPopover;
-            });
+                        oChatModelToUpdate.setProperty("/chatHistory", aHistory);
+                        oChatModelToUpdate.refresh(true);
+                        if (window.triggerChatScroll) window.triggerChatScroll();
+                    }.bind(this)).catch(function (oError) {
+                        console.error("AI Action Error from CustomActions:", oError);
+                        aHistory.pop(); // "Thinking..." entfernen
+                        aHistory.push({ type: "assistant", text: "Error: " + (oError.message || "Unknown AI error") });
+                        oChatModelToUpdate.setProperty("/chatHistory", aHistory);
+                        oChatModelToUpdate.refresh(true);
+                        if (window.triggerChatScroll) window.triggerChatScroll();
+                    }.bind(this));
+                }.bind(oPageController) // Wichtig: 'this' der äußeren Funktion (oPageController) binden!
+            );
+            console.log("AI Send function registered from CustomActions.");
         }
-        return Promise.resolve(oChatPopover);
     }
 
+
     return {
-        onOpenAIChatDialog: function (oEvent) { // oEvent ist hier das Button-Press-Event
-            var pageController = this; // 'this' ist der FE Page Controller
-            var oButton = oEvent.getSource(); // Der Button, der geklickt wurde
-
-            console.log("onOpenAIChatDialog (for Popover) called. Page Controller:", pageController);
-
-            initializeChatIfNeeded(pageController, oButton).then(function(popoverInstance){
-                if (popoverInstance) {
-                    popoverInstance.setModel(oChatModel, "chat");
-                    if (popoverInstance.isOpen()) {
-                        popoverInstance.close();
-                    } else {
-                        // Popover relativ zum geklickten Button öffnen
-                        popoverInstance.openBy(oButton);
+        // Wird vom Button im Manifest aufgerufen
+        onToggleChatSidePanel: function (/*oEvent*/) { // 'this' ist der FE Page Controller (Extension)
+            var oFEAppComponent = getFEAppComponent(this);
+            if (oFEAppComponent) {
+                var oDynamicSideContent = oFEAppComponent.getDynamicSideContent();
+                if (oDynamicSideContent) {
+                    oDynamicSideContent.toggleSideContent();
+                    // Sicherstellen, dass die AI-Sende-Funktion registriert ist,
+                    // falls das Panel geöffnet wird und Chat-Funktionalität benötigt wird.
+                    if (oDynamicSideContent.getSideContentVisible()) {
+                         ensureAISendFunctionRegistered(this);
+                         if (window.triggerChatScroll) window.triggerChatScroll(); // Ggf. zum Boden scrollen
                     }
                 } else {
-                    MessageToast.show("Could not load chat popover.");
+                    MessageToast.show("SidePanel control not found via FE Component.");
                 }
-            }).catch(function(err){
-                MessageToast.show("Error initializing chat: " + err.message);
-                console.error("Error initializing chat:", err);
-            });
+            } else {
+                MessageToast.show("FE Application Component not found.");
+            }
         }
+
+        // Die onSendChatMessageInSidePanel ist nicht mehr hier, sondern im oChatFragmentController in main.js
     };
 });
 </file>
@@ -457,8 +1117,10 @@ btnTextAIChat=AI Chat
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Stammtisch Verwaltung</title>
     <style>
-        html, body, body > div, #container, #container-uiarea {
+        html, body, #appHost { /* Wichtig: appHost soll die volle Höhe einnehmen */
             height: 100%;
+            margin: 0;
+            padding: 0;
         }
     </style>
     <script
@@ -468,22 +1130,487 @@ btnTextAIChat=AI Chat
         data-sap-ui-resourceroots='{
             "sap.stammtisch.ui.app": "./"
         }'
-        data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"
+        data-sap-ui-oninit="module:sap/stammtisch/ui/app/main"
         data-sap-ui-compatVersion="edge"
         data-sap-ui-async="true"
         data-sap-ui-frameOptions="trusted"
     ></script>
 </head>
-<body class="sapUiBody sapUiSizeCompact" id="content">
-    <div
-        data-sap-ui-component
-        data-name="sap.stammtisch.ui.app"
-        data-id="container"
-        data-settings='{"id" : "sap.stammtisch.ui.app"}'
-        data-handle-validation="true"
-    ></div>
+<body class="sapUiBody sapUiSizeCompact">
+    <!-- Platzhalter für unsere App-Struktur, die von main.js gefüllt wird -->
+    <div id="appHost"></div>
 </body>
 </html>
+</file>
+
+<file path="app/webapp/main.js">
+sap.ui.define([
+    "sap/ui/core/Component",
+    "sap/ui/core/ComponentContainer",
+    "sap/ui/layout/DynamicSideContent",
+    "sap/ui/core/Fragment",
+    "sap/ui/model/json/JSONModel",
+    "sap/m/App",
+    "sap/m/Page",
+    "sap/m/Bar",
+    "sap/m/Title",
+    "sap/m/MessageToast"
+], (Component, ComponentContainer, DynamicSideContent, Fragment, JSONModel, App, Page, Bar, Title, MessageToast) => {
+    "use strict";
+
+    // Modern class-based approach for Chat functionality
+    class ChatManager {
+        constructor() {
+            this.chatModel = null;
+            this.dynamicSideContent = null;
+            this.feAppComponentInstance = null;
+            this.currentRecognition = null;
+            this.serviceUrl = "/service/stammtisch"; // Service URL from manifest.json
+        }
+
+        // Initialize chat model with welcome message
+        initializeChatModel() {
+            this.chatModel = new JSONModel({
+                chatHistory: [],
+                userInput: "",
+                isTyping: false,
+                statusMessage: ""
+            });
+
+            const welcomeHistory = [{
+                type: "system",
+                text: "👋 Welcome! I'm your AI assistant. I can help you with questions, tasks, and provide information. What would you like to know?",
+                timestamp: this.getCurrentTimestamp()
+            }];
+
+            this.chatModel.setProperty("/chatHistory", welcomeHistory);
+        }
+
+        // Get current timestamp in HH:MM format
+        getCurrentTimestamp() {
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Smooth scroll to bottom of chat
+        scrollToBottom() {
+            if (!this.dynamicSideContent) return;
+
+            const scrollContainer = sap.ui.core.Fragment.byId(
+                "chatSidePanelFragmentGlobal",
+                "chatHistoryScrollContainerInSidePanel"
+            );
+
+            if (scrollContainer) {
+                setTimeout(() => scrollContainer.scrollTo(0, 99999, 300), 100);
+            }
+        }
+
+        async callClaudeViaOperationBinding(prompt) {
+            try {
+                if (!this.feAppComponentInstance) {
+                    throw new Error("FE Component not available");
+                }
+
+                const oDataModel = this.feAppComponentInstance.getModel();
+
+                if (!oDataModel) {
+                    throw new Error("OData Model not found");
+                }
+
+                // Erstelle Operation Binding für unbound Action
+                const oOperationBinding = oDataModel.bindContext("/callClaude(...)");
+
+                // Setze Parameter
+                oOperationBinding.setParameter("prompt", prompt);
+
+                // Führe Action aus
+                await oOperationBinding.execute();
+
+                // Hole Ergebnis
+                const oContext = oOperationBinding.getBoundContext();
+                const result = oContext.getObject();
+
+                console.log("Claude operation result:", result);
+
+                return result.response || "No response received";
+
+            } catch (error) {
+                console.error("Error in callClaudeViaOperationBinding:", error);
+                throw error;
+            }
+        }
+
+        // Update status message with auto-clear
+        setStatusMessage(message, duration = 3000) {
+            this.chatModel.setProperty("/statusMessage", message);
+            if (duration > 0) {
+                setTimeout(() => this.chatModel.setProperty("/statusMessage", ""), duration);
+            }
+        }
+
+        // Add message to chat history
+        addMessage(type, text, timestamp = this.getCurrentTimestamp()) {
+            const history = this.chatModel.getProperty("/chatHistory");
+            history.push({ type, text, timestamp });
+            this.chatModel.setProperty("/chatHistory", history);
+            this.chatModel.refresh(true);
+            this.scrollToBottom();
+        }
+
+        // Remove last "Thinking..." message
+        removeThinkingMessage() {
+            const history = this.chatModel.getProperty("/chatHistory");
+            if (history.length > 0 && history[history.length - 1].text === "Thinking...") {
+                history.pop();
+                this.chatModel.setProperty("/chatHistory", history);
+            }
+        }
+
+        // Handle AI response
+        handleAIResponse(responseText) {
+            this.removeThinkingMessage();
+            this.addMessage("assistant", responseText);
+            this.chatModel.setProperty("/isTyping", false);
+            this.chatModel.setProperty("/statusMessage", "");
+        }
+
+        // Handle AI errors
+        handleAIError(errorMessage) {
+            this.removeThinkingMessage();
+            this.addMessage("assistant", `I apologize, but I encountered an error: ${errorMessage}`);
+            this.chatModel.setProperty("/isTyping", false);
+            this.setStatusMessage("Error occurred", 5000);
+        }
+
+        // Call Claude service via HTTP
+        async callClaudeService(prompt) {
+            try {
+                // Get CSRF token first
+                const csrfToken = await this.getCSRFToken();
+
+                // Prepare the request
+                const requestOptions = {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({
+                        prompt: prompt
+                    })
+                };
+
+                // Make the actual call to Claude service
+                const response = await fetch(`${this.serviceUrl}/callClaude`, requestOptions);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                // Handle response from Claude
+                if (data && data.response) {
+                    return data.response;
+                } else {
+                    throw new Error("No valid response from Claude service");
+                }
+
+            } catch (error) {
+                console.error("Error calling Claude service:", error);
+                throw error;
+            }
+        }
+
+        // Get CSRF token for OData service calls
+        async getCSRFToken() {
+            try {
+                const response = await fetch(`${this.serviceUrl}/`, {
+                    method: 'GET',
+                    headers: {
+                        'X-CSRF-Token': 'Fetch'
+                    }
+                });
+
+                return response.headers.get('X-CSRF-Token') || '';
+            } catch (error) {
+                console.warn("Could not fetch CSRF token:", error);
+                return '';
+            }
+        }
+
+        // Modern clipboard copy with fallback
+        async copyToClipboard(text) {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    this.setStatusMessage("Copied to clipboard", 2000);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    textArea.style.position = "fixed";
+                    textArea.style.opacity = "0";
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    this.setStatusMessage("Copied to clipboard", 2000);
+                }
+            } catch (error) {
+                console.error('Copy failed:', error);
+                this.setStatusMessage("Failed to copy", 2000);
+            }
+        }
+
+        // Modern speech recognition
+        startVoiceInput() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+            if (!SpeechRecognition) {
+                this.setStatusMessage("Voice input not supported in this browser");
+                return;
+            }
+
+            // Stop any existing recognition
+            if (this.currentRecognition) {
+                this.currentRecognition.stop();
+            }
+
+            this.currentRecognition = new SpeechRecognition();
+            Object.assign(this.currentRecognition, {
+                continuous: false,
+                interimResults: false,
+                lang: 'en-US'
+            });
+
+            this.setStatusMessage("Listening...", 0);
+
+            this.currentRecognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                this.chatModel.setProperty("/userInput", transcript);
+                this.setStatusMessage("Voice input received", 2000);
+            };
+
+            this.currentRecognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                this.setStatusMessage("Voice input failed");
+            };
+
+            this.currentRecognition.onend = () => {
+                this.currentRecognition = null;
+                this.setStatusMessage("");
+            };
+
+            this.currentRecognition.start();
+        }
+    }
+
+
+    // Create singleton instance
+    const chatManager = new ChatManager();
+
+    // Modern Chat Controller with arrow functions
+    const chatController = {
+        async onSendChatMessageInSidePanel() {
+            const userInput = chatManager.chatModel.getProperty("/userInput")?.trim();
+
+            if (!userInput) {
+                chatManager.setStatusMessage("Please enter a message.");
+                return;
+            }
+
+            // Add user message
+            chatManager.addMessage("user", userInput);
+
+            // Clear input and set loading state
+            chatManager.chatModel.setProperty("/userInput", "");
+            chatManager.chatModel.setProperty("/isTyping", true);
+            chatManager.setStatusMessage("Sending...", 0);
+
+            // Add thinking placeholder
+            chatManager.addMessage("assistant", "Thinking...");
+
+            try {
+                // Call Claude service directly
+                const aiResponse = await chatManager.callClaudeViaOperationBinding(userInput);
+
+                // Handle successful response
+                chatManager.handleAIResponse(aiResponse);
+                chatManager.setStatusMessage("Response received", 2000);
+
+            } catch (error) {
+                console.error("Claude service call failed:", error);
+                chatManager.handleAIError(error.message || "Failed to get response from AI service");
+            }
+        },
+
+
+        onClearChatHistory() {
+            sap.m.MessageBox.confirm(
+                "Start a new chat? This will clear your current conversation.",
+                {
+                    title: "New Chat",
+                    onClose: (action) => {
+                        if (action === sap.m.MessageBox.Action.OK) {
+                            // Reset chat state
+                            Object.assign(chatManager.chatModel.getData(), {
+                                chatHistory: [],
+                                userInput: "",
+                                isTyping: false,
+                                statusMessage: "New chat started"
+                            });
+
+                            // Add welcome message
+                            chatManager.addMessage(
+                                "system",
+                                "New conversation started. How can I help you today?"
+                            );
+
+                            chatManager.setStatusMessage("New chat started");
+                        }
+                    }
+                }
+            );
+        },
+
+        async onCopyMessage(event) {
+            const context = event.getSource().getBindingContext("chat");
+            const messageText = context.getProperty("text");
+            await chatManager.copyToClipboard(messageText);
+        },
+
+        onAttachFile() {
+            // Placeholder for future file upload functionality
+            chatManager.setStatusMessage("File attachment coming soon...");
+        },
+
+        onVoiceInput() {
+            chatManager.startVoiceInput();
+        }
+    };
+
+    // Enhanced global functions
+    const globalFunctions = {
+        addAIResponse: (responseText) => chatManager.handleAIResponse(responseText),
+        addSystemMessage: (message) => chatManager.addMessage("system", message),
+        handleAIError: (errorMessage) => chatManager.handleAIError(errorMessage),
+        triggerChatScroll: () => chatManager.scrollToBottom()
+    };
+
+    // Assign to window for external access
+    Object.assign(window, globalFunctions);
+
+    // Modern keyboard shortcuts with better event handling
+    const setupKeyboardShortcuts = () => {
+        document.addEventListener('keydown', (event) => {
+            const { ctrlKey, metaKey, key } = event;
+            const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
+            const isInputFocused = inputField?.getFocusDomRef() === document.activeElement;
+
+            if (!isInputFocused) return;
+
+            // Ctrl/Cmd + Enter to send message
+            if ((ctrlKey || metaKey) && key === 'Enter') {
+                event.preventDefault();
+                chatController.onSendChatMessageInSidePanel();
+            }
+
+            // Escape to clear input
+            if (key === 'Escape') {
+                chatManager.chatModel.setProperty("/userInput", "");
+            }
+        });
+    };
+
+    // Modern app initialization with async/await
+    const initializeApp = async () => {
+        try {
+            // Initialize chat model
+            chatManager.initializeChatModel();
+
+            // Create DynamicSideContent
+            chatManager.dynamicSideContent = new DynamicSideContent("appDynamicSideContentGlobal", {
+                sideContentVisible: false,
+                height: "100%"
+            });
+            chatManager.dynamicSideContent.setModel(chatManager.chatModel, "chat");
+
+            // Load chat fragment
+            const chatPanelContent = await Fragment.load({
+                id: "chatSidePanelFragmentGlobal",
+                name: "sap.stammtisch.ui.app.ext.ChatSidePanelContent",
+                controller: chatController
+            });
+            chatManager.dynamicSideContent.addSideContent(chatPanelContent);
+
+            // Create Fiori Elements component
+            const feComponent = await Component.create({
+                name: "sap.stammtisch.ui.app",
+                id: "feAppComponentCore"
+            });
+
+            chatManager.feAppComponentInstance = feComponent;
+
+            // Set external dependencies if available
+            if (feComponent.setExternalDependencies) {
+                feComponent.setExternalDependencies(
+                    chatManager.chatModel,
+                    chatManager.dynamicSideContent
+                );
+            } else {
+                console.warn(
+                    "Method 'setExternalDependencies' not found on FE Component. " +
+                    "Chat/SidePanel might not be fully functional from custom actions."
+                );
+            }
+
+            // Create component container and app structure
+            const componentContainer = new ComponentContainer({
+                component: feComponent,
+                height: "100%"
+            });
+            chatManager.dynamicSideContent.addMainContent(componentContainer);
+
+            const mainPage = new Page("mainAppPage", {
+                showHeader: false,
+                content: [chatManager.dynamicSideContent],
+                height: "100%"
+            });
+
+            const appControl = new App({
+                pages: [mainPage],
+                height: "100%"
+            });
+
+            // Mount app
+            appControl.placeAt("appHost");
+
+            // Setup keyboard shortcuts
+            setupKeyboardShortcuts();
+
+            console.log("Application initialized successfully");
+
+        } catch (error) {
+            console.error("Failed to initialize application:", error);
+
+            const appHostDiv = document.getElementById("appHost");
+            if (appHostDiv) {
+                appHostDiv.innerHTML = `
+                    <div style="padding: 20px; color: #d32f2f; font-family: Arial, sans-serif;">
+                        <h2>Application Error</h2>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p>Please check the console for more details.</p>
+                    </div>
+                `;
+            }
+        }
+    };
+
+    // Initialize when SAP UI5 core is ready
+    sap.ui.getCore().attachInit(initializeApp);
+});
 </file>
 
 <file path="app/webapp/manifest.json">
@@ -567,7 +1694,11 @@ btnTextAIChat=AI Chat
       }
     },
     "resources": {
-      "css": []
+      "css": [
+        {
+          "uri": "css/customStyles.css"
+        }
+      ]
     },
     "routing": {
       "config": {},
@@ -608,15 +1739,6 @@ btnTextAIChat=AI Chat
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable"
-                  },
-                  "actions": {
-                    "AIChatAction": {
-                      "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
-                      "text": "{{btnTextAIChat}}",
-                      "visible": true,
-                      "enabled": true,
-                      "requiresSelection": false 
-                    }
                   }
                 }
               }
@@ -624,8 +1746,8 @@ btnTextAIChat=AI Chat
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         },
@@ -646,19 +1768,19 @@ btnTextAIChat=AI Chat
               },
               "actions": {
                 "AIChatActionStammtischOP": {
-                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onToggleChatSidePanel",
                   "text": "{{btnTextAIChat}}",
                   "visible": true,
                   "enabled": true,
-                  "requiresSelection": false 
+                  "requiresSelection": false
                 }
               }
             }
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         },
@@ -676,15 +1798,15 @@ btnTextAIChat=AI Chat
                   "text": "{{btnTextAIChat}}",
                   "visible": true,
                   "enabled": true,
-                  "requiresSelection": false 
+                  "requiresSelection": false
                 }
               }
             }
           },
           "extends": {
             "controller": {
-                "name": "sap.stammtisch.ui.app.ext.CustomActions",
-                "namespace": "sap.stammtisch.ui.app.ext"
+              "name": "sap.stammtisch.ui.app.ext.CustomActions",
+              "namespace": "sap.stammtisch.ui.app.ext"
             }
           }
         }
