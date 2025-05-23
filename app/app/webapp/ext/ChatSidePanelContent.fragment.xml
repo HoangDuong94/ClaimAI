@@ -3,33 +3,35 @@
     xmlns:core="sap.ui.core"
     xmlns:l="sap.ui.layout"
     xmlns:f="sap.f">
-   <VBox height="100%" class="modernChatContainer">
-        
-        <!-- Modern Chat Header -->
+    
+    <VBox height="100%" class="modernChatContainer">
+        <!-- SAP Horizon Chat Header -->
         <HBox class="modernChatHeader" justifyContent="SpaceBetween" alignItems="Center">
             <HBox alignItems="Center">
-                <core:Icon src="sap-icon://robot" class="modernHeaderIcon"/>
+                <core:Icon src="sap-icon://discussion-2" class="modernHeaderIcon"/>
                 <VBox class="sapUiTinyMarginBegin">
-                    <Title text="AI Assistant" level="H5" class="modernHeaderTitle"/>
-                    <Text text="Online" class="modernHeaderStatus"/>
+                    <Title text="SAP AI Assistant" level="H5" class="modernHeaderTitle"/>
+                    <Text text="Bereit zu helfen" class="modernHeaderStatus"/>
                 </VBox>
             </HBox>
             <HBox>
                 <Button 
-                    icon="sap-icon://refresh" 
+                    icon="sap-icon://restart" 
                     type="Transparent" 
-                    tooltip="New Chat"
+                    tooltip="Neuer Chat"
                     press="onClearChatHistory"
-                    class="modernHeaderButton"/>
+                    class="modernHeaderButton"
+                    ariaLabel="Neuen Chat starten"/>
                 <Button 
-                    icon="sap-icon://menu2" 
+                    icon="sap-icon://action-settings" 
                     type="Transparent" 
-                    tooltip="Options"
-                    class="modernHeaderButton"/>
+                    tooltip="Einstellungen"
+                    class="modernHeaderButton"
+                    ariaLabel="Einstellungen öffnen"/>
             </HBox>
         </HBox>
 
-        <!-- Modern Chat Messages Area -->
+        <!-- Chat Messages Area -->
         <ScrollContainer 
             id="chatHistoryScrollContainerInSidePanel"
             height="100%" 
@@ -57,9 +59,10 @@
                                     </VBox>
                                     <Avatar 
                                         src="" 
-                                        initials="You" 
+                                        initials="Sie" 
                                         displaySize="XS" 
                                         backgroundColor="Accent6"
+                                        imageFitType="Cover"
                                         class="modernUserAvatar"/>
                                 </HBox>
                             </VBox>
@@ -72,6 +75,7 @@
                                         initials="AI" 
                                         displaySize="XS" 
                                         backgroundColor="Accent1"
+                                        imageFitType="Cover"
                                         class="modernAssistantAvatar"/>
                                     <VBox class="modernAssistantMessage">
                                         <FormattedText htmlText="{chat>text}" class="modernMessageText modernAssistantText"/>
@@ -81,19 +85,22 @@
                                                 <Button 
                                                     icon="sap-icon://copy" 
                                                     type="Transparent" 
-                                                    tooltip="Copy"
+                                                    tooltip="Kopieren"
                                                     press="onCopyMessage"
-                                                    class="modernActionButton"/>
+                                                    class="modernActionButton"
+                                                    ariaLabel="Nachricht kopieren"/>
                                                 <Button 
                                                     icon="sap-icon://thumb-up" 
                                                     type="Transparent" 
-                                                    tooltip="Like"
-                                                    class="modernActionButton"/>
+                                                    tooltip="Gefällt mir"
+                                                    class="modernActionButton"
+                                                    ariaLabel="Positive Bewertung"/>
                                                 <Button 
                                                     icon="sap-icon://thumb-down" 
                                                     type="Transparent" 
-                                                    tooltip="Dislike"
-                                                    class="modernActionButton"/>
+                                                    tooltip="Gefällt mir nicht"
+                                                    class="modernActionButton"
+                                                    ariaLabel="Negative Bewertung"/>
                                             </HBox>
                                         </HBox>
                                     </VBox>
@@ -108,11 +115,31 @@
                                     </VBox>
                                 </HBox>
                             </VBox>
+                            
+                            <!-- Info Message -->
+                            <VBox visible="{= ${chat>type} === 'info' }" class="modernInfoMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <HBox class="modernInfoMessage" alignItems="Center">
+                                        <core:Icon src="sap-icon://information" class="modernInfoIcon"/>
+                                        <Text text="{chat>text}" class="modernInfoText"/>
+                                    </HBox>
+                                </HBox>
+                            </VBox>
+                            
+                            <!-- Warning Message -->
+                            <VBox visible="{= ${chat>type} === 'warning' }" class="modernWarningMessageContainer">
+                                <HBox justifyContent="Center" class="modernMessageRow">
+                                    <HBox class="modernWarningMessage" alignItems="Center">
+                                        <core:Icon src="sap-icon://warning" class="modernWarningIcon"/>
+                                        <Text text="{chat>text}" class="modernWarningText"/>
+                                    </HBox>
+                                </HBox>
+                            </VBox>
                         </content>
                     </CustomListItem>
                 </List>
                 
-                <!-- Modern Typing Indicator -->
+                <!-- Typing Indicator -->
                 <HBox 
                     visible="{chat>/isTyping}" 
                     justifyContent="Start" 
@@ -124,65 +151,52 @@
                         backgroundColor="Accent1"
                         class="modernAssistantAvatar"/>
                     <VBox class="modernTypingMessage">
-                        <HBox class="modernTypingDots">
-                            <core:HTML content="
-                                &lt;div class='modernTypingIndicator'&gt;
-                                    &lt;span&gt;&lt;/span&gt;
-                                    &lt;span&gt;&lt;/span&gt;
-                                    &lt;span&gt;&lt;/span&gt;
-                                &lt;/div&gt;
-                            "/>
+                        <HBox alignItems="Center">
+                            <VBox class="modernTypingIndicator">
+                                <core:Icon src="" class="modernTypingDot modernTypingDot1"/>
+                                <core:Icon src="" class="modernTypingDot modernTypingDot2"/>
+                                <core:Icon src="" class="modernTypingDot modernTypingDot3"/>
+                            </VBox>
+                            <Text text="AI Assistant schreibt..." class="modernTypingText"/>
                         </HBox>
                     </VBox>
                 </HBox>
             </VBox>
         </ScrollContainer>
 
-        <!-- Modern Input Area -->
+        <!-- Simple Input Area -->
         <VBox class="modernInputContainer">
             <!-- Input Row -->
             <HBox class="modernInputRow" alignItems="End">
-                <Button 
-                    icon="sap-icon://attachment" 
-                    type="Transparent" 
-                    tooltip="Attach files"
-                    press="onAttachFile"
-                    class="modernInputActionButton"
-                    enabled="false"/>
-                
                 <VBox class="modernInputWrapper" width="100%">
                     <TextArea
                         id="chatInputField"
                         value="{chat>/userInput}"
-                        placeholder="Message AI Assistant..."
-                        rows="1"
+                        placeholder="Nachricht an SAP AI Assistant..."
+                        rows="3"
                         maxLength="4000"
                         width="100%"
                         growing="true"
                         growingMaxLines="6"
                         submit="onSendChatMessageInSidePanel"
-                        class="modernInputField"/>
+                        class=""
+                        ariaLabel="Chat Eingabe"/>
                 </VBox>
                 
                 <Button
                     id="sendButton"
-                    icon="{= ${chat>/userInput}.length > 0 ? 'sap-icon://paper-plane' : 'sap-icon://microphone' }"
+                    icon="sap-icon://paper-plane"
                     type="Transparent"
-                    press="{= ${chat>/userInput}.length > 0 ? 'onSendChatMessageInSidePanel' : 'onVoiceInput' }"
-                    enabled="true"
-                    class="modernSendButton"/>
+                    press="onSendChatMessageInSidePanel"
+                    enabled="{= ${chat>/userInput}.length > 0 }"
+                    class=""
+                    ariaLabel="Nachricht senden"/>
             </HBox>
             
-            <!-- Input Footer -->
-            <HBox justifyContent="SpaceBetween" class="modernInputFooter">
-                <Text text="{= ${chat>/userInput}.length + ' / 4000'}" class="modernCharCounter"/>
-                <HBox alignItems="Center">
-                    <Text text="{chat>/statusMessage}" class="modernStatusMessage"/>
-                    <core:Icon 
-                        src="sap-icon://lightning" 
-                        class="modernPowerIcon" 
-                        tooltip="Powered by AI"/>
-                </HBox>
+            <!-- Minimaler Input Footer -->
+            <HBox justifyContent="End" alignItems="Center" class="modernInputFooter">
+                <Text text="{= ${chat>/userInput}.length}/4000" class="modernCharCounter" visible="{= ${chat>/userInput}.length > 3800 }"/>
+                <Text text="{chat>/statusMessage}" class="modernStatusMessage"/>
             </HBox>
         </VBox>
     </VBox>

@@ -1,423 +1,506 @@
- /* Container Styles */
- .modernChatContainer {
-     background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-     height: 100vh;
-     display: flex;
-     flex-direction: column;
- }
-
- /* Header Styles */
- .modernChatHeader {
-     background: rgba(255, 255, 255, 0.95);
-     backdrop-filter: blur(10px);
-     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-     padding: 16px 20px;
-     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-     position: sticky;
-     top: 0;
-     z-index: 10;
- }
-
- .modernHeaderIcon {
-     font-size: 24px;
-     color: #10a37f;
- }
-
- .modernHeaderTitle {
-     font-weight: 600;
-     color: #1f2937;
-     margin: 0;
-     line-height: 1.2;
- }
-
- .modernHeaderStatus {
-     font-size: 12px;
-     color: #10a37f;
-     font-weight: 500;
- }
-
- .modernHeaderButton {
-     min-width: 36px;
-     height: 36px;
-     border-radius: 8px;
-     margin-left: 4px;
- }
-
- .modernHeaderButton:hover {
-     background-color: rgba(0, 0, 0, 0.05);
- }
-
- /* Messages Container */
- .modernChatMessagesContainer {
-     flex: 1;
-     background: transparent;
- }
-
- .modernMessagesWrapper {
-     max-width: 768px;
-     margin: 0 auto;
-     padding: 20px;
-     min-height: 100%;
- }
-
- .modernMessagesList {
-     background: transparent;
- }
-
- .modernMessageItem {
-     background: transparent;
-     margin-bottom: 20px;
-     border: none;
- }
-
- .modernMessageRow {
-     align-items: flex-start;
-     gap: 12px;
- }
-
- /* User Messages */
- .modernUserMessageContainer {
-     margin-bottom: 24px;
- }
-
- .modernUserMessage {
-     background: #10a37f;
-     color: white;
-     padding: 12px 16px;
-     border-radius: 18px 18px 4px 18px;
-     max-width: 70%;
-     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
- }
-
- .modernUserText {
-     font-size: 15px;
-     line-height: 1.5;
-     color: white !important;
-     word-wrap: break-word;
- }
-
- .modernUserTimestamp {
-     font-size: 11px;
-     color: rgba(255, 255, 255, 0.8);
-     margin-top: 4px;
-     text-align: right;
- }
-
- .modernUserAvatar {
-     margin-top: 2px;
- }
-
- /* Assistant Messages */
- .modernAssistantMessageContainer {
-     margin-bottom: 24px;
- }
-
- .modernAssistantMessage {
-     background: #ffffff;
-     border: 1px solid rgba(0, 0, 0, 0.08);
-     padding: 16px;
-     border-radius: 18px 18px 18px 4px;
-     max-width: 75%;
-     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-     position: relative;
- }
-
- .modernAssistantMessage:hover .modernMessageActions {
-     opacity: 1;
- }
-
- .modernAssistantText {
-     font-size: 15px;
-     line-height: 1.6;
-     color: #1f2937 !important;
-     word-wrap: break-word;
- }
-
- .modernMessageFooter {
-     margin-top: 8px;
- }
-
- .modernAssistantTimestamp {
-     font-size: 11px;
-     color: #6b7280;
- }
-
- .modernMessageActions {
-     opacity: 0;
-     transition: opacity 0.2s ease;
-     gap: 4px;
- }
-
- .modernActionButton {
-     min-width: 28px;
-     height: 28px;
-     border-radius: 6px;
-     font-size: 12px;
- }
-
- .modernActionButton:hover {
-     background-color: rgba(0, 0, 0, 0.05);
- }
-
- .modernAssistantAvatar {
-     margin-top: 2px;
- }
-
- /* System Messages */
- .modernSystemMessageContainer {
-     margin-bottom: 16px;
- }
-
- .modernSystemMessage {
-     background: rgba(16, 163, 127, 0.1);
-     border: 1px solid rgba(16, 163, 127, 0.2);
-     padding: 8px 16px;
-     border-radius: 16px;
-     max-width: 80%;
- }
-
- .modernSystemText {
-     font-size: 13px;
-     color: #065f46;
-     text-align: center;
-     font-style: italic;
- }
-
- /* Typing Indicator */
- .modernTypingContainer {
-     margin-bottom: 20px;
- }
-
- .modernTypingMessage {
-     background: #ffffff;
-     border: 1px solid rgba(0, 0, 0, 0.08);
-     padding: 16px;
-     border-radius: 18px 18px 18px 4px;
-     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
- }
-
- .modernTypingIndicator {
-     display: flex;
-     align-items: center;
-     gap: 4px;
- }
-
- .modernTypingIndicator span {
-     width: 8px;
-     height: 8px;
-     border-radius: 50%;
-     background-color: #9ca3af;
-     animation: modernTypingBounce 1.4s infinite ease-in-out both;
- }
-
- .modernTypingIndicator span:nth-child(1) {
-     animation-delay: -0.32s;
- }
-
- .modernTypingIndicator span:nth-child(2) {
-     animation-delay: -0.16s;
- }
-
- @keyframes modernTypingBounce {
-
-     0%,
-     80%,
-     100% {
-         transform: scale(0.8);
-         opacity: 0.5;
-     }
-
-     40% {
-         transform: scale(1);
-         opacity: 1;
-     }
- }
-
- /* Input Area */
- .modernInputContainer {
-     background: rgba(255, 255, 255, 0.95);
-     backdrop-filter: blur(10px);
-     border-top: 1px solid rgba(0, 0, 0, 0.06);
-     padding: 16px 20px;
-     box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.05);
- }
-
- .modernInputRow {
-     gap: 12px;
-     align-items: flex-end;
- }
-
- .modernInputWrapper {
-     flex: 1;
- }
-
- .modernInputField {
-     border: 1px solid rgba(0, 0, 0, 0.1);
-     border-radius: 24px;
-     background: #ffffff;
-     transition: all 0.2s ease;
-     resize: none;
- }
-
- .modernInputField:focus {
-     border-color: #10a37f;
-     box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.1);
- }
-
- .modernInputField textarea {
-     padding: 12px 20px !important;
-     border: none !important;
-     outline: none !important;
-     font-size: 15px;
-     line-height: 1.5;
-     font-family: inherit;
- }
-
- .modernInputActionButton {
-     min-width: 40px;
-     height: 40px;
-     border-radius: 20px;
-     color: #6b7280;
- }
-
- .modernInputActionButton:hover {
-     background-color: rgba(0, 0, 0, 0.05);
-     color: #374151;
- }
-
- .modernSendButton {
-     min-width: 40px;
-     height: 40px;
-     border-radius: 20px;
-     background: #10a37f;
-     color: white;
-     transition: all 0.2s ease;
- }
-
- .modernSendButton:hover {
-     background: #0d8f6c;
-     transform: scale(1.05);
- }
-
- .modernSendButton:active {
-     transform: scale(0.95);
- }
-
- /* Input Footer */
- .modernInputFooter {
-     margin-top: 8px;
-     padding: 0 4px;
- }
-
- .modernCharCounter {
-     font-size: 12px;
-     color: #9ca3af;
- }
-
- .modernStatusMessage {
-     font-size: 12px;
-     color: #10a37f;
-     margin-right: 6px;
- }
-
- .modernPowerIcon {
-     font-size: 12px;
-     color: #10a37f;
- }
-
- /* Scrollbar Styling */
- .modernChatMessagesContainer .sapMScrollCont {
-     scrollbar-width: thin;
-     scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
- }
-
- .modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar {
-     width: 6px;
- }
-
- .modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-track {
-     background: transparent;
- }
-
- .modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb {
-     background-color: rgba(0, 0, 0, 0.2);
-     border-radius: 3px;
- }
-
- .modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb:hover {
-     background-color: rgba(0, 0, 0, 0.3);
- }
-
- /* Animations */
- .modernMessageItem {
-     animation: modernFadeInUp 0.3s ease-out;
- }
-
- @keyframes modernFadeInUp {
-     from {
-         opacity: 0;
-         transform: translateY(10px);
-     }
-
-     to {
-         opacity: 1;
-         transform: translateY(0);
-     }
- }
-
- /* Responsive Design */
- @media (max-width: 768px) {
-     .modernMessagesWrapper {
-         padding: 16px;
-     }
-
-     .modernUserMessage,
-     .modernAssistantMessage {
-         max-width: 85%;
-     }
-
-     .modernInputContainer {
-         padding: 12px 16px;
-     }
-
-     .modernChatHeader {
-         padding: 12px 16px;
-     }
- }
-
- /* Dark mode support */
- /* @media (prefers-color-scheme: dark) {
-     .modernChatContainer {
-         background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
-     }
-
-     .modernChatHeader {
-         background: rgba(31, 41, 55, 0.95);
-         border-bottom-color: rgba(255, 255, 255, 0.1);
-     }
-
-     .modernHeaderTitle {
-         color: #f9fafb;
-     }
-
-     .modernAssistantMessage {
-         background: #374151;
-         border-color: rgba(255, 255, 255, 0.1);
-     }
-
-     .modernAssistantText {
-         color: #f9fafb !important;
-     }
-
-     .modernInputContainer {
-         background: rgba(31, 41, 55, 0.95);
-         border-top-color: rgba(255, 255, 255, 0.1);
-     }
-
-     .modernInputField {
-         background: #374151;
-         border-color: rgba(255, 255, 255, 0.1);
-         color: #f9fafb;
-     }
- } */
+/* SAP Horizon Theme Chat Interface - Vereinfacht */
+
+/* SAP Horizon Design Tokens */
+:root {
+  /* Primary Colors */
+  --sapHorizon-Blue-Primary: #0070F2;
+  --sapHorizon-Blue-Secondary: #E7F3FF;
+  --sapHorizon-Blue-Accent: #004B9E;
+  
+  /* Neutral Colors */
+  --sapHorizon-Neutral-100: #FFFFFF;
+  --sapHorizon-Neutral-200: #F5F6F7;
+  --sapHorizon-Neutral-300: #EAECEF;
+  --sapHorizon-Neutral-400: #D5D9DD;
+  --sapHorizon-Neutral-500: #8396A8;
+  --sapHorizon-Neutral-600: #556B82;
+  --sapHorizon-Neutral-700: #354A5F;
+  --sapHorizon-Neutral-800: #1D2D3E;
+  
+  /* Semantic Colors */
+  --sapHorizon-Success: #30914C;
+  --sapHorizon-Warning: #E76B00;
+  --sapHorizon-Error: #BB0000;
+  --sapHorizon-Information: #0070F2;
+  
+  /* SAP Horizon Spacing */
+  --sapHorizon-Space-Tiny: 0.25rem;
+  --sapHorizon-Space-Small: 0.5rem;
+  --sapHorizon-Space-Medium: 1rem;
+  --sapHorizon-Space-Large: 1.5rem;
+  --sapHorizon-Space-XLarge: 2rem;
+  
+  /* SAP Horizon Typography */
+  --sapHorizon-FontFamily: "72", "72full", Arial, Helvetica, sans-serif;
+  --sapHorizon-FontSize-Small: 0.75rem;
+  --sapHorizon-FontSize-Medium: 0.875rem;
+  --sapHorizon-FontSize-Large: 1rem;
+  --sapHorizon-FontSize-XLarge: 1.25rem;
+  
+  /* SAP Horizon Shadows */
+  --sapHorizon-Shadow-Level1: 0 0.125rem 0.5rem 0 rgba(29, 45, 62, 0.1);
+  --sapHorizon-Shadow-Level2: 0 0.25rem 1rem 0 rgba(29, 45, 62, 0.15);
+  --sapHorizon-Shadow-Level3: 0 0.5rem 1.5rem 0 rgba(29, 45, 62, 0.2);
+  
+  /* SAP Horizon Border Radius */
+  --sapHorizon-BorderRadius-Small: 0.25rem;
+  --sapHorizon-BorderRadius-Medium: 0.5rem;
+  --sapHorizon-BorderRadius-Large: 0.75rem;
+}
+
+/* Container Styles */
+.modernChatContainer {
+  background: var(--sapHorizon-Neutral-200);
+  font-family: var(--sapHorizon-FontFamily);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header Styles */
+.modernChatHeader {
+  background: var(--sapHorizon-Neutral-100);
+  border-bottom: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large) var(--sapHorizon-Space-XLarge);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.modernHeaderIcon {
+  font-size: 1.5rem;
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+.modernHeaderTitle {
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-800);
+  margin: 0;
+  line-height: 1.25;
+  font-size: var(--sapHorizon-FontSize-Large);
+}
+
+.modernHeaderStatus {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Success);
+  font-weight: 500;
+}
+
+.modernHeaderButton {
+  min-width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  margin-left: var(--sapHorizon-Space-Tiny);
+  color: var(--sapHorizon-Neutral-600);
+}
+
+.modernHeaderButton:hover {
+  background-color: var(--sapHorizon-Blue-Secondary);
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+/* Messages Container */
+.modernChatMessagesContainer {
+  flex: 1;
+  background: transparent;
+}
+
+.modernMessagesWrapper {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: var(--sapHorizon-Space-XLarge);
+  min-height: 100%;
+}
+
+.modernMessagesList {
+  background: transparent;
+}
+
+.modernMessageItem {
+  background: transparent;
+  margin-bottom: var(--sapHorizon-Space-Large);
+  border: none;
+}
+
+.modernMessageRow {
+  align-items: flex-start;
+  gap: var(--sapHorizon-Space-Medium);
+}
+
+/* User Messages */
+.modernUserMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernUserMessage {
+  background: var(--sapHorizon-Blue-Primary);
+  color: var(--sapHorizon-Neutral-100);
+  padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small) var(--sapHorizon-BorderRadius-Large);
+  max-width: 70%;
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernUserMessage:hover {
+  box-shadow: var(--sapHorizon-Shadow-Level2);
+}
+
+.modernUserText {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.5;
+  color: var(--sapHorizon-Neutral-100) !important;
+  word-wrap: break-word;
+}
+
+.modernUserTimestamp {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: rgba(255, 255, 255, 0.8);
+  margin-top: var(--sapHorizon-Space-Tiny);
+  text-align: right;
+}
+
+.modernUserAvatar {
+  margin-top: 2px;
+}
+
+/* Assistant Messages */
+.modernAssistantMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernAssistantMessage {
+  background: var(--sapHorizon-Neutral-100);
+  border: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small);
+  max-width: 75%;
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+  position: relative;
+}
+
+.modernAssistantMessage:hover {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: var(--sapHorizon-Shadow-Level2);
+}
+
+.modernAssistantMessage:hover .modernMessageActions {
+  opacity: 1;
+}
+
+.modernAssistantText {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.6;
+  color: var(--sapHorizon-Neutral-800) !important;
+  word-wrap: break-word;
+}
+
+.modernMessageFooter {
+  margin-top: var(--sapHorizon-Space-Small);
+}
+
+.modernAssistantTimestamp {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-500);
+}
+
+.modernMessageActions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  gap: var(--sapHorizon-Space-Tiny);
+}
+
+.modernActionButton {
+  min-width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-600);
+}
+
+.modernActionButton:hover {
+  background-color: var(--sapHorizon-Blue-Secondary);
+  color: var(--sapHorizon-Blue-Primary);
+}
+
+.modernAssistantAvatar {
+  margin-top: 2px;
+}
+
+/* System Messages */
+.modernSystemMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Medium);
+}
+
+.modernSystemMessage {
+  background: var(--sapHorizon-Blue-Secondary);
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  max-width: 80%;
+}
+
+.modernSystemText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Blue-Accent);
+  text-align: center;
+  font-style: italic;
+}
+
+/* Typing Indicator */
+.modernTypingContainer {
+  margin-bottom: var(--sapHorizon-Space-Large);
+}
+
+.modernTypingMessage {
+  background: var(--sapHorizon-Neutral-100);
+  border: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernTypingIndicator {
+  display: flex;
+  align-items: center;
+  gap: var(--sapHorizon-Space-Tiny);
+}
+
+.modernTypingDot {
+  width: 0.5rem !important;
+  height: 0.5rem !important;
+  border-radius: 50%;
+  background-color: var(--sapHorizon-Blue-Primary);
+  font-size: 0 !important; /* Hide any icon content */
+  min-width: 0.5rem;
+  min-height: 0.5rem;
+}
+
+.modernTypingDot1 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+  animation-delay: -0.32s;
+}
+
+.modernTypingDot2 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+  animation-delay: -0.16s;
+}
+
+.modernTypingDot3 {
+  animation: horizonTypingBounce 1.4s infinite ease-in-out both;
+}
+
+@keyframes horizonTypingBounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.modernTypingText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-600);
+  margin-left: var(--sapHorizon-Space-Small);
+  font-style: italic;
+}
+
+/* Input Area */
+.modernInputContainer {
+  background: var(--sapHorizon-Neutral-100);
+  border-top: 1px solid var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Large) var(--sapHorizon-Space-XLarge);
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.modernInputRow {
+  gap: var(--sapHorizon-Space-Medium);
+  align-items: flex-end;
+}
+
+.modernInputWrapper {
+  flex: 1;
+}
+
+.modernInputField {
+  border: 1px solid var(--sapHorizon-Neutral-400);
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  background: var(--sapHorizon-Neutral-100);
+  transition: all 0.2s ease;
+  resize: none;
+}
+
+.modernInputField:focus {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: 0 0 0 2px var(--sapHorizon-Blue-Secondary);
+}
+
+.modernInputField:focus-within {
+  border-color: var(--sapHorizon-Blue-Primary);
+  box-shadow: 0 0 0 2px var(--sapHorizon-Blue-Secondary);
+}
+
+.modernInputField textarea {
+  padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large) !important;
+  border: none !important;
+  outline: none !important;
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.5;
+  font-family: var(--sapHorizon-FontFamily);
+  color: var(--sapHorizon-Neutral-800);
+}
+
+.modernSendButton {
+  min-width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--sapHorizon-BorderRadius-Large);
+  background: var(--sapHorizon-Blue-Primary);
+  color: var(--sapHorizon-Neutral-100);
+  transition: all 0.2s ease;
+}
+
+.modernSendButton:hover {
+  background: var(--sapHorizon-Blue-Accent);
+  transform: scale(1.02);
+}
+
+.modernSendButton:active {
+  transform: scale(0.98);
+}
+
+/* Input Footer - Minimal Design */
+.modernInputFooter {
+  margin-top: var(--sapHorizon-Space-Small);
+  padding: var(--sapHorizon-Space-Tiny) var(--sapHorizon-Space-Small);
+  background: transparent;
+  border: none;
+  min-height: 1.2rem;
+}
+
+.modernCharCounter {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Warning);
+  font-weight: 500;
+  margin-right: var(--sapHorizon-Space-Small);
+}
+
+.modernStatusMessage {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Neutral-500);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Scrollbar Styling - SAP Horizon */
+.modernChatMessagesContainer .sapMScrollCont {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sapHorizon-Neutral-400) transparent;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb {
+  background-color: var(--sapHorizon-Neutral-400);
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+}
+
+.modernChatMessagesContainer .sapMScrollCont::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sapHorizon-Neutral-500);
+}
+
+/* Animations */
+.modernMessageItem {
+  animation: horizonFadeInUp 0.3s ease-out;
+}
+
+@keyframes horizonFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Focus Management for Accessibility */
+.modernHeaderButton:focus,
+.modernActionButton:focus,
+.modernSendButton:focus {
+  outline: 2px solid var(--sapHorizon-Blue-Primary);
+  outline-offset: 2px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .modernMessagesWrapper {
+    padding: var(--sapHorizon-Space-Large);
+  }
+  
+  .modernUserMessage,
+  .modernAssistantMessage {
+    max-width: 85%;
+  }
+  
+  .modernInputContainer {
+    padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  }
+  
+  .modernChatHeader {
+    padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
+  }
+}
+
+/* Additional SAP Horizon Message Types */
+.modernInfoMessageContainer,
+.modernWarningMessageContainer {
+  margin-bottom: var(--sapHorizon-Space-Medium);
+}
+
+.modernInfoMessage {
+  background: var(--sapHorizon-Blue-Secondary);
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  gap: var(--sapHorizon-Space-Small);
+}
+
+.modernInfoIcon {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  color: var(--sapHorizon-Information);
+}
+
+.modernInfoText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: var(--sapHorizon-Blue-Accent);
+  font-weight: 500;
+}
+
+.modernWarningMessage {
+  background: #FFF4E6;
+  border: 1px solid var(--sapHorizon-Warning);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  gap: var(--sapHorizon-Space-Small);
+}
+
+.modernWarningIcon {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  color: var(--sapHorizon-Warning);
+}
+
+.modernWarningText {
+  font-size: var(--sapHorizon-FontSize-Small);
+  color: #8B4000;
+  font-weight: 500;
+}
