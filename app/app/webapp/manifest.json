@@ -1,0 +1,209 @@
+{
+  "_version": "1.65.0",
+  "sap.app": {
+    "id": "sap.stammtisch.ui.app",
+    "type": "application",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": {
+      "version": "0.0.1"
+    },
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "resources": "resources.json",
+    "sourceTemplate": {
+      "id": "@sap/generator-fiori:lrop",
+      "version": "1.17.5",
+      "toolsId": "2418c640-e786-47b9-ad94-903960b6e258"
+    },
+    "dataSources": {
+      "mainService": {
+        "uri": "/service/stammtisch/",
+        "type": "OData",
+        "settings": {
+          "annotations": [],
+          "odataVersion": "4.0"
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "icons": {
+      "icon": "",
+      "favIcon": "",
+      "phone": "",
+      "phone@2": "",
+      "tablet": "",
+      "tablet@2": ""
+    },
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "flexEnabled": true,
+    "dependencies": {
+      "minUI5Version": "1.136.0",
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {},
+        "sap.fe.templates": {}
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "sap.stammtisch.ui.app.i18n.i18n"
+        }
+      },
+      "": {
+        "dataSource": "mainService",
+        "preload": true,
+        "settings": {
+          "operationMode": "Server",
+          "autoExpandSelect": true,
+          "earlyRequests": true
+        }
+      },
+      "@i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "uri": "i18n/i18n.properties"
+      }
+    },
+    "resources": {
+      "css": []
+    },
+    "routing": {
+      "config": {},
+      "routes": [
+        {
+          "pattern": ":?query:",
+          "name": "StammtischeList",
+          "target": "StammtischeList"
+        },
+        {
+          "pattern": "Stammtische({key}):?query:",
+          "name": "StammtischeObjectPage",
+          "target": "StammtischeObjectPage"
+        },
+        {
+          "pattern": "Stammtische({key})/teilnehmer({key2}):?query:",
+          "name": "TeilnehmerObjectPage",
+          "target": "TeilnehmerObjectPage"
+        }
+      ],
+      "targets": {
+        "StammtischeList": {
+          "type": "Component",
+          "id": "StammtischeList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "contextPath": "/Stammtische",
+              "variantManagement": "Page",
+              "navigation": {
+                "Stammtische": {
+                  "detail": {
+                    "route": "StammtischeObjectPage"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  },
+                  "actions": {
+                    "AIChatAction": {
+                      "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                      "text": "{{btnTextAIChat}}",
+                      "visible": true,
+                      "enabled": true,
+                      "requiresSelection": false 
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        },
+        "StammtischeObjectPage": {
+          "type": "Component",
+          "id": "StammtischeObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Stammtische",
+              "navigation": {
+                "teilnehmer": {
+                  "detail": {
+                    "route": "TeilnehmerObjectPage"
+                  }
+                }
+              },
+              "actions": {
+                "AIChatActionStammtischOP": {
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "text": "{{btnTextAIChat}}",
+                  "visible": true,
+                  "enabled": true,
+                  "requiresSelection": false 
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        },
+        "TeilnehmerObjectPage": {
+          "type": "Component",
+          "id": "TeilnehmerObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Stammtische/teilnehmer",
+              "actions": {
+                "AIChatActionTeilnehmerOP": {
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "text": "{{btnTextAIChat}}",
+                  "visible": true,
+                  "enabled": true,
+                  "requiresSelection": false 
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        }
+      }
+    }
+  },
+  "sap.fiori": {
+    "registrationIds": [],
+    "archeType": "transactional"
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "name": "StammtischAI",
+  "version": "1.0.0",
+  "description": "A simple CAP project.",
+  "repository": "<Add your repository here>",
+  "license": "ISC",
+  "dependencies": {
+    "@cap-js/postgres": "^1",
+    "@sap-cloud-sdk/connectivity": "^4.0.2",
+    "@sap-cloud-sdk/http-client": "^4.0.2",
+    "@sap-cloud-sdk/resilience": "^4.0.2",
+    "@sap/cds": "^8.9.4",
+    "cap-llm-plugin": "^1.5.0",
+    "cds-pg": "^0.1.36",
+    "express": "^4",
+    "pg": "^8"
+  },
+  "devDependencies": {
+    "@cap-js/cds-typer": "^0.34.0",
+    "@cap-js/cds-types": "^0.10.0",
+    "@cap-js/sqlite": "^1"
+  },
+  "scripts": {
+    "start": "cds-serve",
+    "watch-app": "cds watch --open app/webapp/index.html?sap-ui-xx-viewCache=false"
+  },
+  "cds": {
+    "requires": {
+      "db": {
+        "kind": "postgres",
+        "impl": "@cap-js/postgres",
+        "[development]": {
+          "credentials": {
+            "host": "localhost",
+            "port": 5432,
+            "database": "stammtisch_ai_db",
+            "user": "duh",
+            "password": "test123"
+          }
+        }
+      },
+      "auth": {
+        "kind": "mocked"
+      },
+      "destinations": true,
+      "cap-llm-plugin": true,
+      "gen-ai-hub": {
+        "claude-3.5": {
+          "destinationName": "GenAIHubDestination",
+          "deploymentUrl": "/v2/inference/deployments/dfddf56cb9d349b0",
+          "resourceGroup": "default",
+          "apiVersion": "2024-08-06",
+          "modelName": "anthropic--claude-3.5-sonnet"
+        }
+      },
+      "GenAIHubDestination": {
+        "kind": "rest",
+        "credentials": {
+          "destination": "aicore-destination",
+          "requestTimeout": "300000"
+        }
+      }
+    },
+    "features": {
+      "fetch_csrf": true
+    }
+  },
+  "sapux": [
+    "app/app"
+  ]
+}

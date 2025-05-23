@@ -1,0 +1,14 @@
+{
+  "requires": {
+    "db": {
+      "kind": "postgres",
+      "credentials": {
+        "database": "stammtisch_ai_db",
+        "user": "duh",
+        "password": "test123",
+        "host": "localhost", 
+        "port": 5432        
+      }
+    }
+  }
+}

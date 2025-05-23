@@ -1,0 +1,983 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+app/annotations.cds
+app/package.json
+app/README.md
+app/ui5.yaml
+app/webapp/Component.js
+app/webapp/ext/AIChatPopover.fragment.xml
+app/webapp/ext/CustomActions.js
+app/webapp/i18n/i18n.properties
+app/webapp/index.html
+app/webapp/manifest.json
+app/webapp/test/flpSandbox.html
+app/webapp/test/integration/FirstJourney.js
+app/webapp/test/integration/opaTests.qunit.html
+app/webapp/test/integration/opaTests.qunit.js
+app/webapp/test/integration/pages/StammtischeList.js
+app/webapp/test/integration/pages/StammtischeObjectPage.js
+app/webapp/test/integration/pages/TeilnehmerObjectPage.js
+app/webapp/test/testsuite.qunit.html
+app/webapp/test/testsuite.qunit.js
+services.cds
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="app/annotations.cds">
+using StammtischService as service from '../../srv/service';
+annotate service.Stammtische with @(
+    UI.FieldGroup #GeneratedGroup : {
+        $Type : 'UI.FieldGroupType',
+        Data : [
+            {
+                $Type : 'UI.DataField',
+                Label : 'thema',
+                Value : thema,
+            },
+            {
+                $Type : 'UI.DataField',
+                Label : 'datum',
+                Value : datum,
+            },
+            {
+                $Type : 'UI.DataField',
+                Label : 'ort',
+                Value : ort,
+            },
+            {
+                $Type : 'UI.DataField',
+                Label : 'notizen',
+                Value : notizen,
+            },
+        ],
+    },
+    UI.Facets : [
+        {
+            $Type : 'UI.ReferenceFacet',
+            ID : 'GeneratedFacet1',
+            Label : 'General Information',
+            Target : '@UI.FieldGroup#GeneratedGroup',
+        },
+    ],
+    UI.LineItem : [
+        {
+            $Type : 'UI.DataField',
+            Label : 'thema',
+            Value : thema,
+        },
+        {
+            $Type : 'UI.DataField',
+            Label : 'datum',
+            Value : datum,
+        },
+        {
+            $Type : 'UI.DataField',
+            Label : 'ort',
+            Value : ort,
+        },
+        {
+            $Type : 'UI.DataField',
+            Label : 'notizen',
+            Value : notizen,
+        },
+    ],
+);
+
+annotate service.Stammtische with {
+    praesentator @Common.ValueList : {
+        $Type : 'Common.ValueListType',
+        CollectionPath : 'Praesentatoren',
+        Parameters : [
+            {
+                $Type : 'Common.ValueListParameterInOut',
+                LocalDataProperty : praesentator_ID,
+                ValueListProperty : 'ID',
+            },
+            {
+                $Type : 'Common.ValueListParameterDisplayOnly',
+                ValueListProperty : 'name',
+            },
+            {
+                $Type : 'Common.ValueListParameterDisplayOnly',
+                ValueListProperty : 'email',
+            },
+            {
+                $Type : 'Common.ValueListParameterDisplayOnly',
+                ValueListProperty : 'linkedin',
+            },
+        ],
+    }
+};
+</file>
+
+<file path="app/package.json">
+{
+  "name": "app",
+  "version": "0.0.1",
+  "description": "SAP Stammtisch",
+  "keywords": [
+    "ui5",
+    "openui5",
+    "sapui5"
+  ],
+  "main": "webapp/index.html",
+  "dependencies": {},
+  "devDependencies": {
+    "@ui5/cli": "^3.0.0",
+    "@sap/ux-ui5-tooling": "1"
+  },
+  "scripts": {
+    "deploy-config": "npx -p @sap/ux-ui5-tooling fiori add deploy-config cf"
+  }
+}
+</file>
+
+<file path="app/README.md">
+## Application Details
+|               |
+| ------------- |
+|**Generation Date and Time**<br>Sun May 18 2025 13:33:29 GMT+0200 (Mitteleuropäische Sommerzeit)|
+|**App Generator**<br>SAP Fiori Application Generator|
+|**App Generator Version**<br>1.17.5|
+|**Generation Platform**<br>CLI|
+|**Template Used**<br>List Report Page V4|
+|**Service Type**<br>Local Cap|
+|**Service URL**<br>http://localhost:4004/service/stammtisch/|
+|**Module Name**<br>app|
+|**Application Title**<br>Stammtisch Verwaltung|
+|**Namespace**<br>sap.stammtisch.ui|
+|**UI5 Theme**<br>sap_horizon|
+|**UI5 Version**<br>1.136.0|
+|**Enable Code Assist Libraries**<br>False|
+|**Enable TypeScript**<br>False|
+|**Add Eslint configuration**<br>False|
+|**Main Entity**<br>Stammtische|
+|**Navigation Entity**<br>teilnehmer|
+
+## app
+
+SAP Stammtisch
+
+### Starting the generated app
+
+-   This app has been generated using the SAP Fiori tools - App Generator, as part of the SAP Fiori tools suite.  In order to launch the generated app, simply start your CAP project and navigate to the following location in your browser:
+
+http://localhost:4004/app/webapp/index.html
+
+#### Pre-requisites:
+
+1. Active NodeJS LTS (Long Term Support) version and associated supported NPM version.  (See https://nodejs.org)
+</file>
+
+<file path="app/ui5.yaml">
+# yaml-language-server: $schema=https://sap.github.io/ui5-tooling/schema/ui5.yaml.json
+
+specVersion: "3.1"
+metadata:
+  name: sap.stammtisch.ui.app
+type: application
+server:
+  customMiddleware:
+    - name: fiori-tools-proxy
+      afterMiddleware: compression
+      configuration:
+        ignoreCertError: false # If set to true, certificate errors will be ignored. E.g. self-signed certificates will be accepted
+        ui5:
+          path:
+            - /resources
+            - /test-resources
+          url: https://sapui5.hana.ondemand.com
+    - name: fiori-tools-appreload
+      afterMiddleware: compression
+      configuration:
+        port: 35729
+        path: webapp
+        delay: 300
+</file>
+
+<file path="app/webapp/Component.js">
+sap.ui.define(
+    ["sap/fe/core/AppComponent"],
+    function (Component) {
+        "use strict";
+
+        return Component.extend("sap.stammtisch.ui.app.Component", {
+            metadata: {
+                manifest: "json"
+            }
+        });
+    }
+);
+</file>
+
+<file path="app/webapp/ext/AIChatPopover.fragment.xml">
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:l="sap.ui.layout">
+    <Popover
+        id="aiChatPopoverControl"
+        title="AI Chat Assistant"
+        placement="Auto"
+        contentWidth="400px"
+        contentHeight="350px"
+        resizable="true"
+        showHeader="true"> <!-- showHeader=true, damit der Titel angezeigt wird -->
+        <!-- initialFocus="chatInputInPopover" --> <!-- Optional: Fokus auf Eingabefeld setzen -->
+        <content>
+            <VBox fitContainer="true" justifyContent="SpaceBetween" height="100%">
+                <ScrollContainer
+                    height="calc(100% - 60px)"
+                    width="100%"
+                    horizontal="false"
+                    vertical="true"
+                    class="sapUiSmallMarginTopBottom">
+                    <List
+                        id="chatHistoryListInPopover"
+                        items="{chat>/chatHistory}"
+                        showSeparators="None"
+                        class="sapUiSmallMarginBeginEnd">
+                        <CustomListItem>
+                            <HBox class="sapUiSmallMarginBeginEnd sapUiTinyMarginTopBottom"
+                                  justifyContent="{= ${chat>type} === 'user' ? 'End' : 'Start' }">
+                                <VBox>
+                                    <Text text="{chat>text}" class="sapUiSmallMarginBottom"
+                                          wrapping="true"
+                                          width="auto"
+                                          textAlign="{= ${chat>type} === 'user' ? 'End' : 'Start' }" />
+                                    <Label text="{= ${chat>type} === 'user' ? 'You' : 'Assistant' }"
+                                           design="{= ${chat>type} === 'user' ? 'Bold' : 'Standard' }"
+                                           class="sapUiTinyMarginBottom"/>
+                                </VBox>
+                            </HBox>
+                        </CustomListItem>
+                    </List>
+                </ScrollContainer>
+                <Bar>
+                    <contentMiddle>
+                        <Input
+                            id="chatInputInPopover"
+                            value="{chat>/userInput}"
+                            placeholder="Type your message..."
+                            width="100%"
+                            submit=".onSendChatMessageInPopover"/> <!-- Methode im Fragment-Controller -->
+                    </contentMiddle>
+                    <contentRight>
+                        <Button icon="sap-icon://paper-plane" press=".onSendChatMessageInPopover" tooltip="Send"/>
+                    </contentRight>
+                </Bar>
+            </VBox>
+        </content>
+        <!-- Popover haben typischerweise keine expliziten Schließen-Buttons im Footer,
+             sie schließen durch Klick außerhalb oder ESC.
+             Man könnte aber einen hinzufügen, wenn gewünscht. -->
+        <!-- <endButton>
+            <Button text="Close" press="onClosePopoverSomehow" />
+        </endButton> -->
+    </Popover>
+</core:FragmentDefinition>
+</file>
+
+<file path="app/webapp/ext/CustomActions.js">
+sap.ui.define([
+    "sap/ui/core/Fragment",
+    "sap/m/MessageToast",
+    "sap/ui/model/json/JSONModel",
+    "sap/m/Popover", // Popover explizit importieren, falls nicht schon durch Fragment
+    "sap/m/PlacementType" // Für die Platzierung des Popovers
+], function (Fragment, MessageToast, JSONModel, Popover, PlacementType) {
+    "use strict";
+
+    var oChatPopover; // Wird jetzt ein Popover sein
+    var oChatModel;
+    var fragmentControllerInstance; // Für die Event-Handler im Fragment
+
+    function initializeChatIfNeeded(pageController, oOpeningControl) { // oOpeningControl ist der Button
+        if (!oChatModel) {
+            oChatModel = new JSONModel({
+                chatHistory: [],
+                userInput: ""
+            });
+        }
+        pageController._view.setModel(oChatModel, "chat");
+
+        if (!oChatPopover) {
+            fragmentControllerInstance = {
+                _pageController: pageController,
+                _openingControl: oOpeningControl, // Merken für späteres Schließen, falls nötig
+
+                // Keine explizite Schließen-Aktion vom Popover-Inhalt, da Klick außerhalb schließt
+                // Aber wir behalten die Send-Logik
+                onSendChatMessageInPopover: function () { // Umbenannt zur Klarheit
+                    var sUserInput = oChatModel.getProperty("/userInput");
+                    if (!sUserInput || !sUserInput.trim()) {
+                        MessageToast.show("Please enter a message.");
+                        return;
+                    }
+                    var aHistory = oChatModel.getProperty("/chatHistory");
+                    aHistory.push({ type: "user", text: sUserInput });
+                    oChatModel.setProperty("/chatHistory", aHistory);
+                    oChatModel.setProperty("/userInput", "");
+
+                    var oExtensionAPI = this._pageController.getExtensionAPI();
+                    
+                    aHistory.push({ type: "assistant", text: "Thinking..." });
+                    oChatModel.setProperty("/chatHistory", aHistory);
+
+                    oExtensionAPI.invokeAction("StammtischService.callClaude", {
+                        parameters: { prompt: sUserInput }
+                    }).then(function (oResultContext) {
+                        var resultData = oResultContext.getObject();
+                        var sResponse = (resultData && resultData.response) ? resultData.response : "No valid response.";
+                        aHistory.pop();
+                        aHistory.push({ type: "assistant", text: sResponse });
+                        oChatModel.setProperty("/chatHistory", aHistory);
+                    }).catch(function (oError) {
+                        console.error("AI Action Error:", oError);
+                        MessageToast.show("Error calling AI: " + (oError.message || "Unknown error"));
+                        aHistory.pop();
+                        aHistory.push({ type: "assistant", text: "Error: Could not get response." });
+                        oChatModel.setProperty("/chatHistory", aHistory);
+                    });
+                },
+                // Diese Methode wird vom Popover selbst aufgerufen, wenn er geschlossen wird
+                // (z.B. durch Klick außerhalb)
+                afterPopoverClose: function() {
+                    console.log("Chat Popover closed");
+                    // Hier könnte Aufräumlogik stehen, falls nötig
+                }
+            };
+
+            return Fragment.load({
+                id: pageController._view.getId() + "--aiChatPopover", // Eindeutige ID
+                name: "sap.stammtisch.ui.app.ext.AIChatPopover",   // NEUER FRAGMENTNAME
+                controller: fragmentControllerInstance
+            }).then(function (oLoadedPopover) {
+                oChatPopover = oLoadedPopover;
+                pageController._view.addDependent(oChatPopover);
+                // Event-Handler für das Schließen des Popovers registrieren
+                oChatPopover.attachAfterClose(fragmentControllerInstance.afterPopoverClose, fragmentControllerInstance);
+                return oChatPopover;
+            });
+        }
+        return Promise.resolve(oChatPopover);
+    }
+
+    return {
+        onOpenAIChatDialog: function (oEvent) { // oEvent ist hier das Button-Press-Event
+            var pageController = this; // 'this' ist der FE Page Controller
+            var oButton = oEvent.getSource(); // Der Button, der geklickt wurde
+
+            console.log("onOpenAIChatDialog (for Popover) called. Page Controller:", pageController);
+
+            initializeChatIfNeeded(pageController, oButton).then(function(popoverInstance){
+                if (popoverInstance) {
+                    popoverInstance.setModel(oChatModel, "chat");
+                    if (popoverInstance.isOpen()) {
+                        popoverInstance.close();
+                    } else {
+                        // Popover relativ zum geklickten Button öffnen
+                        popoverInstance.openBy(oButton);
+                    }
+                } else {
+                    MessageToast.show("Could not load chat popover.");
+                }
+            }).catch(function(err){
+                MessageToast.show("Error initializing chat: " + err.message);
+                console.error("Error initializing chat:", err);
+            });
+        }
+    };
+});
+</file>
+
+<file path="app/webapp/i18n/i18n.properties">
+# This is the resource bundle for sap.stammtisch.ui.app
+
+#Texts for manifest.json
+
+#XTIT: Application name
+appTitle=Stammtisch Verwaltung
+
+#YDES: Application description
+appDescription=SAP Stammtisch
+
+#XBUT: Text for AI Chat button
+btnTextAIChat=AI Chat
+</file>
+
+<file path="app/webapp/index.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Stammtisch Verwaltung</title>
+    <style>
+        html, body, body > div, #container, #container-uiarea {
+            height: 100%;
+        }
+    </style>
+    <script
+        id="sap-ui-bootstrap"
+        src="https://sapui5.hana.ondemand.com/1.136.0/resources/sap-ui-core.js"
+        data-sap-ui-theme="sap_horizon"
+        data-sap-ui-resourceroots='{
+            "sap.stammtisch.ui.app": "./"
+        }'
+        data-sap-ui-oninit="module:sap/ui/core/ComponentSupport"
+        data-sap-ui-compatVersion="edge"
+        data-sap-ui-async="true"
+        data-sap-ui-frameOptions="trusted"
+    ></script>
+</head>
+<body class="sapUiBody sapUiSizeCompact" id="content">
+    <div
+        data-sap-ui-component
+        data-name="sap.stammtisch.ui.app"
+        data-id="container"
+        data-settings='{"id" : "sap.stammtisch.ui.app"}'
+        data-handle-validation="true"
+    ></div>
+</body>
+</html>
+</file>
+
+<file path="app/webapp/manifest.json">
+{
+  "_version": "1.65.0",
+  "sap.app": {
+    "id": "sap.stammtisch.ui.app",
+    "type": "application",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": {
+      "version": "0.0.1"
+    },
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "resources": "resources.json",
+    "sourceTemplate": {
+      "id": "@sap/generator-fiori:lrop",
+      "version": "1.17.5",
+      "toolsId": "2418c640-e786-47b9-ad94-903960b6e258"
+    },
+    "dataSources": {
+      "mainService": {
+        "uri": "/service/stammtisch/",
+        "type": "OData",
+        "settings": {
+          "annotations": [],
+          "odataVersion": "4.0"
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "icons": {
+      "icon": "",
+      "favIcon": "",
+      "phone": "",
+      "phone@2": "",
+      "tablet": "",
+      "tablet@2": ""
+    },
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "flexEnabled": true,
+    "dependencies": {
+      "minUI5Version": "1.136.0",
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {},
+        "sap.fe.templates": {}
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "sap.stammtisch.ui.app.i18n.i18n"
+        }
+      },
+      "": {
+        "dataSource": "mainService",
+        "preload": true,
+        "settings": {
+          "operationMode": "Server",
+          "autoExpandSelect": true,
+          "earlyRequests": true
+        }
+      },
+      "@i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "uri": "i18n/i18n.properties"
+      }
+    },
+    "resources": {
+      "css": []
+    },
+    "routing": {
+      "config": {},
+      "routes": [
+        {
+          "pattern": ":?query:",
+          "name": "StammtischeList",
+          "target": "StammtischeList"
+        },
+        {
+          "pattern": "Stammtische({key}):?query:",
+          "name": "StammtischeObjectPage",
+          "target": "StammtischeObjectPage"
+        },
+        {
+          "pattern": "Stammtische({key})/teilnehmer({key2}):?query:",
+          "name": "TeilnehmerObjectPage",
+          "target": "TeilnehmerObjectPage"
+        }
+      ],
+      "targets": {
+        "StammtischeList": {
+          "type": "Component",
+          "id": "StammtischeList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "contextPath": "/Stammtische",
+              "variantManagement": "Page",
+              "navigation": {
+                "Stammtische": {
+                  "detail": {
+                    "route": "StammtischeObjectPage"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  },
+                  "actions": {
+                    "AIChatAction": {
+                      "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                      "text": "{{btnTextAIChat}}",
+                      "visible": true,
+                      "enabled": true,
+                      "requiresSelection": false 
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        },
+        "StammtischeObjectPage": {
+          "type": "Component",
+          "id": "StammtischeObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Stammtische",
+              "navigation": {
+                "teilnehmer": {
+                  "detail": {
+                    "route": "TeilnehmerObjectPage"
+                  }
+                }
+              },
+              "actions": {
+                "AIChatActionStammtischOP": {
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "text": "{{btnTextAIChat}}",
+                  "visible": true,
+                  "enabled": true,
+                  "requiresSelection": false 
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        },
+        "TeilnehmerObjectPage": {
+          "type": "Component",
+          "id": "TeilnehmerObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Stammtische/teilnehmer",
+              "actions": {
+                "AIChatActionTeilnehmerOP": {
+                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
+                  "text": "{{btnTextAIChat}}",
+                  "visible": true,
+                  "enabled": true,
+                  "requiresSelection": false 
+                }
+              }
+            }
+          },
+          "extends": {
+            "controller": {
+                "name": "sap.stammtisch.ui.app.ext.CustomActions",
+                "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        }
+      }
+    }
+  },
+  "sap.fiori": {
+    "registrationIds": [],
+    "archeType": "transactional"
+  }
+}
+</file>
+
+<file path="app/webapp/test/flpSandbox.html">
+<!DOCTYPE HTML>
+<html lang="en">
+<!-- Copyright (c) 2015 SAP AG, All Rights Reserved -->
+<head>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{appTitle}}</title>
+
+    <!-- Bootstrap the unified shell in sandbox mode for standalone usage.
+
+         The renderer is specified in the global Unified Shell configuration object "sap-ushell-config".
+
+         The fiori2 renderer will render the shell header allowing, for instance,
+         testing of additional application setting buttons.
+
+         The navigation target resolution service is configured in a way that the empty URL hash is
+         resolved to our own application.
+
+         This example uses relative path references for the SAPUI5 resources and test-resources;
+         it might be necessary to adapt them depending on the target runtime platform.
+         The sandbox platform is restricted to development or demo use cases and must NOT be used
+         for productive scenarios.
+    -->
+    <script type="text/javascript">
+        window["sap-ushell-config"] = {
+            defaultRenderer: "fiori2",
+            bootstrapPlugins: {
+                "RuntimeAuthoringPlugin": {
+                    component: "sap.ushell.plugins.rta",
+                    config: {
+                        validateAppVersion: false
+                    }
+                }
+            },
+            renderers: {
+                fiori2: {
+                    componentData: {
+                        config: {
+                            search: "hidden",
+                            enableSearch: false
+                        }
+                    }
+                }
+            },
+            applications: {
+                "sapstammtischuiapp-tile": {
+                    title: "Stammtisch Verwaltung",
+                    description: "SAP Stammtisch",
+                    additionalInformation: "SAPUI5.Component=sap.stammtisch.ui.app",
+                    applicationType: "URL",
+                    url: "../"
+                }
+            }
+        };
+    </script>
+
+    <script src="https://sapui5.hana.ondemand.com/1.136.0/test-resources/sap/ushell/bootstrap/sandbox.js" id="sap-ushell-bootstrap"></script>
+    <!-- Bootstrap the UI5 core library. 'data-sap-ui-frameOptions="allow"'' is a NON-SECURE setting for test environments -->
+    <script id="sap-ui-bootstrap"
+        src="https://sapui5.hana.ondemand.com/1.136.0/resources/sap-ui-core.js"
+        data-sap-ui-libs=""
+        data-sap-ui-async="true"
+        data-sap-ui-preload="async"
+        data-sap-ui-theme="sap_horizon"
+        data-sap-ui-compatVersion="edge"
+        data-sap-ui-language="en"
+        data-sap-ui-resourceroots='{"sap.stammtisch.ui.app": "../"}'
+        data-sap-ui-frameOptions="allow"
+        data-sap-ui-flexibilityServices='[{"connector": "LocalStorageConnector"}]'>
+    </script>
+    <script>
+        sap.ui.getCore().attachInit(function () {
+            sap.ushell.Container.createRenderer().placeAt("content");
+        });
+    </script>
+</head>
+
+<!-- UI Content -->
+
+<body class="sapUiBody" id="content">
+</body>
+
+</html>
+</file>
+
+<file path="app/webapp/test/integration/FirstJourney.js">
+sap.ui.define([
+    "sap/ui/test/opaQunit"
+], function (opaTest) {
+    "use strict";
+
+    var Journey = {
+        run: function() {
+            QUnit.module("First journey");
+
+            opaTest("Start application", function (Given, When, Then) {
+                Given.iStartMyApp();
+
+                Then.onTheStammtischeList.iSeeThisPage();
+
+            });
+
+
+            opaTest("Navigate to ObjectPage", function (Given, When, Then) {
+                // Note: this test will fail if the ListReport page doesn't show any data
+                
+                When.onTheStammtischeList.onFilterBar().iExecuteSearch();
+                
+                Then.onTheStammtischeList.onTable().iCheckRows();
+
+                When.onTheStammtischeList.onTable().iPressRow(0);
+                Then.onTheStammtischeObjectPage.iSeeThisPage();
+
+            });
+
+            opaTest("Teardown", function (Given, When, Then) { 
+                // Cleanup
+                Given.iTearDownMyApp();
+            });
+        }
+    }
+
+    return Journey;
+});
+</file>
+
+<file path="app/webapp/test/integration/opaTests.qunit.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Integration tests</title>
+    <meta charset="utf-8">
+
+    <script id="sap-ui-bootstrap"
+            src="/resources/sap-ui-core.js"
+            data-sap-ui-theme='sap_fiori_3'
+            data-sap-ui-resourceroots='{
+                "sap.stammtisch.ui.app": "../../"
+            }'
+            data-sap-ui-animation="false"
+            data-sap-ui-compatVersion="edge"
+            data-sap-ui-async="true">
+    </script>
+
+    <link rel="stylesheet" type="text/css" href="/resources/sap/ui/thirdparty/qunit-2.css">
+
+    <script src="/resources/sap/ui/thirdparty/qunit-2.js"></script>
+    <script src="/resources/sap/ui/qunit/qunit-junit.js"></script>
+
+    <script src="opaTests.qunit.js"></script>
+
+</head>
+<body>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+</body>
+</html>
+</file>
+
+<file path="app/webapp/test/integration/opaTests.qunit.js">
+sap.ui.require(
+    [
+        'sap/fe/test/JourneyRunner',
+        'sap/stammtisch/ui/app/test/integration/FirstJourney',
+		'sap/stammtisch/ui/app/test/integration/pages/StammtischeList',
+		'sap/stammtisch/ui/app/test/integration/pages/StammtischeObjectPage',
+		'sap/stammtisch/ui/app/test/integration/pages/TeilnehmerObjectPage'
+    ],
+    function(JourneyRunner, opaJourney, StammtischeList, StammtischeObjectPage, TeilnehmerObjectPage) {
+        'use strict';
+        var JourneyRunner = new JourneyRunner({
+            // start index.html in web folder
+            launchUrl: sap.ui.require.toUrl('sap/stammtisch/ui/app') + '/index.html'
+        });
+
+       
+        JourneyRunner.run(
+            {
+                pages: { 
+					onTheStammtischeList: StammtischeList,
+					onTheStammtischeObjectPage: StammtischeObjectPage,
+					onTheTeilnehmerObjectPage: TeilnehmerObjectPage
+                }
+            },
+            opaJourney.run
+        );
+    }
+);
+</file>
+
+<file path="app/webapp/test/integration/pages/StammtischeList.js">
+sap.ui.define(['sap/fe/test/ListReport'], function(ListReport) {
+    'use strict';
+
+    var CustomPageDefinitions = {
+        actions: {},
+        assertions: {}
+    };
+
+    return new ListReport(
+        {
+            appId: 'sap.stammtisch.ui.app',
+            componentId: 'StammtischeList',
+            contextPath: '/Stammtische'
+        },
+        CustomPageDefinitions
+    );
+});
+</file>
+
+<file path="app/webapp/test/integration/pages/StammtischeObjectPage.js">
+sap.ui.define(['sap/fe/test/ObjectPage'], function(ObjectPage) {
+    'use strict';
+
+    var CustomPageDefinitions = {
+        actions: {},
+        assertions: {}
+    };
+
+    return new ObjectPage(
+        {
+            appId: 'sap.stammtisch.ui.app',
+            componentId: 'StammtischeObjectPage',
+            contextPath: '/Stammtische'
+        },
+        CustomPageDefinitions
+    );
+});
+</file>
+
+<file path="app/webapp/test/integration/pages/TeilnehmerObjectPage.js">
+sap.ui.define(['sap/fe/test/ObjectPage'], function(ObjectPage) {
+    'use strict';
+
+    var CustomPageDefinitions = {
+        actions: {},
+        assertions: {}
+    };
+
+    return new ObjectPage(
+        {
+            appId: 'sap.stammtisch.ui.app',
+            componentId: 'TeilnehmerObjectPage',
+            contextPath: '/Stammtische/teilnehmer'
+        },
+        CustomPageDefinitions
+    );
+});
+</file>
+
+<file path="app/webapp/test/testsuite.qunit.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>QUnit test suite</title>
+    <script src="../resources/sap/ui/qunit/qunit-redirect.js"></script>
+    <script src="testsuite.qunit.js" data-sap-ui-testsuite></script>
+  </head>
+  <body></body>
+</html>
+</file>
+
+<file path="app/webapp/test/testsuite.qunit.js">
+window.suite = function() {
+    'use strict';
+
+    // eslint-disable-next-line
+    var oSuite = new parent.jsUnitTestSuite(),
+    
+    sContextPath = location.pathname.substring(0, location.pathname.lastIndexOf('/') + 1);
+    oSuite.addTestPage(sContextPath + 'integration/opaTests.qunit.html');
+
+    return oSuite;
+};
+</file>
+
+<file path="services.cds">
+using from './app/annotations';
+</file>
+
+</files>
