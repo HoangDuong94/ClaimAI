@@ -6,11 +6,11 @@
   "license": "ISC",
   "dependencies": {
     "@cap-js/postgres": "^1",
+    "@sap-ai-sdk/orchestration": "^1.13.0",
     "@sap-cloud-sdk/connectivity": "^4.0.2",
     "@sap-cloud-sdk/http-client": "^4.0.2",
     "@sap-cloud-sdk/resilience": "^4.0.2",
     "@sap/cds": "^8.9.4",
-    "cap-llm-plugin": "^1.5.0",
     "cds-pg": "^0.1.36",
     "express": "^4",
     "pg": "^8"
@@ -32,7 +32,7 @@
         "[development]": {
           "credentials": {
             "host": "localhost",
-            "port": 5432,
+            "port": 5433,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"
@@ -42,7 +42,7 @@
           "kind": "postgres",
           "credentials": {
             "host": "localhost",
-            "port": 5432,
+            "port": 5433,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"
@@ -53,7 +53,6 @@
         "kind": "mocked"
       },
       "destinations": true,
-      "cap-llm-plugin": true,
       "gen-ai-hub": {
         "claude-3.5": {
           "destinationName": "GenAIHubDestination",
@@ -76,6 +75,6 @@
     }
   },
   "sapux": [
-    "app/app"
+    "app"
   ]
 }

@@ -1,4 +1,5 @@
-using { sap.stammtisch as StammtischModel } from '../db/schema'; 
+using { sap.stammtisch as StammtischModel } from '../db/schema';
+using from '../app/annotations'; 
 
 service StammtischService @(path: '/service/stammtisch') { 
 
@@ -8,6 +9,6 @@ service StammtischService @(path: '/service/stammtisch') {
     entity Praesentatoren as projection on StammtischModel.Praesentatoren;
     entity Teilnehmer     as projection on StammtischModel.Teilnehmer;
 
-    action callClaude (prompt: String) returns { response: String };
+    action callLLM (prompt: String) returns { response: String };
 
 }

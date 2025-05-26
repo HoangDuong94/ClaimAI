@@ -1,4 +1,4 @@
-using StammtischService as service from '../../srv/service';
+using StammtischService as service from '../srv/service';
 annotate service.Stammtische with @(
     UI.FieldGroup #GeneratedGroup : {
         $Type : 'UI.FieldGroupType',
