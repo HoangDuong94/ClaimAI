@@ -6,7 +6,7 @@
   --sapHorizon-Blue-Primary: #0070F2;
   --sapHorizon-Blue-Secondary: #E7F3FF;
   --sapHorizon-Blue-Accent: #004B9E;
-  
+
   /* Neutral Colors */
   --sapHorizon-Neutral-100: #FFFFFF;
   --sapHorizon-Neutral-200: #F5F6F7;
@@ -16,32 +16,32 @@
   --sapHorizon-Neutral-600: #556B82;
   --sapHorizon-Neutral-700: #354A5F;
   --sapHorizon-Neutral-800: #1D2D3E;
-  
+
   /* Semantic Colors */
   --sapHorizon-Success: #30914C;
   --sapHorizon-Warning: #E76B00;
   --sapHorizon-Error: #BB0000;
   --sapHorizon-Information: #0070F2;
-  
+
   /* SAP Horizon Spacing */
   --sapHorizon-Space-Tiny: 0.25rem;
   --sapHorizon-Space-Small: 0.5rem;
   --sapHorizon-Space-Medium: 1rem;
   --sapHorizon-Space-Large: 1.5rem;
   --sapHorizon-Space-XLarge: 2rem;
-  
+
   /* SAP Horizon Typography */
   --sapHorizon-FontFamily: "72", "72full", Arial, Helvetica, sans-serif;
   --sapHorizon-FontSize-Small: 0.75rem;
   --sapHorizon-FontSize-Medium: 0.875rem;
   --sapHorizon-FontSize-Large: 1rem;
   --sapHorizon-FontSize-XLarge: 1.25rem;
-  
+
   /* SAP Horizon Shadows */
   --sapHorizon-Shadow-Level1: 0 0.125rem 0.5rem 0 rgba(29, 45, 62, 0.1);
   --sapHorizon-Shadow-Level2: 0 0.25rem 1rem 0 rgba(29, 45, 62, 0.15);
   --sapHorizon-Shadow-Level3: 0 0.5rem 1.5rem 0 rgba(29, 45, 62, 0.2);
-  
+
   /* SAP Horizon Border Radius */
   --sapHorizon-BorderRadius-Small: 0.25rem;
   --sapHorizon-BorderRadius-Medium: 0.5rem;
@@ -271,7 +271,8 @@
   height: 0.5rem !important;
   border-radius: 50%;
   background-color: var(--sapHorizon-Blue-Primary);
-  font-size: 0 !important; /* Hide any icon content */
+  font-size: 0 !important;
+  /* Hide any icon content */
   min-width: 0.5rem;
   min-height: 0.5rem;
 }
@@ -291,10 +292,14 @@
 }
 
 @keyframes horizonTypingBounce {
-  0%, 80%, 100% {
+
+  0%,
+  80%,
+  100% {
     transform: scale(0.8);
     opacity: 0.5;
   }
+
   40% {
     transform: scale(1);
     opacity: 1;
@@ -427,6 +432,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -446,16 +452,16 @@
   .modernMessagesWrapper {
     padding: var(--sapHorizon-Space-Large);
   }
-  
+
   .modernUserMessage,
   .modernAssistantMessage {
     max-width: 85%;
   }
-  
+
   .modernInputContainer {
     padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
   }
-  
+
   .modernChatHeader {
     padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
   }
@@ -503,4 +509,325 @@
   font-size: var(--sapHorizon-FontSize-Small);
   color: #8B4000;
   font-weight: 500;
+}
+
+/* =====================================================
+   AI CHAT MESSAGE FORMATTING - Zusätzliche CSS Regeln
+   Fügen Sie diese Regeln zu Ihrer customStyles.css hinzu
+   ===================================================== */
+
+/* AI Message Content Wrapper */
+.modernAssistantText {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  line-height: 1.6;
+  color: var(--sapHorizon-Neutral-800) !important;
+  word-wrap: break-word;
+}
+
+/* AI Content Typography */
+.ai-paragraph {
+  margin: 0 0 var(--sapHorizon-Space-Medium) 0;
+  line-height: 1.6;
+}
+
+.ai-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* AI Headers */
+.ai-header-1 {
+  font-size: var(--sapHorizon-FontSize-XLarge);
+  font-weight: 600;
+  color: var(--sapHorizon-Blue-Primary);
+  margin: var(--sapHorizon-Space-Large) 0 var(--sapHorizon-Space-Medium) 0;
+  border-bottom: 2px solid var(--sapHorizon-Blue-Secondary);
+  padding-bottom: var(--sapHorizon-Space-Tiny);
+}
+
+.ai-header-2 {
+  font-size: var(--sapHorizon-FontSize-Large);
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-800);
+  margin: var(--sapHorizon-Space-Large) 0 var(--sapHorizon-Space-Medium) 0;
+}
+
+.ai-header-3 {
+  font-size: var(--sapHorizon-FontSize-Medium);
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-700);
+  margin: var(--sapHorizon-Space-Medium) 0 var(--sapHorizon-Space-Small) 0;
+}
+
+/* AI Text Formatting */
+.ai-bold {
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-800);
+}
+
+.ai-italic {
+  font-style: italic;
+  color: var(--sapHorizon-Neutral-700);
+}
+
+/* AI Code Styling */
+.ai-code-block {
+  background: var(--sapHorizon-Neutral-200);
+  border: 1px solid var(--sapHorizon-Neutral-300);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  margin: var(--sapHorizon-Space-Medium) 0;
+  overflow: hidden;
+  box-shadow: var(--sapHorizon-Shadow-Level1);
+}
+
+.ai-code-header {
+  background: var(--sapHorizon-Neutral-300);
+  padding: var(--sapHorizon-Space-Tiny) var(--sapHorizon-Space-Medium);
+  font-size: var(--sapHorizon-FontSize-Small);
+  font-weight: 600;
+  color: var(--sapHorizon-Neutral-700);
+  border-bottom: 1px solid var(--sapHorizon-Neutral-400);
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ai-copy-button {
+  background: var(--sapHorizon-Blue-Primary);
+  color: var(--sapHorizon-Neutral-100);
+  border: none;
+  padding: 4px 8px;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+  font-size: var(--sapHorizon-FontSize-Small);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--sapHorizon-FontFamily);
+}
+
+.ai-copy-button:hover {
+  background: var(--sapHorizon-Blue-Accent);
+  transform: scale(1.05);
+}
+
+.ai-copy-button:active {
+  transform: scale(0.95);
+}
+
+.ai-code-content {
+  padding: var(--sapHorizon-Space-Medium);
+  margin: 0;
+  font-family: 'Courier New', Monaco, 'Lucida Console', monospace;
+  font-size: var(--sapHorizon-FontSize-Small);
+  line-height: 1.4;
+  color: var(--sapHorizon-Neutral-800);
+  background: transparent;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-x: auto;
+}
+
+.ai-inline-code {
+  background: var(--sapHorizon-Neutral-200);
+  color: var(--sapHorizon-Blue-Accent);
+  padding: 2px 6px;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+  font-family: 'Courier New', Monaco, 'Lucida Console', monospace;
+  font-size: 0.9em;
+  font-weight: 500;
+  border: 1px solid var(--sapHorizon-Neutral-300);
+}
+
+/* AI Lists */
+.ai-unordered-list,
+.ai-ordered-list {
+  margin: var(--sapHorizon-Space-Medium) 0;
+  padding-left: var(--sapHorizon-Space-Large);
+}
+
+.ai-unordered-list {
+  list-style-type: none;
+}
+
+.ai-ordered-list {
+  list-style-type: decimal;
+}
+
+.ai-list-item,
+.ai-numbered-item {
+  margin: var(--sapHorizon-Space-Tiny) 0;
+  line-height: 1.5;
+  position: relative;
+}
+
+.ai-unordered-list .ai-list-item::before {
+  content: "▪";
+  /* color: var(--sapHorizon-Blue-Primary); */
+  font-weight: bold;
+  position: absolute;
+/* left: calc(-1 * var(--sapHorizon-Space-Large)); */
+  left: 10px;
+  font-size: 1.2em;
+}
+
+/* AI Links */
+.ai-link {
+  color: var(--sapHorizon-Blue-Primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.ai-link:hover {
+  color: var(--sapHorizon-Blue-Accent);
+  border-bottom-color: var(--sapHorizon-Blue-Primary);
+}
+
+/* AI Step-by-Step Instructions */
+.ai-step-header {
+  background: var(--sapHorizon-Blue-Secondary);
+  color: var(--sapHorizon-Blue-Accent);
+  padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Medium);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  margin: var(--sapHorizon-Space-Medium) 0 var(--sapHorizon-Space-Small) 0;
+  border-left: 4px solid var(--sapHorizon-Blue-Primary);
+  font-weight: 600;
+}
+
+/* SAP-specific Terms Highlighting */
+.ai-sap-term {
+  background: linear-gradient(120deg, var(--sapHorizon-Blue-Secondary) 0%, var(--sapHorizon-Blue-Secondary) 100%);
+  color: var(--sapHorizon-Blue-Accent);
+  padding: 1px 4px;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+  font-weight: 500;
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+}
+
+/* AI Message Improvements */
+.modernAssistantMessage .ai-paragraph:first-child {
+  margin-top: 0;
+}
+
+.modernAssistantMessage .ai-code-block:first-child {
+  margin-top: 0;
+}
+
+.modernAssistantMessage .ai-code-block:last-child {
+  margin-bottom: 0;
+}
+
+/* Special AI Message Types */
+.ai-info-box {
+  background: var(--sapHorizon-Blue-Secondary);
+  border: 1px solid var(--sapHorizon-Blue-Primary);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  padding: var(--sapHorizon-Space-Medium);
+  margin: var(--sapHorizon-Space-Medium) 0;
+  border-left: 4px solid var(--sapHorizon-Information);
+}
+
+.ai-warning-box {
+  background: #FFF4E6;
+  border: 1px solid var(--sapHorizon-Warning);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  padding: var(--sapHorizon-Space-Medium);
+  margin: var(--sapHorizon-Space-Medium) 0;
+  border-left: 4px solid var(--sapHorizon-Warning);
+}
+
+.ai-success-box {
+  background: #F1F8E9;
+  border: 1px solid var(--sapHorizon-Success);
+  border-radius: var(--sapHorizon-BorderRadius-Medium);
+  padding: var(--sapHorizon-Space-Medium);
+  margin: var(--sapHorizon-Space-Medium) 0;
+  border-left: 4px solid var(--sapHorizon-Success);
+}
+
+/* AI Message Animation Improvements */
+.modernAssistantMessage .ai-code-block,
+.modernAssistantMessage .ai-step-header,
+.modernAssistantMessage .ai-info-box {
+  animation: aiContentFadeIn 0.4s ease-out;
+}
+
+@keyframes aiContentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Better Scrolling for Code Blocks */
+.ai-code-content::-webkit-scrollbar {
+  height: 6px;
+}
+
+.ai-code-content::-webkit-scrollbar-track {
+  background: var(--sapHorizon-Neutral-300);
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+}
+
+.ai-code-content::-webkit-scrollbar-thumb {
+  background: var(--sapHorizon-Neutral-500);
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+}
+
+.ai-code-content::-webkit-scrollbar-thumb:hover {
+  background: var(--sapHorizon-Neutral-600);
+}
+
+/* Responsive Improvements for AI Content */
+@media (max-width: 768px) {
+  .ai-code-block {
+    margin-left: calc(-1 * var(--sapHorizon-Space-Medium));
+    margin-right: calc(-1 * var(--sapHorizon-Space-Medium));
+    border-radius: 0;
+  }
+
+  .ai-code-content {
+    font-size: var(--sapHorizon-FontSize-Small);
+  }
+
+  .ai-step-header {
+    margin-left: calc(-1 * var(--sapHorizon-Space-Small));
+    margin-right: calc(-1 * var(--sapHorizon-Space-Small));
+  }
+}
+
+/* Focus States for Accessibility */
+.ai-link:focus {
+  outline: 2px solid var(--sapHorizon-Blue-Primary);
+  outline-offset: 2px;
+  border-radius: var(--sapHorizon-BorderRadius-Small);
+}
+
+/* Print Styles for AI Content */
+@media print {
+  .ai-code-block {
+    border: 1px solid #000;
+    background: #f5f5f5;
+  }
+
+  .ai-code-header {
+    background: #e0e0e0;
+    border-bottom: 1px solid #000;
+  }
+
+  .ai-link {
+    color: #000;
+    text-decoration: underline;
+  }
+
+  .ai-link::after {
+    content: " (" attr(data-url) ")";
+    font-size: 0.8em;
+    color: #666;
+  }
 }

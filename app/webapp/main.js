@@ -59,7 +59,7 @@ sap.ui.define([
             }
         }
 
-        async callClaudeViaOperationBinding(prompt) {
+        async callLLMViaOperationBinding(prompt) {
             try {
                 if (!this.feAppComponentInstance) {
                     throw new Error("FE Component not available");
@@ -72,7 +72,7 @@ sap.ui.define([
                 }
 
                 // Erstelle Operation Binding für unbound Action
-                const oOperationBinding = oDataModel.bindContext("/callClaude(...)");
+                const oOperationBinding = oDataModel.bindContext("/callLLM(...)");
 
                 // Setze Parameter
                 oOperationBinding.setParameter("prompt", prompt);
@@ -89,7 +89,7 @@ sap.ui.define([
                 return result.response || "No response received";
 
             } catch (error) {
-                console.error("Error in callClaudeViaOperationBinding:", error);
+                console.error("Error in callLLMViaOperationBinding:", error);
                 throw error;
             }
         }
@@ -137,7 +137,7 @@ sap.ui.define([
         }
 
         // Call Claude service via HTTP
-        async callClaudeService(prompt) {
+        async callLLMService(prompt) {
             try {
                 // Get CSRF token first
                 const csrfToken = await this.getCSRFToken();
@@ -156,7 +156,7 @@ sap.ui.define([
                 };
 
                 // Make the actual call to Claude service
-                const response = await fetch(`${this.serviceUrl}/callClaude`, requestOptions);
+                const response = await fetch(`${this.serviceUrl}/callLLM`, requestOptions);
 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -259,6 +259,93 @@ sap.ui.define([
 
             this.currentRecognition.start();
         }
+
+        scrollToBottomEnhanced() {
+            if (!this.dynamicSideContent) return;
+
+            const scrollContainer = sap.ui.core.Fragment.byId(
+                "chatSidePanelFragmentGlobal",
+                "chatHistoryScrollContainerInSidePanel"
+            );
+
+            if (scrollContainer) {
+                // Warte bis HTML-Content gerendert ist
+                setTimeout(() => {
+                    scrollContainer.scrollTo(0, 99999, 500);
+
+                    // Trigger re-rendering für FormattedText mit HTML
+                    const chatList = sap.ui.core.Fragment.byId(
+                        "chatSidePanelFragmentGlobal",
+                        "chatMessagesList"
+                    );
+                    if (chatList) {
+                        chatList.getModel("chat").refresh(true);
+                    }
+                }, 150);
+            }
+        }
+
+        // Erweiterte addMessage Methode mit HTML-Unterstützung
+        addMessageEnhanced(type, text, timestamp = this.getCurrentTimestamp()) {
+            const history = this.chatModel.getProperty("/chatHistory");
+
+            // Spezielle Behandlung für HTML-Content
+            let processedText = text;
+            if (type === "assistant" && text.includes('<')) {
+                // HTML-Content erkannt - stelle sicher, dass es sicher ist
+                processedText = this.sanitizeHTMLContent(text);
+            }
+
+            history.push({
+                type,
+                text: processedText,
+                timestamp,
+                isHTML: text.includes('<') // Flag für HTML-Content
+            });
+
+            this.chatModel.setProperty("/chatHistory", history);
+            this.chatModel.refresh(true);
+
+            // Verwende enhanced scrolling für HTML-Content
+            this.scrollToBottomEnhanced();
+        }
+
+        // HTML Content Sanitization (Basis-Sicherheit)
+        sanitizeHTMLContent(html) {
+            // Erlaubte Tags für AI-Antworten
+            const allowedTags = [
+                'p', 'br', 'strong', 'em', 'code', 'pre',
+                'h1', 'h2', 'h3', 'ul', 'ol', 'li',
+                'div', 'span', 'a'
+            ];
+
+            // Entferne potentiell gefährliche Attribute
+            let sanitized = html.replace(/on\w+="[^"]*"/gi, ''); // onclick, onload, etc.
+            sanitized = sanitized.replace(/javascript:/gi, ''); // javascript: URLs
+            sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // script tags
+
+            return sanitized;
+        }
+
+        // Link-Handler für AI-Links
+        handleAILink(event) {
+            const link = event.getSource();
+            const url = link.data("url");
+
+            if (url) {
+                sap.m.MessageBox.confirm(
+                    `Möchten Sie diesen Link öffnen?\n\n${url}`,
+                    {
+                        title: "Externen Link öffnen",
+                        onClose: (action) => {
+                            if (action === sap.m.MessageBox.Action.OK) {
+                                window.open(url, '_blank', 'noopener,noreferrer');
+                            }
+                        }
+                    }
+                );
+            }
+        }
     }
 
 
@@ -284,11 +371,10 @@ sap.ui.define([
             chatManager.setStatusMessage("Sending...", 0);
 
             // Add thinking placeholder
-            chatManager.addMessage("assistant", "Thinking...");
 
             try {
                 // Call Claude service directly
-                const aiResponse = await chatManager.callClaudeViaOperationBinding(userInput);
+                const aiResponse = await chatManager.callLLMViaOperationBinding(userInput);
 
                 // Handle successful response
                 chatManager.handleAIResponse(aiResponse);
@@ -342,7 +428,116 @@ sap.ui.define([
 
         onVoiceInput() {
             chatManager.startVoiceInput();
+        },
+
+        // Code-Block Kopier-Funktion
+        async onCopyCodeBlock(event) {
+            const button = event.getSource();
+            const codeBlock = button.getParent().getParent(); // Navigation zum Code-Block
+            const codeContent = codeBlock.querySelector('.ai-code-content');
+
+            if (codeContent) {
+                const code = codeContent.textContent;
+                await chatManager.copyToClipboard(code);
+                button.setText("Kopiert!");
+                setTimeout(() => button.setText("Kopieren"), 2000);
+            }
+        },
+
+        // Erweiterte Nachrichtenbehandlung
+        onSendChatMessageInSidePanelEnhanced: async function () {
+            const userInput = chatManager.chatModel.getProperty("/userInput")?.trim();
+
+            if (!userInput) {
+                chatManager.setStatusMessage("Bitte geben Sie eine Nachricht ein.");
+                return;
+            }
+
+            // Add user message mit enhanced method
+            chatManager.addMessageEnhanced("user", userInput);
+
+            // Clear input and set loading state
+            chatManager.chatModel.setProperty("/userInput", "");
+            chatManager.chatModel.setProperty("/isTyping", true);
+            chatManager.setStatusMessage("AI denkt nach...", 0);
+
+            try {
+                // Call Claude service
+                const aiResponse = await chatManager.callLLMViaOperationBinding(userInput);
+
+                // Handle successful HTML response
+                chatManager.handleAIResponseEnhanced(aiResponse);
+                chatManager.setStatusMessage("Antwort erhalten", 2000);
+
+            } catch (error) {
+                console.error("Claude service call failed:", error);
+                chatManager.handleAIError(error.message || "Fehler beim Abrufen der AI-Antwort");
+            }
+        },
+
+        // Erweiterte AI Response Handler
+        handleAIResponseEnhanced(responseText) {
+            this.removeThinkingMessage();
+
+            // Verwende enhanced addMessage für HTML-Content
+            this.addMessageEnhanced("assistant", responseText);
+
+            this.chatModel.setProperty("/isTyping", false);
+            this.chatModel.setProperty("/statusMessage", "");
+
+            // Zusätzliche UI-Updates für HTML-Content
+            this.enhanceRenderedHTMLContent();
+        },
+
+        // Post-Processing für gerenderten HTML-Content
+        enhanceRenderedHTMLContent() {
+            setTimeout(() => {
+                // Füge Event-Listener für AI-Links hinzu
+                const aiLinks = document.querySelectorAll('.ai-link');
+                aiLinks.forEach(link => {
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const url = link.getAttribute('data-url');
+                        if (url) {
+                            sap.m.MessageBox.confirm(
+                                `Möchten Sie diesen Link öffnen?\n\n${url}`,
+                                {
+                                    title: "Externen Link öffnen",
+                                    onClose: (action) => {
+                                        if (action === sap.m.MessageBox.Action.OK) {
+                                            window.open(url, '_blank', 'noopener,noreferrer');
+                                        }
+                                    }
+                                }
+                            );
+                        }
+                    });
+                });
+
+                // Füge Kopieren-Buttons zu Code-Blöcken hinzu
+                const codeBlocks = document.querySelectorAll('.ai-code-block');
+                codeBlocks.forEach(block => {
+                    if (!block.querySelector('.ai-copy-button')) {
+                        const copyButton = document.createElement('button');
+                        copyButton.className = 'ai-copy-button';
+                        copyButton.innerHTML = '📋 Kopieren';
+                        copyButton.onclick = async () => {
+                            const code = block.querySelector('.ai-code-content').textContent;
+                            await chatManager.copyToClipboard(code);
+                            copyButton.innerHTML = '✅ Kopiert!';
+                            setTimeout(() => copyButton.innerHTML = '📋 Kopieren', 2000);
+                        };
+
+                        const header = block.querySelector('.ai-code-header');
+                        if (header) {
+                            header.appendChild(copyButton);
+                        }
+                    }
+                });
+            }, 100);
         }
+
+
     };
 
     // Enhanced global functions
@@ -461,6 +656,8 @@ sap.ui.define([
             }
         }
     };
+
+
 
     // Initialize when SAP UI5 core is ready
     sap.ui.getCore().attachInit(initializeApp);

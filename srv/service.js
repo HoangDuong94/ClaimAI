@@ -1,109 +1,126 @@
 const cds = require('@sap/cds');
-
+// Import des Enhanced AI Agent
+const EnhancedAIAgent = require('./agents/enhanced-agent');
 
 function logDbConfig() {
   if (cds.db) {
-    console.log("========== EFFECTIVE DB CONFIG (Hybrid Start from Root) ==========");
+    console.log("========== EFFECTIVE DB CONFIG ==========");
     console.log("CDS Profiles:", cds.env.profiles);
-    console.log("DB Service Kind:", cds.db.kind); // Sollte 'postgres' sein
-    console.log("DB Service Name (aus cds.requires):", cds.db.name); // Sollte 'db' sein
-    console.log("Effective DB Credentials (aus cds.env.requires.db):", JSON.stringify(cds.env.requires.db?.credentials, null, 2));
-    // Vorsicht: Obige Zeile zeigt nur, was konfiguriert ist, nicht unbedingt, was der Treiber *intern* verwendet, aber es ist ein guter Hinweis.
-    console.log("Full cds.env.requires.db (Hybrid Start from Root):", JSON.stringify(cds.env.requires.db, null, 2));
-    console.log("================================================================");
+    console.log("DB Service Kind:", cds.db.kind);
+    console.log("=========================================");
   }
 }
 
 if (cds.db) {
   logDbConfig();
 } else {
-  cds.once('connected', (service) => { // cds.once, damit es nicht mehrfach bei Reconnects loggt
-    if (service.name === 'db') { // Nur für den DB-Service loggen
+  cds.once('connected', (service) => {
+    if (service.name === 'db') {
       logDbConfig();
     }
   });
 }
 
 module.exports = cds.service.impl(async function () {
-  // Connect to cap-llm-plugin service
 
+  // Initialize Enhanced AI Agent
+  const enhancedAgent = new EnhancedAIAgent();
 
   this.on('READ', 'Stammtische', async (req, next) => {
-    console.log("----- Reading Stammtische (Hybrid Start from Root) -----");
-    console.log("Current Profile during request:", cds.env.profiles);
+    console.log("----- Reading Stammtische -----");
     try {
       const result = await next();
-      console.log("----- Stammtische read successfully (Hybrid Start from Root) -----");
+      console.log("----- Stammtische read successfully -----");
       return result;
     } catch (error) {
-      console.error("----- Error reading Stammtische (Hybrid Start from Root) -----", error);
-      throw error; // Wichtig, den Fehler weiterzuwerfen
+      console.error("----- Error reading Stammtische -----", error);
+      throw error;
     }
   });
 
+  /**
+   * Enhanced AI Assistant mit Multi-Pattern Support
+   */
   this.on('callLLM', async (req) => {
-
-    const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration');
-
     try {
       const { prompt } = req.data;
+      
       if (!prompt) {
         req.error(400, 'Prompt is required');
         return;
       }
 
-      const orchestrationClient = new OrchestrationClient({
-        llm: {
-          model_name: "gpt-4", 
-        },
-        templating: {
-          template: [{ role: 'user', content: '{{?user_prompt}}' }]
-        }
-      });
+      console.log('=== ENHANCED AI AGENT REQUEST ===');
+      console.log('User Prompt:', prompt);
+      
+      // Verwende den Enhanced AI Agent für die Verarbeitung
+      const response = await enhancedAgent.processRequest(prompt);
+      
+      console.log('=== ENHANCED AI AGENT RESPONSE ===');
+      console.log('Response Length:', response.length);
+      
+      // Performance Stats für Monitoring
+      const stats = enhancedAgent.getPerformanceStats();
+      console.log('Agent Performance Stats:', stats);
 
-      const llmParams = {
-        max_tokens_to_sample: 10000, // Entspricht deinem 'max_tokens'
-      };
-
-      const response = await orchestrationClient.chatCompletion({
-        inputParams: {
-          user_prompt: prompt
-        },
-        params: llmParams // Übergabe der LLM-spezifischen Parameter
-      });
-
-      const messageContent = response.getContent();
-
-      if (typeof messageContent !== 'string') {
-        console.warn("AI SDK response content is not a string. Stringifying entire response object.", response);
-        // Das SDK sollte bei Erfolg einen String liefern. Falls nicht, ist etwas unerwartet.
-        // Um einen Fehler zu vermeiden, geben wir das gesamte Objekt als String zurück.
-        return { response: JSON.stringify(response) };
-      }
-
-      console.log("AI SDK Extracted message content:", messageContent);
-      return { response: messageContent };
+      return { response };
 
     } catch (error) {
-      console.error('Error calling AI with SAP AI SDK:', error.message);
-      let detailedMessage = `AI request failed with SAP AI SDK: ${error.message}`;
+      console.error('=== ENHANCED AI AGENT ERROR ===');
+      console.error('Error:', error.message);
+      
+      const userFriendlyError = this.createUserFriendlyErrorMessage(error);
+      return { response: userFriendlyError };
+    }
+  });
 
-      // Das AI SDK verwendet oft das SAP Cloud SDK darunter, das Axios-Fehler werfen kann
-      if (error.isAxiosError && error.response) {
-        console.error('AI SDK Error Details:', JSON.stringify(error.response.data || error.response.statusText, null, 2));
-        detailedMessage += ` - Details: ${JSON.stringify(error.response.data || error.response.statusText)}`;
-      } else if (error.cause) { // Manchmal ist der ursprüngliche Fehler in 'cause'
-        console.error('AI SDK Error Cause:', JSON.stringify(error.cause, null, 2));
-        detailedMessage += ` - Cause: ${JSON.stringify(error.cause, null, 2)}`;
-      } else if (error.stack) {
-        console.error('AI SDK Error Stack:', error.stack);
-      }
+  /**
+   * Agent Performance Analytics Endpoint (optional)
+   */
+  this.on('getAgentStats', async (req) => {
+    try {
+      const stats = enhancedAgent.getPerformanceStats();
+      return { stats };
+    } catch (error) {
+      console.error('Error getting agent stats:', error);
+      return { error: error.message };
+    }
+  });
 
-      const capError = new Error(detailedMessage);
-      if (error.response) capError.response = error.response; // Original-Response beibehalten, falls vorhanden
-      if (error.cause) capError.cause = error.cause;
-      throw capError;
+  /**
+   * Benutzerfreundliche Fehlermeldungen
+   */
+  this.createUserFriendlyErrorMessage = function(error) {
+    if (error.message?.includes('timeout')) {
+      return `⏱️ **Zeitüberschreitung**: Die AI-Verarbeitung dauerte zu lange.
+
+**Versuchen Sie:**
+- Eine kürzere, spezifischere Frage zu stellen
+- Es in einem Moment erneut zu versuchen`;
     }
 
-  });
+    if (error.message?.includes('database') || error.message?.includes('DB')) {
+      return `🗄️ **Datenbankfehler**: Problem beim Zugriff auf die Daten.
+
+**Lösungsansätze:**
+- Versuchen Sie es in einem Moment erneut
+- Kontaktieren Sie den Administrator bei anhaltenden Problemen`;
+    }
+
+    if (error.message?.includes('classification') || error.message?.includes('orchestration')) {
+      return `🤖 **AI-Verarbeitungsfehler**: Der Agent konnte Ihre Anfrage nicht vollständig verarbeiten.
+
+**Alternative:**
+- Formulieren Sie Ihre Frage anders
+- Versuchen Sie eine einfachere Anfrage
+- Beispiel: "Zeige mir alle Stammtische" oder "Suche nach CAP"`;
+    }
+
+    return `❌ **Unerwarteter Fehler**
+
+Der AI-Agent ist temporär nicht verfügbar. Bitte versuchen Sie es später erneut.
+
+**Ihre Anfrage kann möglicherweise auch direkt in der Anwendung bearbeitet werden.**`;
+  };
+
 });

@@ -188,7 +188,6 @@
                     icon="sap-icon://paper-plane"
                     type="Transparent"
                     press="onSendChatMessageInSidePanel"
-                    enabled="{= ${chat>/userInput}.length > 0 }"
                     class=""
                     ariaLabel="Nachricht senden"/>
             </HBox>

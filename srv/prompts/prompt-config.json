@@ -1,0 +1,35 @@
+{
+  "modes": {
+    "system": {
+      "description": "Standard AI Assistant",
+      "maxTokens": 2000,
+      "temperature": 0.3
+    },
+    "technical": {
+      "description": "Technischer Support",
+      "maxTokens": 3000,
+      "temperature": 0.2
+    },
+    "training": {
+      "description": "Benutzer-Training",
+      "maxTokens": 2500,
+      "temperature": 0.4
+    },
+    "simple": {
+      "description": "Einfache Antworten",
+      "maxTokens": 1000,
+      "temperature": 0.3
+    }
+  },
+  "features": {
+    "emojiEnhancement": true,
+    "germanTranslation": true,
+    "contextAwareness": true,
+    "errorHandling": true
+  },
+  "debugging": {
+    "logFullPrompts": false,
+    "logResponses": true,
+    "logErrors": true
+  }
+}
