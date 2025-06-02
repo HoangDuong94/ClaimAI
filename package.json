@@ -32,7 +32,7 @@
         "[development]": {
           "credentials": {
             "host": "localhost",
-            "port": 5433,
+            "port": 5432,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"
@@ -42,7 +42,7 @@
           "kind": "postgres",
           "credentials": {
             "host": "localhost",
-            "port": 5433,
+            "port": 5432,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"

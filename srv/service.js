@@ -44,7 +44,7 @@ module.exports = cds.service.impl(async function () {
   this.on('callLLM', async (req) => {
     try {
       const { prompt } = req.data;
-      
+
       if (!prompt) {
         req.error(400, 'Prompt is required');
         return;
@@ -52,13 +52,13 @@ module.exports = cds.service.impl(async function () {
 
       console.log('=== ENHANCED AI AGENT REQUEST ===');
       console.log('User Prompt:', prompt);
-      
+
       // Verwende den Enhanced AI Agent für die Verarbeitung
       const response = await enhancedAgent.processRequest(prompt);
-      
+
       console.log('=== ENHANCED AI AGENT RESPONSE ===');
       console.log('Response Length:', response.length);
-      
+
       // Performance Stats für Monitoring
       const stats = enhancedAgent.getPerformanceStats();
       console.log('Agent Performance Stats:', stats);
@@ -68,7 +68,7 @@ module.exports = cds.service.impl(async function () {
     } catch (error) {
       console.error('=== ENHANCED AI AGENT ERROR ===');
       console.error('Error:', error.message);
-      
+
       const userFriendlyError = this.createUserFriendlyErrorMessage(error);
       return { response: userFriendlyError };
     }
@@ -90,7 +90,7 @@ module.exports = cds.service.impl(async function () {
   /**
    * Benutzerfreundliche Fehlermeldungen
    */
-  this.createUserFriendlyErrorMessage = function(error) {
+  this.createUserFriendlyErrorMessage = function (error) {
     if (error.message?.includes('timeout')) {
       return `⏱️ **Zeitüberschreitung**: Die AI-Verarbeitung dauerte zu lange.
 
