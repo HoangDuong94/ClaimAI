@@ -64,6 +64,7 @@ app/webapp/test/testsuite.qunit.html
 app/webapp/test/testsuite.qunit.js
 db/data/sap.stammtisch-Praesentatoren.csv
 db/data/sap.stammtisch-Stammtische.csv
+db/data/sap.stammtisch-Teilnehmer.csv
 db/schema.cds
 eslint.config.mjs
 package.json
@@ -78,6 +79,20 @@ srv/utils/markdown-converter.js
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="db/data/sap.stammtisch-Teilnehmer.csv">
+name;email;stammtisch_ID
+Anna Schmidt;anna.schmidt@example.com;a1b2c3d4-e5f6-7890-1234-567890abcdef
+Ben Müller;ben.mueller@example.com;a1b2c3d4-e5f6-7890-1234-567890abcdef
+Carla Lehmann;carla.lehmann@example.com;a1b2c3d4-e5f6-7890-1234-567890abcdef
+David Weber;david.weber@example.com;b2c3d4e5-f6a7-8901-2345-67890abcdef0
+Eva Schulz;eva.schulz@example.com;b2c3d4e5-f6a7-8901-2345-67890abcdef0
+Finn Wagner;finn.wagner@example.com;a1b2c3d4-e5f6-7890-1234-567890abcdef
+Greta Hoffmann;greta.hoffmann@example.com;b2c3d4e5-f6a7-8901-2345-67890abcdef0
+Hans Zimmer;hans.zimmer@example.com;b2c3d4e5-f6a7-8901-2345-67890abcdef0
+Ida Bauer;ida.bauer@example.com;a1b2c3d4-e5f6-7890-1234-567890abcdef
+Jan Klein;jan.klein@example.com;b2c3d4e5-f6a7-8901-2345-67890abcdef0
+</file>
 
 <file path=".gitignore">
 # CAP StammtischAI
@@ -118,65 +133,54 @@ mta_archives/
 
 <file path="app/annotations.cds">
 using StammtischService as service from '../srv/service';
+using { sap.stammtisch as model } from '../db/schema';
+
 annotate service.Stammtische with @(
+    UI.HeaderInfo : {
+        TypeName : 'Stammtisch',
+        TypeNamePlural : 'Stammtische',
+        Title : {Value : thema},
+        Description : {Value : ort}
+    },
     UI.FieldGroup #GeneratedGroup : {
         $Type : 'UI.FieldGroupType',
         Data : [
+            {Value : thema},
+            {Value : datum},
+            {Value : ort},
             {
-                $Type : 'UI.DataField',
-                Label : 'thema',
-                Value : thema,
+                $Type : 'UI.DataFieldForAssociation',
+                Label : 'Präsentator',
+                Value : praesentator_ID
             },
-            {
-                $Type : 'UI.DataField',
-                Label : 'datum',
-                Value : datum,
-            },
-            {
-                $Type : 'UI.DataField',
-                Label : 'ort',
-                Value : ort,
-            },
-            {
-                $Type : 'UI.DataField',
-                Label : 'notizen',
-                Value : notizen,
-            },
-        ],
+            {Value : notizen}
+        ]
     },
     UI.Facets : [
         {
             $Type : 'UI.ReferenceFacet',
-            ID : 'GeneratedFacet1',
-            Label : 'General Information',
-            Target : '@UI.FieldGroup#GeneratedGroup',
+            ID : 'StammtischGeneralInfoFacet',
+            Label : 'Allgemeine Informationen',
+            Target : '@UI.FieldGroup#GeneratedGroup'
         },
+        {
+            $Type  : 'UI.ReferenceFacet',
+            ID : 'TeilnehmerFacet',
+            Label  : 'Teilnehmer',
+            Target : 'teilnehmer/@UI.LineItem'
+        }
     ],
     UI.LineItem : [
+        {Value : thema},
+        {Value : datum},
+        {Value : ort},
         {
-            $Type : 'UI.DataField',
-            Label : 'thema',
-            Value : thema,
+            Value : praesentator.name,
+            Label : 'Präsentator'
         },
-        {
-            $Type : 'UI.DataField',
-            Label : 'datum',
-            Value : datum,
-        },
-        {
-            $Type : 'UI.DataField',
-            Label : 'ort',
-            Value : ort,
-        },
-        {
-            $Type : 'UI.DataField',
-            Label : 'notizen',
-            Value : notizen,
-        },
-    ],
-);
-
-annotate service.Stammtische with {
+        {Value : notizen, ![@UI.Importance] : #Low}
+    ]
+) {
     praesentator @Common.ValueList : {
         $Type : 'Common.ValueListType',
         CollectionPath : 'Praesentatoren',
@@ -184,23 +188,96 @@ annotate service.Stammtische with {
             {
                 $Type : 'Common.ValueListParameterInOut',
                 LocalDataProperty : praesentator_ID,
-                ValueListProperty : 'ID',
+                ValueListProperty : 'ID'
             },
             {
                 $Type : 'Common.ValueListParameterDisplayOnly',
-                ValueListProperty : 'name',
+                ValueListProperty : 'name'
             },
             {
                 $Type : 'Common.ValueListParameterDisplayOnly',
-                ValueListProperty : 'email',
-            },
-            {
-                $Type : 'Common.ValueListParameterDisplayOnly',
-                ValueListProperty : 'linkedin',
-            },
-        ],
-    }
+                ValueListProperty : 'email'
+            }
+        ]
+    };
+    praesentator @Common.SemanticObject : 'Praesentator';
 };
+
+annotate model.Stammtische with {
+    teilnehmer @(
+        UI.LineItem : [
+            { Value : name, Label : 'Name'},
+            { Value : email, Label : 'E-Mail'}
+        ],
+        UI.Identification : [{Value : name}]
+    );
+};
+
+annotate service.Praesentatoren with @(
+    UI.HeaderInfo : {
+        TypeName : 'Präsentator',
+        TypeNamePlural : 'Präsentatoren',
+        Title : {Value : name},
+        Description : {Value : email}
+    },
+    UI.LineItem : [
+        {Value : name},
+        {Value : email},
+        {Value : linkedin, ![@UI.Importance] : #Low}
+    ],
+    UI.Facets : [
+        {
+            $Type : 'UI.ReferenceFacet',
+            Label : 'Allgemeine Informationen',
+            Target : '@UI.FieldGroup#PraesentatorGeneralInfo'
+        },
+        {
+            $Type  : 'UI.ReferenceFacet',
+            Label  : 'Gehaltene Stammtische',
+            Target : 'stammtische/@UI.LineItem'
+        }
+    ],
+    UI.FieldGroup #PraesentatorGeneralInfo : {
+        Data : [
+            {Value : name},
+            {Value : email},
+            {Value : linkedin}
+        ]
+    }
+);
+
+annotate model.Praesentatoren with {
+    stammtische @(
+        UI.LineItem : [
+            {Value : thema},
+            {Value : datum},
+            {Value : ort}
+        ],
+        UI.Identification : [{Value : thema}]
+    );
+};
+
+annotate service.Teilnehmer with @(
+    UI.HeaderInfo : {
+        TypeName : 'Teilnehmer',
+        TypeNamePlural : 'Teilnehmer',
+        Title : {Value : name},
+        Description : {Value : email}
+    },
+    UI.Facets : [
+        {
+            $Type : 'UI.ReferenceFacet',
+            Label : 'Details zum Teilnehmer',
+            Target : '@UI.FieldGroup#TeilnehmerDetails'
+        }
+    ],
+    UI.FieldGroup #TeilnehmerDetails : {
+        Data : [
+            {Value : name},
+            {Value : email}
+        ]
+    }
+);
 </file>
 
 <file path="app/package.json">
@@ -503,6 +580,21 @@ btnTextAIChat=AI Chat
           "pattern": "Stammtische({key})/teilnehmer({key2}):?query:",
           "name": "TeilnehmerObjectPage",
           "target": "TeilnehmerObjectPage"
+        },
+        {
+          "pattern": "Praesentatoren:?query:",
+          "name": "PraesentatorenList",
+          "target": "PraesentatorenList"
+        },
+        {
+          "pattern": "Praesentatoren({key}):?query:",
+          "name": "PraesentatorenObjectPage",
+          "target": "PraesentatorenObjectPage"
+        },
+        {
+          "pattern": "Praesentatoren({key})/stammtische({stammtischKey}):?query:",
+          "name": "PraesentatorToStammtischObjectPage",
+          "target": "StammtischeObjectPage"
         }
       ],
       "targets": {
@@ -593,6 +685,49 @@ btnTextAIChat=AI Chat
             "controller": {
               "name": "sap.stammtisch.ui.app.ext.CustomActions",
               "namespace": "sap.stammtisch.ui.app.ext"
+            }
+          }
+        },
+        "PraesentatorenList": {
+          "type": "Component",
+          "id": "PraesentatorenList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "contextPath": "/Praesentatoren",
+              "variantManagement": "Page",
+              "navigation": {
+                "Praesentatoren": {
+                  "detail": {
+                    "route": "PraesentatorenObjectPage"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "PraesentatorenObjectPage": {
+          "type": "Component",
+          "id": "PraesentatorenObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Praesentatoren",
+              "navigation": {
+                "stammtische": {
+                  "detail": {
+                    "route": "StammtischeObjectPage"
+                  }
+                }
+              }
             }
           }
         }
@@ -897,32 +1032,59 @@ b2c3d4e5-f6a7-8901-2345-67890abcdef0;AI mit SAP BTP;2023-11-15T18:30:00Z;Online;
 </file>
 
 <file path="db/schema.cds">
-namespace sap.stammtisch; 
+namespace sap.stammtisch;
 
 using { cuid, managed, temporal } from '@sap/cds/common';
 
 entity Praesentatoren : cuid, managed {
+    @Common.Label : 'Name'
+    @Common.Text : {
+        $value : name,
+        textArrangement : #TextFirst // oder #TextOnly
+    }
     name          : String(100) not null;
+
+    @Common.Label : 'E-Mail'
     email         : String;
+
+    @Common.Label : 'LinkedIn'
     linkedin      : String;
+
+    // Diese Komposition erlaubt es, auf der Präsentator-Objektseite eine Tabelle
+    // mit den Stammtischen dieses Präsentators anzuzeigen.
     stammtische   : Composition of many Stammtische
                       on stammtische.praesentator = $self;
 }
 
-entity Stammtische : cuid, managed { // cuid, managed und temporal für Standardfelder
-    key ID            : UUID @(Core.Computed : true); // Auto-generierte UUID
+entity Stammtische : cuid, managed {
+    key ID        : UUID @(Core.Computed : true);
+
+    @Common.Label : 'Thema'
     thema         : String(255) not null;
+
+    @Common.Label : 'Datum'
     datum         : DateTime not null;
+
+    @Common.Label : 'Ort'
     ort           : String(100);
+
+    @Common.Label : 'Notizen'
     notizen       : LargeString;
+
+    @Common.Label : 'Präsentator'
     praesentator  : Association to Praesentatoren;
+
     teilnehmer    : Composition of many Teilnehmer
                       on teilnehmer.stammtisch = $self;
 }
 
 entity Teilnehmer : cuid, managed {
-    key ID            : UUID @(Core.Computed : true);
+    key ID        : UUID @(Core.Computed : true);
+
+    @Common.Label : 'Name des Teilnehmers'
     name          : String(100) not null;
+
+    @Common.Label : 'E-Mail des Teilnehmers'
     email         : String;
     stammtisch    : Association to Stammtische;
 }
@@ -2735,23 +2897,6 @@ class MarkdownConverter {
 module.exports = MarkdownConverter;
 </file>
 
-<file path=".cdsrc.json">
-{
-  "requires": {
-    "db": {
-      "kind": "postgres",
-      "credentials": {
-        "database": "stammtisch_ai_db",
-        "user": "duh",
-        "password": "test123",
-        "host": "localhost", 
-        "port": 5433        
-      }
-    }
-  }
-}
-</file>
-
 <file path="app/webapp/css/customStyles.css">
 /* SAP Horizon Theme Chat Interface - Vereinfacht */
 
@@ -4467,13 +4612,42 @@ using from '../app/annotations';
 service StammtischService @(path: '/service/stammtisch') { 
 
     @odata.draft.enabled // Aktiviere Draft-Modus für diese Entität
-    entity Stammtische    as projection on StammtischModel.Stammtische;
+    entity Stammtische as projection on StammtischModel.Stammtische {
+        *,
+        // Navigation Properties explizit exponieren
+        praesentator : redirected to Praesentatoren,
+        teilnehmer : redirected to Teilnehmer
+    };
 
-    entity Praesentatoren as projection on StammtischModel.Praesentatoren;
-    entity Teilnehmer     as projection on StammtischModel.Teilnehmer;
+    entity Praesentatoren as projection on StammtischModel.Praesentatoren {
+        *,
+        stammtische : redirected to Stammtische
+    };
+    
+    entity Teilnehmer as projection on StammtischModel.Teilnehmer {
+        *,
+        stammtisch : redirected to Stammtische
+    };
 
     action callLLM (prompt: String) returns { response: String };
 
+}
+</file>
+
+<file path=".cdsrc.json">
+{
+  "requires": {
+    "db": {
+      "kind": "postgres",
+      "credentials": {
+        "database": "stammtisch_ai_db",
+        "user": "duh",
+        "password": "test123",
+        "host": "localhost", 
+        "port": 5432        
+      }
+    }
+  }
 }
 </file>
 
@@ -4512,7 +4686,7 @@ service StammtischService @(path: '/service/stammtisch') {
         "[development]": {
           "credentials": {
             "host": "localhost",
-            "port": 5433,
+            "port": 5432,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"
@@ -4522,7 +4696,7 @@ service StammtischService @(path: '/service/stammtisch') {
           "kind": "postgres",
           "credentials": {
             "host": "localhost",
-            "port": 5433,
+            "port": 5432,
             "database": "stammtisch_ai_db",
             "user": "duh",
             "password": "test123"
@@ -4607,7 +4781,7 @@ module.exports = cds.service.impl(async function () {
   this.on('callLLM', async (req) => {
     try {
       const { prompt } = req.data;
-      
+
       if (!prompt) {
         req.error(400, 'Prompt is required');
         return;
@@ -4615,13 +4789,13 @@ module.exports = cds.service.impl(async function () {
 
       console.log('=== ENHANCED AI AGENT REQUEST ===');
       console.log('User Prompt:', prompt);
-      
+
       // Verwende den Enhanced AI Agent für die Verarbeitung
       const response = await enhancedAgent.processRequest(prompt);
-      
+
       console.log('=== ENHANCED AI AGENT RESPONSE ===');
       console.log('Response Length:', response.length);
-      
+
       // Performance Stats für Monitoring
       const stats = enhancedAgent.getPerformanceStats();
       console.log('Agent Performance Stats:', stats);
@@ -4631,7 +4805,7 @@ module.exports = cds.service.impl(async function () {
     } catch (error) {
       console.error('=== ENHANCED AI AGENT ERROR ===');
       console.error('Error:', error.message);
-      
+
       const userFriendlyError = this.createUserFriendlyErrorMessage(error);
       return { response: userFriendlyError };
     }
@@ -4653,7 +4827,7 @@ module.exports = cds.service.impl(async function () {
   /**
    * Benutzerfreundliche Fehlermeldungen
    */
-  this.createUserFriendlyErrorMessage = function(error) {
+  this.createUserFriendlyErrorMessage = function (error) {
     if (error.message?.includes('timeout')) {
       return `⏱️ **Zeitüberschreitung**: Die AI-Verarbeitung dauerte zu lange.
 

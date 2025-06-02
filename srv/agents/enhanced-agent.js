@@ -98,7 +98,7 @@ Analysiere die Anfrage und klassifiziere sie:
     try {
       const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration');
       const client = new OrchestrationClient({
-        llm: { model_name: "gpt-4" },
+        llm: { model_name: "gpt-4.1" },
         templating: { template: [{ role: 'user', content: '{{?user_prompt}}' }] }
       });
 
