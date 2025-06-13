@@ -69,6 +69,7 @@ db/schema.cds
 eslint.config.mjs
 package.json
 srv/agents/enhanced-agent.js
+srv/lib/mcp-client.js
 srv/prompts/assistant-prompt.js
 srv/prompts/prompt-config.json
 srv/service.cds
@@ -79,6 +80,46 @@ srv/utils/markdown-converter.js
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="srv/lib/mcp-client.js">
+// srv/lib/mcp-client.js
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const POSTGRESQL_ADDON_URI = process.env.POSTGRESQL_ADDON_URI;
+let mcpClient = null;
+
+export async function initMCPClient() {
+  if (mcpClient) return mcpClient;
+
+  if (!POSTGRESQL_ADDON_URI) {
+    throw new Error("POSTGRESQL_ADDON_URI environment variable is not set");
+  }
+
+  console.log(`Initializing MCP client for PostgreSQL...`);
+
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-postgres", POSTGRESQL_ADDON_URI],
+  });
+
+  mcpClient = new Client({ name: "postgres-client", version: "1.0.0" });
+  await mcpClient.connect(transport);
+  console.log("✅ MCP Client initialized successfully.");
+  return mcpClient;
+}
+
+export async function closeMCPClient() {
+  if (mcpClient) {
+    console.log("Closing MCP client connection");
+    await mcpClient.close();
+    mcpClient = null;
+  }
+}
+</file>
 
 <file path=".gitignore">
 # CAP StammtischAI
@@ -3750,6 +3791,23 @@ entity Teilnehmer : cuid, managed {
 }
 </file>
 
+<file path=".cdsrc.json">
+{
+  "requires": {
+    "db": {
+      "kind": "postgres",
+      "credentials": {
+        "database": "stammtisch_ai_db",
+        "user": "duh",
+        "password": "test123",
+        "host": "localhost", 
+        "port": 5432        
+      }
+    }
+  }
+}
+</file>
+
 <file path="srv/agents/enhanced-agent.js">
 // srv/agents/enhanced-agent.js
 /**
@@ -4452,23 +4510,6 @@ Kann ich Ihnen anderweitig helfen?`;
 module.exports = EnhancedAIAgent;
 </file>
 
-<file path=".cdsrc.json">
-{
-  "requires": {
-    "db": {
-      "kind": "postgres",
-      "credentials": {
-        "database": "stammtisch_ai_db",
-        "user": "duh",
-        "password": "test123",
-        "host": "localhost", 
-        "port": 5432        
-      }
-    }
-  }
-}
-</file>
-
 <file path="srv/service.cds">
 using { sap.stammtisch as StammtischModel } from '../db/schema';
 using from '../app/annotations'; 
@@ -4502,11 +4543,15 @@ service StammtischService @(path: '/service/stammtisch') {
 {
   "name": "StammtischAI",
   "version": "1.0.0",
+  "type": "module",
   "description": "A simple CAP project.",
   "repository": "<Add your repository here>",
   "license": "ISC",
   "dependencies": {
     "@cap-js/postgres": "^1",
+    "@modelcontextprotocol/sdk": "^0.6.1",
+    "@modelcontextprotocol/server-postgres": "^0.6.2",
+    "@sap-ai-sdk/langchain": "^1.15.0",
     "@sap-ai-sdk/orchestration": "^1.13.0",
     "@sap-cloud-sdk/connectivity": "^4.0.2",
     "@sap-cloud-sdk/http-client": "^4.0.2",
@@ -4514,6 +4559,7 @@ service StammtischService @(path: '/service/stammtisch') {
     "@sap/cds": "^8.9.4",
     "cds-pg": "^0.1.36",
     "express": "^4",
+    "langchain": "^0.3.28",
     "pg": "^8"
   },
   "devDependencies": {
@@ -4582,132 +4628,108 @@ service StammtischService @(path: '/service/stammtisch') {
 </file>
 
 <file path="srv/service.js">
-const cds = require('@sap/cds');
-// Import des Enhanced AI Agent
-const EnhancedAIAgent = require('./agents/enhanced-agent');
+// srv/service.js (NEUE ES-MODULE-VERSION)
 
-function logDbConfig() {
-  if (cds.db) {
-    console.log("========== EFFECTIVE DB CONFIG ==========");
-    console.log("CDS Profiles:", cds.env.profiles);
-    console.log("DB Service Kind:", cds.db.kind);
-    console.log("=========================================");
-  }
-}
+// --- Imports im ESM-Stil ---
+import cds from '@sap/cds';
+import { DynamicTool } from "langchain/tools";
+import { AgentExecutor, createReactAgent } from "langchain/agents";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
+import { initMCPClient } from './lib/mcp-client.js'; // .js-Endung ist oft gut bei ESM
 
-if (cds.db) {
-  logDbConfig();
-} else {
-  cds.once('connected', (service) => {
-    if (service.name === 'db') {
-      logDbConfig();
-    }
-  });
-}
+// In CAP ESM Services exportieren wir Klassen
+export default class StammtischService extends cds.ApplicationService {
+  async init() {
+    await super.init();
 
-module.exports = cds.service.impl(async function () {
+    let agentExecutor = null;
 
-  // Initialize Enhanced AI Agent
-  const enhancedAgent = new EnhancedAIAgent();
+    const initializeAgent = async () => {
+      if (agentExecutor) return agentExecutor;
 
-  this.on('READ', 'Stammtische', async (req, next) => {
-    console.log("----- Reading Stammtische -----");
-    try {
-      const result = await next();
-      console.log("----- Stammtische read successfully -----");
-      return result;
-    } catch (error) {
-      console.error("----- Error reading Stammtische -----", error);
-      throw error;
-    }
-  });
+      console.log("Initializing Agent: SAP AI SDK (for LLM) + MCP (for Database)...");
 
-  /**
-   * Enhanced AI Assistant mit Multi-Pattern Support
-   */
-  this.on('callLLM', async (req) => {
-    try {
+      // 1. LLM über SAP AI SDK initialisieren
+      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4o' });
+
+      // 2. MCP Client für Datenbankzugriff initialisieren
+      const mcpClient = await initMCPClient();
+
+      // 3. Ein benutzerdefiniertes LangChain-Tool erstellen
+      const mcpSqlTool = new DynamicTool({
+        name: "sql-query-tool",
+        description: `
+          Runs a SQL query against the PostgreSQL database and returns the result.
+          Input must be a single, valid PostgreSQL query string.
+          Use this tool to explore the database schema or to query data.
+          If you get an error, rewrite the query and try again.
+        `,
+        func: async (sqlQuery) => {
+          try {
+            console.log(`[MCP Tool] Executing SQL: ${sqlQuery}`);
+            const result = await mcpClient.query({ query: sqlQuery });
+            return JSON.stringify(result);
+          } catch (e) {
+            console.error("[MCP Tool] Error executing SQL:", e.message);
+            return `Error: ${e.message}. The query might be incorrect. Please check the PostgreSQL syntax and table/column names.`;
+          }
+        },
+      });
+
+      const tools = [mcpSqlTool];
+
+      // 4. Den Prompt für den Agenten definieren
+      const promptTemplate = await ChatPromptTemplate.fromMessages([
+        ["system", `You are a helpful assistant with access to a PostgreSQL database. Your name is StammtischAI.
+        You can answer user questions by running SQL queries. You have access to a tool named "sql-query-tool".
+        
+        Here's how you should work:
+        1. Understand the user's question.
+        2. If you need to know the database schema, use the tool to query the 'information_schema.tables' or 'information_schema.columns'.
+        3. Construct a precise PostgreSQL query to answer the question.
+        4. Execute the query using the "sql-query-tool".
+        5. Analyze the result from the tool.
+        6. Formulate a final, user-friendly answer in German based on the query result.
+        
+        Known table names: "sap_stammtisch_Stammtische", "sap_stammtisch_Praesentatoren", "sap_stammtisch_Teilnehmer".
+        `],
+        ["human", "{input}"],
+        ["placeholder", "{agent_scratchpad}"],
+      ]);
+
+      // 5. Den Agenten erstellen
+      const agent = await createReactAgent({ llm, tools, prompt: promptTemplate });
+      agentExecutor = new AgentExecutor({ agent, tools });
+
+      console.log("✅ Agent with SAP AI SDK & MCP Tool is ready.");
+      return agentExecutor;
+    };
+    
+    // Agent beim Start des CAP-Service initialisieren
+    await initializeAgent();
+
+    // Handler für die 'callLLM' Aktion
+    this.on('callLLM', async (req) => {
       const { prompt } = req.data;
-
       if (!prompt) {
         req.error(400, 'Prompt is required');
         return;
       }
-
-      console.log('=== ENHANCED AI AGENT REQUEST ===');
-      console.log('User Prompt:', prompt);
-
-      // Verwende den Enhanced AI Agent für die Verarbeitung
-      const response = await enhancedAgent.processRequest(prompt);
-
-      console.log('=== ENHANCED AI AGENT RESPONSE ===');
-      console.log('Response Length:', response.length);
-
-      // Performance Stats für Monitoring
-      const stats = enhancedAgent.getPerformanceStats();
-      console.log('Agent Performance Stats:', stats);
-
-      return { response };
-
-    } catch (error) {
-      console.error('=== ENHANCED AI AGENT ERROR ===');
-      console.error('Error:', error.message);
-
-      const userFriendlyError = this.createUserFriendlyErrorMessage(error);
-      return { response: userFriendlyError };
-    }
-  });
-
-  /**
-   * Agent Performance Analytics Endpoint (optional)
-   */
-  this.on('getAgentStats', async (req) => {
-    try {
-      const stats = enhancedAgent.getPerformanceStats();
-      return { stats };
-    } catch (error) {
-      console.error('Error getting agent stats:', error);
-      return { error: error.message };
-    }
-  });
-
-  /**
-   * Benutzerfreundliche Fehlermeldungen
-   */
-  this.createUserFriendlyErrorMessage = function (error) {
-    if (error.message?.includes('timeout')) {
-      return `⏱️ **Zeitüberschreitung**: Die AI-Verarbeitung dauerte zu lange.
-
-**Versuchen Sie:**
-- Eine kürzere, spezifischere Frage zu stellen
-- Es in einem Moment erneut zu versuchen`;
-    }
-
-    if (error.message?.includes('database') || error.message?.includes('DB')) {
-      return `🗄️ **Datenbankfehler**: Problem beim Zugriff auf die Daten.
-
-**Lösungsansätze:**
-- Versuchen Sie es in einem Moment erneut
-- Kontaktieren Sie den Administrator bei anhaltenden Problemen`;
-    }
-
-    if (error.message?.includes('classification') || error.message?.includes('orchestration')) {
-      return `🤖 **AI-Verarbeitungsfehler**: Der Agent konnte Ihre Anfrage nicht vollständig verarbeiten.
-
-**Alternative:**
-- Formulieren Sie Ihre Frage anders
-- Versuchen Sie eine einfachere Anfrage
-- Beispiel: "Zeige mir alle Stammtische" oder "Suche nach CAP"`;
-    }
-
-    return `❌ **Unerwarteter Fehler**
-
-Der AI-Agent ist temporär nicht verfügbar. Bitte versuchen Sie es später erneut.
-
-**Ihre Anfrage kann möglicherweise auch direkt in der Anwendung bearbeitet werden.**`;
-  };
-
-});
+      
+      console.log('🚀 Received prompt for Agent:', prompt);
+      const executor = await initializeAgent();
+      
+      try {
+        const result = await executor.invoke({ input: prompt });
+        return { response: result.output };
+      } catch (error) {
+        console.error('💥 Error during agent execution:', error);
+        req.error(500, `Failed to process query: ${error.message}`);
+      }
+    });
+  }
+}
 </file>
 
 </files>

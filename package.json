@@ -1,12 +1,16 @@
 {
   "name": "StammtischAI",
   "version": "1.0.0",
+  "type": "module",
   "description": "A simple CAP project.",
   "repository": "<Add your repository here>",
   "license": "ISC",
   "dependencies": {
     "@cap-js/postgres": "^1",
-    "@modelcontextprotocol/sdk": "^0.6.1",
+    "@langchain/core": "^0.3.58",
+    "@langchain/langgraph": "^0.3.2",
+    "@langchain/mcp-adapters": "^0.5.2",
+    "@modelcontextprotocol/sdk": "^1.11.0",
     "@modelcontextprotocol/server-postgres": "^0.6.2",
     "@sap-ai-sdk/langchain": "^1.15.0",
     "@sap-ai-sdk/orchestration": "^1.13.0",
@@ -15,6 +19,7 @@
     "@sap-cloud-sdk/resilience": "^4.0.2",
     "@sap/cds": "^8.9.4",
     "cds-pg": "^0.1.36",
+    "dotenv": "^16.5.0",
     "express": "^4",
     "langchain": "^0.3.28",
     "pg": "^8"
@@ -76,6 +81,10 @@
     },
     "features": {
       "fetch_csrf": true
+    },
+    "serve": {
+      "host": "localhost",
+      "port": 9999
     }
   },
   "sapux": [

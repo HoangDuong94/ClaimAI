@@ -1,126 +1,83 @@
-const cds = require('@sap/cds');
-// Import des Enhanced AI Agent
-const EnhancedAIAgent = require('./agents/enhanced-agent');
+// srv/service.js (FINALE VERSION, mit Markdown-Formatierung)
 
-function logDbConfig() {
-  if (cds.db) {
-    console.log("========== EFFECTIVE DB CONFIG ==========");
-    console.log("CDS Profiles:", cds.env.profiles);
-    console.log("DB Service Kind:", cds.db.kind);
-    console.log("=========================================");
-  }
-}
+import cds from '@sap/cds';
+import { loadMcpTools } from '@langchain/mcp-adapters';
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
+import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
+import { initMCPClient } from './lib/mcp-client.js';
 
-if (cds.db) {
-  logDbConfig();
-} else {
-  cds.once('connected', (service) => {
-    if (service.name === 'db') {
-      logDbConfig();
-    }
-  });
-}
+// Importiere deinen MarkdownConverter
+import MarkdownConverter from './utils/markdown-converter.js';
 
-module.exports = cds.service.impl(async function () {
+export default class StammtischService extends cds.ApplicationService {
+  async init() {
+    await super.init();
+    let agentExecutor = null;
 
-  // Initialize Enhanced AI Agent
-  const enhancedAgent = new EnhancedAIAgent();
+    const initializeAgent = async () => {
+      if (agentExecutor) return agentExecutor;
 
-  this.on('READ', 'Stammtische', async (req, next) => {
-    console.log("----- Reading Stammtische -----");
-    try {
-      const result = await next();
-      console.log("----- Stammtische read successfully -----");
-      return result;
-    } catch (error) {
-      console.error("----- Error reading Stammtische -----", error);
-      throw error;
-    }
-  });
+      console.log("Initializing Agent (langgraph version)...");
 
-  /**
-   * Enhanced AI Assistant mit Multi-Pattern Support
-   */
-  this.on('callLLM', async (req) => {
-    try {
-      const { prompt } = req.data;
+      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4o' });
+      const mcpClient = await initMCPClient();
+      const tools = await loadMcpTools("query", mcpClient);
+      
+      agentExecutor = createReactAgent({ llm, tools });
 
-      if (!prompt) {
+      console.log("✅ Langgraph Agent is ready.");
+      return agentExecutor;
+    };
+
+    await initializeAgent();
+
+    this.on('callLLM', async (req) => {
+      const { prompt: userPrompt } = req.data;
+      if (!userPrompt) {
         req.error(400, 'Prompt is required');
         return;
       }
 
-      console.log('=== ENHANCED AI AGENT REQUEST ===');
-      console.log('User Prompt:', prompt);
+      console.log('🚀 Received prompt for Agent:', userPrompt);
+      const executor = await initializeAgent();
 
-      // Verwende den Enhanced AI Agent für die Verarbeitung
-      const response = await enhancedAgent.processRequest(prompt);
+      try {
+        const systemMessage = {
+          role: "system",
+          content: `You are a helpful assistant that can explore PostgreSQL databases using SQL queries.
+IMPORTANT: You MUST use PostgreSQL syntax. Do NOT use MySQL syntax like 'SHOW TABLES'.
+To list tables, use: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
+The 'query' tool expects the input to be a JSON object with a single key "sql".`
+        };
 
-      console.log('=== ENHANCED AI AGENT RESPONSE ===');
-      console.log('Response Length:', response.length);
+        const userMessage = {
+          role: "user",
+          content: userPrompt
+        };
 
-      // Performance Stats für Monitoring
-      const stats = enhancedAgent.getPerformanceStats();
-      console.log('Agent Performance Stats:', stats);
+        const result = await executor.invoke({
+          messages: [systemMessage, userMessage]
+        });
+        
+        const lastMessage = result.messages[result.messages.length - 1];
+        
+        // --- ANPASSUNG HIER ---
+        // Nimm die rohe Antwort des Agenten
+        const rawResponse = lastMessage.content;
+        console.log("📝 Raw AI Response:", rawResponse);
 
-      return { response };
+        // Konvertiere sie in formatiertes HTML
+        const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
+        console.log("🎨 Formatted HTML Response:", htmlResponse);
 
-    } catch (error) {
-      console.error('=== ENHANCED AI AGENT ERROR ===');
-      console.error('Error:', error.message);
+        // Gib die formatierte Antwort zurück
+        return { response: htmlResponse };
+        // --- ENDE DER ANPASSUNG ---
 
-      const userFriendlyError = this.createUserFriendlyErrorMessage(error);
-      return { response: userFriendlyError };
-    }
-  });
-
-  /**
-   * Agent Performance Analytics Endpoint (optional)
-   */
-  this.on('getAgentStats', async (req) => {
-    try {
-      const stats = enhancedAgent.getPerformanceStats();
-      return { stats };
-    } catch (error) {
-      console.error('Error getting agent stats:', error);
-      return { error: error.message };
-    }
-  });
-
-  /**
-   * Benutzerfreundliche Fehlermeldungen
-   */
-  this.createUserFriendlyErrorMessage = function (error) {
-    if (error.message?.includes('timeout')) {
-      return `⏱️ **Zeitüberschreitung**: Die AI-Verarbeitung dauerte zu lange.
-
-**Versuchen Sie:**
-- Eine kürzere, spezifischere Frage zu stellen
-- Es in einem Moment erneut zu versuchen`;
-    }
-
-    if (error.message?.includes('database') || error.message?.includes('DB')) {
-      return `🗄️ **Datenbankfehler**: Problem beim Zugriff auf die Daten.
-
-**Lösungsansätze:**
-- Versuchen Sie es in einem Moment erneut
-- Kontaktieren Sie den Administrator bei anhaltenden Problemen`;
-    }
-
-    if (error.message?.includes('classification') || error.message?.includes('orchestration')) {
-      return `🤖 **AI-Verarbeitungsfehler**: Der Agent konnte Ihre Anfrage nicht vollständig verarbeiten.
-
-**Alternative:**
-- Formulieren Sie Ihre Frage anders
-- Versuchen Sie eine einfachere Anfrage
-- Beispiel: "Zeige mir alle Stammtische" oder "Suche nach CAP"`;
-    }
-
-    return `❌ **Unerwarteter Fehler**
-
-Der AI-Agent ist temporär nicht verfügbar. Bitte versuchen Sie es später erneut.
-
-**Ihre Anfrage kann möglicherweise auch direkt in der Anwendung bearbeitet werden.**`;
-  };
-
-});
+      } catch (error) {
+        console.error('💥 Error during agent execution:', error);
+        req.error(500, `Failed to process query: ${error.message}`);
+      }
+    });
+  }
+}
