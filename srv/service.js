@@ -4,7 +4,9 @@ import cds from '@sap/cds';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
+import { MemorySaver } from "@langchain/langgraph-checkpoint";
 import { initMCPClient } from './lib/mcp-client.js';
+
 
 // Importiere deinen MarkdownConverter
 import MarkdownConverter from './utils/markdown-converter.js';
@@ -22,8 +24,10 @@ export default class StammtischService extends cds.ApplicationService {
       const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4o' });
       const mcpClient = await initMCPClient();
       const tools = await loadMcpTools("query", mcpClient);
-      
-      agentExecutor = createReactAgent({ llm, tools });
+
+      const checkpointer = new MemorySaver();
+
+      agentExecutor = createReactAgent({ llm, tools, checkpointSaver: checkpointer });
 
       console.log("✅ Langgraph Agent is ready.");
       return agentExecutor;
@@ -55,12 +59,16 @@ The 'query' tool expects the input to be a JSON object with a single key "sql".`
           content: userPrompt
         };
 
-        const result = await executor.invoke({
-          messages: [systemMessage, userMessage]
-        });
-        
+        const result = await executor.invoke(
+          {
+            messages: [systemMessage, userMessage]
+          },
+          {
+            configurable: { thread_id: `session_1` } 
+          });
+
         const lastMessage = result.messages[result.messages.length - 1];
-        
+
         // --- ANPASSUNG HIER ---
         // Nimm die rohe Antwort des Agenten
         const rawResponse = lastMessage.content;
