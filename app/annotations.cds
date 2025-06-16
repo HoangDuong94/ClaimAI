@@ -20,9 +20,10 @@ annotate service.Stammtische with @(
             { Value : datum },
             { Value : ort  },
             {
-                $Type  : 'UI.DataFieldForAssociation',
-                Label  : 'Präsentator',
-                Value  : praesentator_ID
+            $Type  : 'UI.DataFieldWithNavigationPath',   // V4-konform
+            Label  : 'Präsentator',
+            Value  : praesentator,          // Navigation Property, nicht _ID
+            Target : 'praesentator'         // erzeugt Link zur Presenter-OP
             },
             { Value : notizen }
         ]

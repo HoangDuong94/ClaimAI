@@ -1,4 +1,4 @@
-// srv/lib/mcp-client.js (Erweitert für mehrere MCP Server)
+// srv/lib/mcp-client.js (Erweitert für PostgreSQL, Brave Search und Playwright)
 import cds from '@sap/cds';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -6,6 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const dbConfig = cds.env.requires.db;
 let postgresClient = null;
 let braveSearchClient = null;
+let playwrightClient = null;
 
 function getPostgresUri() {
   const creds = dbConfig.credentials;
@@ -20,7 +21,8 @@ export async function initPostgresMCPClient() {
 
   const transport = new StdioClientTransport({
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-postgres", postgresUri],
+    // args: ["-y", "@modelcontextprotocol/server-postgres", postgresUri],
+    args: ["-y", "mcp-postgres-full-access", postgresUri],
   });
 
   postgresClient = new Client({ name: "postgres-client", version: "1.0.0" }, {});
@@ -54,17 +56,41 @@ export async function initBraveSearchMCPClient() {
   return braveSearchClient;
 }
 
+export async function initPlaywrightMCPClient() {
+  if (playwrightClient) return playwrightClient;
+
+  console.log(`Initializing Playwright MCP client...`);
+
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "@executeautomation/playwright-mcp-server"],
+    env: {
+      ...process.env,
+      // Optional: Konfiguration für Playwright
+      PLAYWRIGHT_BROWSER: process.env.PLAYWRIGHT_BROWSER || "chromium",
+      PLAYWRIGHT_HEADLESS: process.env.PLAYWRIGHT_HEADLESS || "true"
+    }
+  });
+
+  playwrightClient = new Client({ name: "playwright-client", version: "1.0.0" }, {});
+  await playwrightClient.connect(transport);
+  console.log("✅ Playwright MCP Client initialized successfully.");
+  return playwrightClient;
+}
+
 export async function initAllMCPClients() {
   console.log("Initializing all MCP clients...");
   
-  const [pgClient, braveClient] = await Promise.all([
+  const [pgClient, braveClient, playwrightClient] = await Promise.all([
     initPostgresMCPClient(),
-    initBraveSearchMCPClient()
+    initBraveSearchMCPClient(),
+    initPlaywrightMCPClient()
   ]);
 
   return {
     postgres: pgClient,
-    braveSearch: braveClient
+    braveSearch: braveClient,
+    playwright: playwrightClient
   };
 }
 
@@ -81,6 +107,12 @@ export async function closeMCPClients() {
     console.log("Closing Brave Search MCP client connection");
     closePromises.push(braveSearchClient.close());
     braveSearchClient = null;
+  }
+  
+  if (playwrightClient) {
+    console.log("Closing Playwright MCP client connection");
+    closePromises.push(playwrightClient.close());
+    playwrightClient = null;
   }
   
   await Promise.all(closePromises);
