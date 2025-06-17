@@ -355,7 +355,16 @@ sap.ui.define([
     // Modern Chat Controller with arrow functions
     const chatController = {
         async onSendChatMessageInSidePanel() {
-            const userInput = chatManager.chatModel.getProperty("/userInput")?.trim();
+            // Get the input field to ensure we have the latest value
+            const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
+            const currentValue = inputField?.getValue()?.trim() || "";
+            
+            // Update model with current input field value if needed
+            if (currentValue !== chatManager.chatModel.getProperty("/userInput")) {
+                chatManager.chatModel.setProperty("/userInput", currentValue);
+            }
+            
+            const userInput = currentValue;
 
             if (!userInput) {
                 chatManager.setStatusMessage("Please enter a message.");
@@ -554,14 +563,14 @@ sap.ui.define([
     // Modern keyboard shortcuts with better event handling
     const setupKeyboardShortcuts = () => {
         document.addEventListener('keydown', (event) => {
-            const { ctrlKey, metaKey, key } = event;
+            const { key, ctrlKey, metaKey, shiftKey } = event;
             const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
             const isInputFocused = inputField?.getFocusDomRef() === document.activeElement;
 
             if (!isInputFocused) return;
 
-            // Ctrl/Cmd + Enter to send message
-            if ((ctrlKey || metaKey) && key === 'Enter') {
+            // Enter without Shift to send message (Shift+Enter for new line)
+            if (key === 'Enter' && !shiftKey) {
                 event.preventDefault();
                 chatController.onSendChatMessageInSidePanel();
             }
