@@ -1,5 +1,3 @@
-// srv/service.js (Erweitert mit Streaming-Logik)
-
 import cds from '@sap/cds';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
@@ -17,23 +15,26 @@ export default class StammtischService extends cds.ApplicationService {
     const initializeAgent = async () => {
       if (agentExecutor) return agentExecutor;
 
-      console.log("Initializing Agent with PostgreSQL, Brave Search and Playwright capabilities...");
+      // +++ ERWEITERT: Log-Nachricht angepasst +++
+      console.log("Initializing Agent with Database, Web Search, Browser and Filesystem capabilities...");
 
       try {
-        // Initialisiere alle MCP Clients
         mcpClients = await initAllMCPClients();
 
-        // Lade Tools von allen MCP Clients
-        const [postgresTools, braveSearchTools, playwrightTools] = await Promise.all([
+        // +++ ERWEITERT: Lade Tools vom neuen Filesystem Client +++
+        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools] = await Promise.all([
           loadMcpTools("query", mcpClients.postgres),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
-          loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright)
+          loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright),
+          // Lade alle verfügbaren Filesystem-Tools
+          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem)
         ]);
 
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools];
+        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools];
 
-        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL tools, ${braveSearchTools.length} Brave Search tools, and ${playwrightTools.length} Playwright tools`);
+        // +++ ERWEITERT: Log-Nachricht angepasst +++
+        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, and ${filesystemTools.length} Filesystem tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
         const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -45,7 +46,7 @@ export default class StammtischService extends cds.ApplicationService {
           checkpointSaver: checkpointer
         });
 
-        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser Automation).");
+        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser Automation + Filesystem).");
         return agentExecutor;
 
       } catch (error) {
@@ -69,48 +70,38 @@ export default class StammtischService extends cds.ApplicationService {
       try {
         const systemMessage = {
           role: "system",
-          content: `You are a helpful assistant with access to database queries, web search, and browser automation capabilities.
+          // +++ ERWEITERT: System-Prompt mit Anweisungen für den Dateizugriff +++
+          content: `You are a helpful assistant with access to database queries, web search, browser automation, and local filesystem capabilities.
 
                   DATABASE ACCESS:
-                  - You can query a PostgreSQL database using the 'query' tool
-                  - IMPORTANT: Use PostgreSQL syntax, NOT MySQL syntax
+                  - You can query a PostgreSQL database using the 'query' tool.
+                  - IMPORTANT: Use PostgreSQL syntax.
                   - To list tables: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
-                  - The 'query' tool expects JSON input with a single key "sql"
+                  - The 'query' tool expects JSON input with a single key "sql".
 
                   WEB SEARCH ACCESS:
-                  - You can search the web using 'brave_web_search' for general information
-                  - You can search for local businesses using 'brave_local_search'
-                  - Use web search when the user asks about current events, external information, or topics not in the database
+                  - You can search the web using 'brave_web_search' for general information.
+                  - Use web search when the user asks about current events or topics not in the database.
 
                   BROWSER AUTOMATION ACCESS (Playwright):
-                  - take_screenshot: Capture screenshots of web pages for visual verification
-                  - goto_page: Navigate to a specific URL (e.g., your Fiori Elements app)
-                  - click_element: Click on buttons, links, or other interactive elements
-                  - fill_input: Fill in form fields with data
-                  - execute_javascript: Run custom JavaScript on the page
-                  - get_page_content: Extract text content from pages
-                  - wait_for_element: Wait for specific elements to appear before proceeding
-                  - generate_test_code: Generate automated test scripts for repetitive tasks
+                  - You can control a web browser to perform tasks like testing web applications.
+                  - Available tools: take_screenshot, goto_page, click_element, fill_input, get_page_content.
+                  - When testing Fiori apps, provide detailed feedback and take screenshots.
 
-                  TESTING FIORI ELEMENTS WORKLIST APPS:
-                  - To test your Fiori Elements Worklist app, start by navigating to the app URL
-                  - Take screenshots to verify the current state
-                  - Use click_element to interact with buttons like "Create", "Edit", "Delete"
-                  - Use fill_input to populate form fields when creating or editing entries
-                  - Use wait_for_element to ensure elements are loaded before interacting
-                  - Common Fiori Elements selectors:
-                    * Create button: Often has ID like "fe::table::_Table::StandardAction::Create"
-                    * Save button: Usually "fe::FooterBar::StandardAction::Save"
-                    * Input fields: Often have IDs like "fe::FormContainer::FieldGroup::SectionId::FieldId"
+                  FILESYSTEM ACCESS:
+                  - You can read, write, and manage files and directories in the project.
+                  - Available tools: read_file, write_file, edit_file, create_directory, list_directory, search_files.
+                  - SECURITY: You can ONLY operate within the allowed project directory. Do not try to access paths like '/' or '~'.
+                  - Use 'list_directory' with '.' or a subdirectory to see available files first.
+                  - For 'write_file', be cautious as it can overwrite existing files. Confirm with the user if unsure.
+                  - For 'edit_file', it's a powerful tool for complex changes. ALWAYS use 'dryRun: true' first to preview the changes and get a diff. Only after confirming the diff is correct, run it again with 'dryRun: false'.
 
                   RESPONSE GUIDELINES:
-                  - First determine if the user needs database information, web information, browser automation, or a combination
-                  - For database queries, always explain what you're looking for before querying
-                  - For web searches, summarize the key findings clearly
-                  - For browser automation, describe each step you're taking and take screenshots to show progress
-                  - When testing Fiori apps, provide detailed feedback about what was accomplished
-                  - If combining multiple sources, clearly distinguish between database results, web search results, and browser automation results
-                  - Always provide context about where information is coming from`
+                  - First, determine which tool or combination of tools is best for the user's request.
+                  - Clearly explain your plan before executing it.
+                  - For filesystem operations, state which file you are reading, writing, or listing.
+                  - Combine information from different sources clearly, distinguishing between database results, web content, and file content.
+                  - Always provide context about where information is coming from.`
         };
 
         const userMessage = {
@@ -118,9 +109,6 @@ export default class StammtischService extends cds.ApplicationService {
           content: userPrompt
         };
         
-        // --- START: Streaming Implementation ---
-
-        // 1. Verwende .stream() statt .invoke() für einen asynchronen Stream
         const stream = await executor.stream(
           {
             messages: [systemMessage, userMessage]
@@ -130,25 +118,16 @@ export default class StammtischService extends cds.ApplicationService {
           }
         );
 
-        // Array zum Sammeln der finalen KI-Antwort für den Client
         const finalResponseParts = [];
         console.log("\n\n---- AGENT STREAM START ----\n");
 
-        // 2. Iteriere durch den Stream, um jeden Schritt (Chunk) zu verarbeiten
         for await (const chunk of stream) {
-          // Jeder Chunk ist ein Objekt, dessen Schlüssel der Name des Graph-Knotens ist
-
-          // Prüfen, ob der Chunk vom 'agent'-Knoten kommt (die KI antwortet oder ruft ein Tool auf)
           if (chunk.agent?.messages) {
             const message = chunk.agent.messages[chunk.agent.messages.length - 1];
-            
-            // Logge den Text-Teil der KI-Antwort in Echtzeit
             if (message && message.content) {
-              process.stdout.write(message.content); // Direkte Ausgabe in die Konsole
-              finalResponseParts.push(message.content); // Sammle den Teil für die finale Antwort
+              process.stdout.write(message.content);
+              finalResponseParts.push(message.content);
             }
-
-            // Logge Tool-Aufrufe, sobald der Agent sie plant
             if (message.tool_calls && message.tool_calls.length > 0) {
               const toolCall = message.tool_calls[0];
               const toolCallStr = `\n\n<TOOL_CALL>\n  Tool: ${toolCall.name}\n  Args: ${JSON.stringify(toolCall.args)}\n</TOOL_CALL>\n\n`;
@@ -156,7 +135,6 @@ export default class StammtischService extends cds.ApplicationService {
             }
           }
 
-          // Prüfen, ob der Chunk vom 'tools'-Knoten kommt (Ergebnis eines Tool-Aufrufs)
           if (chunk.tools?.messages) {
              const toolMessage = chunk.tools.messages[0];
              const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
@@ -165,12 +143,7 @@ export default class StammtischService extends cds.ApplicationService {
         }
         console.log("\n---- AGENT STREAM END ----\n");
 
-        // 3. Setze die finale Antwort aus den gesammelten Teilen zusammen
         const rawResponse = finalResponseParts.join("");
-
-        // --- END: Streaming Implementation ---
-        
-        // Konvertiere zu formatiertem HTML für die Rückgabe an den Client
         const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
 
         return { response: htmlResponse };
