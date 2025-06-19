@@ -1,3 +1,5 @@
+// srv/StammtischService.js
+
 import cds from '@sap/cds';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
@@ -16,25 +18,26 @@ export default class StammtischService extends cds.ApplicationService {
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with Database, Web Search, Browser and Filesystem capabilities...");
+      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem and Excel capabilities...");
 
       try {
         mcpClients = await initAllMCPClients();
 
-        // +++ ERWEITERT: Lade Tools vom neuen Filesystem Client +++
-        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools] = await Promise.all([
+        // +++ ERWEITERT: Lade Tools vom neuen Excel Client +++
+        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools, excelTools] = await Promise.all([
           loadMcpTools("query", mcpClients.postgres),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
           loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright),
-          // Lade alle verfügbaren Filesystem-Tools
-          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem)
+          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
+          // +++ NEU: Lade alle verfügbaren Excel-Tools +++
+          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel)
         ]);
 
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools];
+        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools];
 
         // +++ ERWEITERT: Log-Nachricht angepasst +++
-        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, and ${filesystemTools.length} Filesystem tools`);
+        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, and ${excelTools.length} Excel tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
         const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -45,8 +48,9 @@ export default class StammtischService extends cds.ApplicationService {
           tools: allTools,
           checkpointSaver: checkpointer
         });
-
-        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser Automation + Filesystem).");
+        
+        // +++ ERWEITERT: Log-Nachricht angepasst +++
+        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser + Filesystem + Excel).");
         return agentExecutor;
 
       } catch (error) {
@@ -70,37 +74,37 @@ export default class StammtischService extends cds.ApplicationService {
       try {
         const systemMessage = {
           role: "system",
-          // +++ ERWEITERT: System-Prompt mit Anweisungen für den Dateizugriff +++
-          content: `You are a helpful assistant with access to database queries, web search, browser automation, and local filesystem capabilities.
+          // +++ ERWEITERT: System-Prompt mit Anweisungen für den Excel-Zugriff +++
+          content: `You are a helpful assistant with access to database queries, web search, browser automation, local filesystem, and MS Excel capabilities.
 
                   DATABASE ACCESS:
                   - You can query a PostgreSQL database using the 'query' tool.
                   - IMPORTANT: Use PostgreSQL syntax.
-                  - To list tables: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
-                  - The 'query' tool expects JSON input with a single key "sql".
 
                   WEB SEARCH ACCESS:
-                  - You can search the web using 'brave_web_search' for general information.
-                  - Use web search when the user asks about current events or topics not in the database.
+                  - You can search the web using 'brave_web_search'. 
 
                   BROWSER AUTOMATION ACCESS (Playwright):
                   - You can control a web browser to perform tasks like testing web applications.
-                  - Available tools: take_screenshot, goto_page, click_element, fill_input, get_page_content.
-                  - When testing Fiori apps, provide detailed feedback and take screenshots.
 
                   FILESYSTEM ACCESS:
                   - You can read, write, and manage files and directories in the project.
-                  - Available tools: read_file, write_file, edit_file, create_directory, list_directory, search_files.
-                  - SECURITY: You can ONLY operate within the allowed project directory. Do not try to access paths like '/' or '~'.
+                  - SECURITY: You can ONLY operate within the allowed project directory.
                   - Use 'list_directory' with '.' or a subdirectory to see available files first.
-                  - For 'write_file', be cautious as it can overwrite existing files. Confirm with the user if unsure.
-                  - For 'edit_file', it's a powerful tool for complex changes. ALWAYS use 'dryRun: true' first to preview the changes and get a diff. Only after confirming the diff is correct, run it again with 'dryRun: false'.
+                  - For 'edit_file', ALWAYS use 'dryRun: true' first to preview changes.
+
+                  EXCEL ACCESS:
+                  - You can read from and write to MS Excel files (.xlsx, .xlsm, etc.).
+                  - Available tools: excel_describe_sheets, excel_read_sheet, excel_write_to_sheet, excel_create_table, excel_copy_sheet, excel_screen_capture (Windows only).
+                  - ALWAYS start by using 'excel_describe_sheets' to understand the file's structure (sheet names).
+                  - For all Excel tools, you MUST provide the 'fileAbsolutePath' to the target Excel file.
+                  - When reading large sheets, the tool uses pagination. Pay attention to the 'knownPagingRanges' argument to read subsequent parts.
+                  - When writing with 'excel_write_to_sheet', you can create a new sheet by setting 'newSheet: true'. Be careful as writing can modify files permanently.
 
                   RESPONSE GUIDELINES:
                   - First, determine which tool or combination of tools is best for the user's request.
                   - Clearly explain your plan before executing it.
-                  - For filesystem operations, state which file you are reading, writing, or listing.
-                  - Combine information from different sources clearly, distinguishing between database results, web content, and file content.
+                  - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
                   - Always provide context about where information is coming from.`
         };
 
