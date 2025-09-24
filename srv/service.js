@@ -5,7 +5,10 @@ import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
 import { MemorySaver } from "@langchain/langgraph-checkpoint";
+import { DynamicStructuredTool } from "@langchain/core/tools";
+import { z } from "zod";
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
+import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import MarkdownConverter from './utils/markdown-converter.js';
 
 export default class StammtischService extends cds.ApplicationService {
@@ -18,7 +21,7 @@ export default class StammtischService extends cds.ApplicationService {
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem and Excel capabilities...");
+      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem, Excel, and Microsoft 365 capabilities...");
 
       try {
         mcpClients = await initAllMCPClients();
@@ -36,7 +39,26 @@ export default class StammtischService extends cds.ApplicationService {
         // Kombiniere alle Tools
         const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools];
 
-        // +++ ERWEITERT: Log-Nachricht angepasst +++
+        // Lade Microsoft 365 Tools dynamisch aus dem Manifest
+        if (mcpClients.m365) {
+          console.log("Loading Microsoft 365 tools...");
+          const manifest = await mcpClients.m365.listTools();
+          const m365Tools = manifest.tools.map((toolDef) => {
+            const schema = jsonSchemaToZod(toolDef.inputSchema, z);
+            return new DynamicStructuredTool({
+              name: toolDef.name,
+              description: toolDef.description,
+              schema,
+              func: async (input) => {
+                const result = await mcpClients.m365.callTool({ name: toolDef.name, arguments: input });
+                return typeof result === 'string' ? result : JSON.stringify(result);
+              }
+            });
+          });
+          allTools.push(...m365Tools);
+          console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
+        }
+
         console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, and ${excelTools.length} Excel tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 

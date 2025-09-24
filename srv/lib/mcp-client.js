@@ -3,6 +3,7 @@
 import cds from '@sap/cds';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { initM365InProcessClient as createInProcessM365Client } from '../m365-mcp/index.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,6 +15,7 @@ let braveSearchClient = null;
 let playwrightClient = null;
 let filesystemClient = null;
 let excelClient = null; // +++ NEU: Excel Client Variable
+let m365Client = null;
 
 function getPostgresUri() {
   const creds = dbConfig.credentials;
@@ -108,16 +110,25 @@ export async function initExcelMCPClient() {
 }
 
 
+export async function initM365Client() {
+  if (m365Client) return m365Client;
+
+  m365Client = await createInProcessM365Client({ logger: console });
+  return m365Client;
+}
+
+
 export async function initAllMCPClients() {
   console.log("Initializing all MCP clients...");
   
   // +++ ERWEITERT: Excel Client wird mit initialisiert +++
-  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient] = await Promise.all([
+  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient, microsoft365Client] = await Promise.all([
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initPlaywrightMCPClient(),
     initFilesystemMCPClient(),
-    initExcelMCPClient() // Neuer Client
+    initExcelMCPClient(), // Neuer Client
+    initM365Client()
   ]);
 
   return {
@@ -126,6 +137,7 @@ export async function initAllMCPClients() {
     playwright: playwrightClient,
     filesystem: fsClient,
     excel: xlsxClient, // Neuer Client im Rückgabeobjekt
+    m365: microsoft365Client
   };
 }
 
@@ -158,7 +170,12 @@ export async function closeMCPClients() {
     closePromises.push(excelClient.close());
     excelClient = null;
   }
-  
+  if (m365Client) {
+    console.log("Closing Microsoft 365 MCP client connection");
+    closePromises.push(m365Client.close());
+    m365Client = null;
+  }
+
   await Promise.all(closePromises);
   console.log("✅ All MCP clients closed");
 }
