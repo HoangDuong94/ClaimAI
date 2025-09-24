@@ -75,7 +75,7 @@ export async function initFilesystemMCPClient() {
   console.log(`Filesystem access is sandboxed to: ${allowedDirectory}`);
   const transport = new StdioClientTransport({
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory, "C:/Users/HoangDuong/Desktop"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory, "C:/Users/HoangDuong/Desktop/StammtischAI"]
   });
   filesystemClient = new Client({ name: "filesystem-client", version: "1.0.0" }, {});
   await filesystemClient.connect(transport);

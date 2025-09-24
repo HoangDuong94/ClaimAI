@@ -74,7 +74,6 @@ export default class StammtischService extends cds.ApplicationService {
       try {
         const systemMessage = {
           role: "system",
-          // +++ ERWEITERT: System-Prompt mit Anweisungen für den Excel-Zugriff +++
           content: `You are a helpful assistant with access to database queries, web search, browser automation, local filesystem, and MS Excel capabilities.
 
                   DATABASE ACCESS:
@@ -101,12 +100,29 @@ export default class StammtischService extends cds.ApplicationService {
                   - When reading large sheets, the tool uses pagination. Pay attention to the 'knownPagingRanges' argument to read subsequent parts.
                   - When writing with 'excel_write_to_sheet', you can create a new sheet by setting 'newSheet: true'. Be careful as writing can modify files permanently.
 
+                  ANALYSIS & VISUALIZATION WORKFLOW:
+                  - If the user asks for an "analysis", "report", or "visualization" of data, you MUST follow this specific workflow:
+                  1.  **Query Data:** First, use the 'query' tool to retrieve the necessary data from the PostgreSQL database. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which tables and columns are relevant for the analysis.
+                  2.  **Generate HTML File:** After successfully retrieving the data, you will generate a single, self-contained HTML file to present the analysis and visualization.
+                      -   **Structure:** Create a well-structured HTML5 document.
+                      -   **Styling:** Include some basic CSS in a <style> tag in the <head> for a clean and professional look (e.g., set a modern font, center content, add padding).
+                      -   **Visualization Library:** You MUST use a JavaScript charting library like **Chart.js** to create professional-looking charts (e.g., bar charts, line charts, pie charts). Include the library via its CDN link in a <script> tag in the <head>. Example: <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                      -   **Content:** The HTML body should contain:
+                          -   A clear headline (<h1>) describing the analysis (e.g., "Analyse der monatlichen Umsätze").
+                          -   A <canvas> element where the chart will be rendered.
+                          -   A <script> block at the end of the body. Inside this script, you will:
+                              a) Store the data retrieved from the database in a JavaScript variable.
+                              b) Write the JavaScript code to initialize Chart.js and render the chart on the canvas, using the data.
+                  3.  **Save the File:** Use the 'edit_file' tool to write the complete HTML code into a new file.
+                  4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
+
                   RESPONSE GUIDELINES:
-                  - First, determine which tool or combination of tools is best for the user's request.
-                  - Clearly explain your plan before executing it.
-                  - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
-                  - Always provide context about where information is coming from.`
-        };
+                   - First, determine which tool or combination of tools is best for the user's request.
+              - Clearly explain your plan before executing it.
+              - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
+              - Always provide context about where information is coming from.
+                    `
+                      };
 
         const userMessage = {
           role: "user",
