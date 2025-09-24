@@ -16,6 +16,7 @@ let playwrightClient = null;
 let filesystemClient = null;
 let excelClient = null; // +++ NEU: Excel Client Variable
 let m365Client = null;
+let timeClient = null;
 
 function getPostgresUri() {
   const creds = dbConfig.credentials;
@@ -73,11 +74,11 @@ export async function initPlaywrightMCPClient() {
 export async function initFilesystemMCPClient() {
   if (filesystemClient) return filesystemClient;
   console.log(`Initializing Filesystem MCP client...`);
-  const allowedDirectory = process.cwd();
+  const allowedDirectory = process.env.M365_ATTACHMENT_BASE_PATH || process.cwd();
   console.log(`Filesystem access is sandboxed to: ${allowedDirectory}`);
   const transport = new StdioClientTransport({
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory, "C:/Users/HoangDuong/Desktop/StammtischAI"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory]
   });
   filesystemClient = new Client({ name: "filesystem-client", version: "1.0.0" }, {});
   await filesystemClient.connect(transport);
@@ -118,17 +119,48 @@ export async function initM365Client() {
 }
 
 
+export async function initTimeMCPClient() {
+  if (timeClient) return timeClient;
+
+  const command = process.env.TIME_MCP_COMMAND || 'python';
+  let args;
+  try {
+    args = process.env.TIME_MCP_ARGS ? JSON.parse(process.env.TIME_MCP_ARGS) : ['-m', 'mcp_server_time'];
+  } catch (error) {
+    throw new Error(`Failed to parse TIME_MCP_ARGS. Provide a JSON array string, e.g. ["-m","mcp_server_time"]. Original error: ${error.message}`);
+  }
+
+  if (!Array.isArray(args)) {
+    throw new Error('TIME_MCP_ARGS must be a JSON array string when provided.');
+  }
+
+  console.log('Initializing Time MCP client...');
+  const transport = new StdioClientTransport({
+    command,
+    args,
+    env: process.env
+  });
+
+  timeClient = new Client({ name: 'time-client', version: '1.0.0' }, {});
+  await timeClient.connect(transport);
+  console.log('✅ Time MCP Client initialized successfully.');
+
+  return timeClient;
+}
+
+
 export async function initAllMCPClients() {
   console.log("Initializing all MCP clients...");
   
   // +++ ERWEITERT: Excel Client wird mit initialisiert +++
-  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient, microsoft365Client] = await Promise.all([
+  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initPlaywrightMCPClient(),
     initFilesystemMCPClient(),
     initExcelMCPClient(), // Neuer Client
-    initM365Client()
+    initM365Client(),
+    initTimeMCPClient()
   ]);
 
   return {
@@ -137,7 +169,8 @@ export async function initAllMCPClients() {
     playwright: playwrightClient,
     filesystem: fsClient,
     excel: xlsxClient, // Neuer Client im Rückgabeobjekt
-    m365: microsoft365Client
+    m365: microsoft365Client,
+    time: timeMcpClient
   };
 }
 
@@ -174,6 +207,11 @@ export async function closeMCPClients() {
     console.log("Closing Microsoft 365 MCP client connection");
     closePromises.push(m365Client.close());
     m365Client = null;
+  }
+  if (timeClient) {
+    console.log("Closing Time MCP client connection");
+    closePromises.push(timeClient.close());
+    timeClient = null;
   }
 
   await Promise.all(closePromises);

@@ -21,23 +21,24 @@ export default class StammtischService extends cds.ApplicationService {
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem, Excel, and Microsoft 365 capabilities...");
+      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem, Excel, Microsoft 365, and Time capabilities...");
 
       try {
         mcpClients = await initAllMCPClients();
 
         // +++ ERWEITERT: Lade Tools vom neuen Excel Client +++
-        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools, excelTools] = await Promise.all([
+        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools, excelTools, timeTools] = await Promise.all([
           loadMcpTools("query", mcpClients.postgres),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
           loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright),
           loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
           // +++ NEU: Lade alle verfügbaren Excel-Tools +++
-          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel)
+          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel),
+          loadMcpTools("get_current_time,convert_time", mcpClients.time)
         ]);
 
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools];
+        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools, ...timeTools];
 
         // Lade Microsoft 365 Tools dynamisch aus dem Manifest
         if (mcpClients.m365) {
@@ -59,10 +60,10 @@ export default class StammtischService extends cds.ApplicationService {
           console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
         }
 
-        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, and ${excelTools.length} Excel tools`);
+        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
-        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5' });
         const checkpointer = new MemorySaver();
 
         agentExecutor = createReactAgent({
@@ -72,7 +73,7 @@ export default class StammtischService extends cds.ApplicationService {
         });
         
         // +++ ERWEITERT: Log-Nachricht angepasst +++
-        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser + Filesystem + Excel).");
+        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser + Filesystem + Excel + M365 + Time).");
         return agentExecutor;
 
       } catch (error) {

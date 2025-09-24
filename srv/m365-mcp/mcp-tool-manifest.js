@@ -24,6 +24,36 @@ export const toolDefinitions = [
     metadata: { scopes: ['Mail.Read'] }
   },
   {
+    name: 'mail.messages.list',
+    description: 'Listet eingegangene Nachrichten eines Ordners, optional gefiltert nach Zeitraum und Limit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folderId: {
+          type: 'string',
+          description: 'ID oder bekannter Name des Mailordners (z. B. inbox).',
+          default: 'inbox'
+        },
+        startDateTime: {
+          type: 'string',
+          description: 'ISO-8601 Zeitpunkt. Filtert Nachrichten mit Empfangszeit >= startDateTime.'
+        },
+        endDateTime: {
+          type: 'string',
+          description: 'ISO-8601 Zeitpunkt. Filtert Nachrichten mit Empfangszeit <= endDateTime.'
+        },
+        maxResults: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 200,
+          default: 20,
+          description: 'Begrenzt die Anzahl der zurückgegebenen Nachrichten (1-200). Standard: 20.'
+        }
+      }
+    },
+    metadata: { scopes: ['Mail.Read'] }
+  },
+  {
     name: 'mail.attachment.download',
     description: 'Lädt einen bestimmten Anhang einer Nachricht und speichert ihn deterministisch im Zielpfad.',
     inputSchema: {

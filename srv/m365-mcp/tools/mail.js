@@ -44,3 +44,21 @@ export async function handleMailAttachmentDownload({ input, graphClient, logger 
     details: result
   };
 }
+
+export async function handleMailMessagesList({ input, graphClient, logger }) {
+  const info = getInfoLogger(logger);
+  info('M365 mail.messages.list invoked with input:', safeJson(input));
+
+  const messages = await graphClient.listMessages({
+    folderId: input.folderId,
+    startDateTime: input.startDateTime,
+    endDateTime: input.endDateTime,
+    maxResults: input.maxResults
+  });
+
+  return {
+    folderId: input.folderId || 'inbox',
+    count: messages.length,
+    messages
+  };
+}

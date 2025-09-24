@@ -151,7 +151,8 @@ export class GraphClient {
         query: {
           '$top': '1',
           '$orderby': 'receivedDateTime desc',
-          '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body'
+          '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body',
+          '$expand': 'attachments($select=id,name,contentType,size,isInline)'
         },
         scopes: ['Mail.Read']
       }
@@ -173,13 +174,32 @@ export class GraphClient {
             contentType: message.body.contentType,
             content: message.body.content
           }
-        : null
+        : null,
+      attachments: Array.isArray(message.attachments)
+        ? message.attachments.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline
+          }))
+        : []
     };
   }
 
   async downloadAttachment({ messageId, attachmentId, targetPath }) {
     if (!messageId || !attachmentId || !targetPath) {
       throw new Error('messageId, attachmentId and targetPath are required for attachment download.');
+    }
+
+    let resolvedTargetPath = targetPath;
+    const baseDirectory = process.env.M365_ATTACHMENT_BASE_PATH;
+    if (!path.isAbsolute(resolvedTargetPath)) {
+      if (baseDirectory) {
+        resolvedTargetPath = path.resolve(baseDirectory, resolvedTargetPath);
+      } else {
+        resolvedTargetPath = path.resolve(resolvedTargetPath);
+      }
     }
 
     const attachmentBinary = await this.request(
@@ -193,12 +213,12 @@ export class GraphClient {
       }
     );
 
-    const directory = path.dirname(targetPath);
+    const directory = path.dirname(resolvedTargetPath);
     if (!existsSync(directory)) {
       await mkdir(directory, { recursive: true });
     }
 
-    await writeFile(targetPath, attachmentBinary);
+    await writeFile(resolvedTargetPath, attachmentBinary);
 
     const bytesWritten = typeof attachmentBinary.length === 'number'
       ? attachmentBinary.length
@@ -207,9 +227,62 @@ export class GraphClient {
     return {
       messageId,
       attachmentId,
-      targetPath,
+      targetPath: resolvedTargetPath,
       bytesWritten
     };
+  }
+
+  async listMessages({ folderId = 'inbox', startDateTime, endDateTime, maxResults = 20 } = {}) {
+    const safeTop = Number.isInteger(maxResults)
+      ? Math.min(Math.max(maxResults, 1), 200)
+      : 20;
+
+    const filterParts = [];
+    if (startDateTime) {
+      filterParts.push(`receivedDateTime ge ${startDateTime}`);
+    }
+    if (endDateTime) {
+      filterParts.push(`receivedDateTime le ${endDateTime}`);
+    }
+
+    const query = {
+      '$orderby': 'receivedDateTime desc',
+      '$top': String(safeTop),
+      '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body',
+      '$expand': 'attachments($select=id,name,contentType,size,isInline)'
+    };
+
+    if (filterParts.length) {
+      query['$filter'] = filterParts.join(' and ');
+    }
+
+    const data = await this.request(
+      'GET',
+      `/me/mailFolders/${encodeURIComponent(folderId)}/messages`,
+      {
+        query,
+        scopes: ['Mail.Read']
+      }
+    );
+
+    return (data.value || []).map((message) => ({
+      id: message.id,
+      subject: message.subject,
+      from: message.from?.emailAddress || null,
+      toRecipients: (message.toRecipients || []).map((entry) => entry.emailAddress),
+      receivedDateTime: message.receivedDateTime,
+      hasAttachments: Boolean(message.hasAttachments),
+      bodyPreview: message.bodyPreview || null,
+      attachments: Array.isArray(message.attachments)
+        ? message.attachments.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline
+          }))
+        : []
+    }));
   }
 
   async listCalendarEvents({ startDateTime, endDateTime }) {
