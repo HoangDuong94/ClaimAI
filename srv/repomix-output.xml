@@ -1,0 +1,2090 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+agents/enhanced-agent.js
+lib/mcp-client.js
+prompts/assistant-prompt.js
+prompts/prompt-config.json
+service.cds
+service.js
+tools/database-tools.js
+utils/markdown-converter.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="agents/enhanced-agent.js">
+// srv/agents/enhanced-agent.js
+/**
+ * Enhanced AI Agent System with Dynamic Routing
+ * Nutzt AI-basierte Klassifikation ohne Keywords
+ */
+
+const DatabaseTools = require('../tools/database-tools');
+const MarkdownConverter = require('../utils/markdown-converter');
+
+class EnhancedAIAgent {
+  
+  constructor() {
+    this.dbTools = new DatabaseTools();
+    this.executionHistory = [];
+    this.currentPlan = null;
+    
+    // Cache für häufige Klassifikationen
+    this.classificationCache = new Map();
+    this.cacheMaxSize = 100;
+    this.cacheMaxAge = 3600000; // 1 Stunde
+  }
+
+  /**
+   * DYNAMIC AI ROUTING: Intelligente Klassifikation ohne Keywords
+   */
+  async classifyRequest(prompt) {
+    console.log('=== DYNAMIC ROUTING: AI-based Classification ===');
+    
+    // Prüfe Cache
+    const cachedResult = this.getCachedClassification(prompt);
+    if (cachedResult) {
+      console.log('Using cached classification');
+      return cachedResult;
+    }
+    
+    const classificationPrompt = `Du bist ein intelligenter Request Classifier für die StammtischAI-Anwendung.
+Analysiere die Benutzeranfrage und klassifiziere sie basierend auf INTENT und KONTEXT, nicht auf Keywords.
+
+VERFÜGBARE TOOLS IN DER ANWENDUNG:
+1. get_stammtische - Alle Stammtische abrufen
+2. get_stammtisch_by_id - Einzelnen Stammtisch abrufen
+3. search_stammtische - Nach Stammtischen suchen
+4. get_praesentatoren - Präsentatoren-Liste
+5. get_teilnehmer - Teilnehmer für Stammtisch
+6. get_stammtisch_statistics - Umfassende Statistiken
+7. get_upcoming_stammtische - Kommende Events
+
+KLASSIFIKATIONS-KATEGORIEN:
+
+**personal_chat** - Der Benutzer möchte:
+- Sich vorstellen oder Small Talk machen
+- Etwas über den Bot erfahren
+- Allgemeine Konversation ohne Datenbezug
+
+**help_task** - Der Benutzer braucht:
+- Hilfe zur Anwendung selbst
+- Erklärungen zu Funktionen
+- Anleitung zur Bedienung
+
+**data_retrieval** - Der Benutzer möchte:
+- Spezifische Daten aus der Datenbank
+- Listen oder Übersichten
+- Einzelne Datensätze
+
+**search_operation** - Der Benutzer möchte:
+- Nach bestimmten Inhalten suchen
+- Filterkriterien anwenden
+- Spezifische Teilmengen finden
+
+**analytical_task** - Der Benutzer möchte:
+- Daten analysieren oder auswerten
+- Trends oder Muster erkennen
+- Statistische Informationen
+
+**complex_workflow** - Der Benutzer braucht:
+- Mehrere Datenquellen kombiniert
+- Komplexe Berichte
+- Orchestrierte Workflows
+
+ANALYSE-PROZESS:
+1. Identifiziere die HAUPTINTENTION des Benutzers
+2. Bestimme welche DATEN benötigt werden
+3. Erkenne die KOMPLEXITÄT der Anfrage
+4. Leite die passenden TOOLS ab
+
+ANFRAGE: "${prompt}"
+
+Analysiere und klassifiziere:
+
+<classification>
+{
+  "category": "kategorie_name",
+  "confidence": 0.95,
+  "intent": "Was will der Benutzer erreichen?",
+  "data_needs": ["welche Daten werden benötigt"],
+  "suggested_tools": ["tool1", "tool2"],
+  "parameters": {"key": "value"},
+  "complexity": "simple|moderate|complex",
+  "reasoning": "Kurze Begründung der Klassifikation"
+}
+</classification>`;
+
+    try {
+      const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration');
+      const client = new OrchestrationClient({
+        llm: { model_name: "gpt-4o-mini" }, // Schnelleres Modell
+        templating: { template: [{ role: 'user', content: '{{?user_prompt}}' }] }
+      });
+
+      const response = await client.chatCompletion({
+        inputParams: { user_prompt: classificationPrompt },
+        params: { 
+          max_tokens_to_sample: 500, 
+          temperature: 0.1,
+          response_format: { type: "json_object" } // Force JSON output
+        }
+      });
+
+      const classificationText = response.getContent();
+      const match = classificationText.match(/<classification>([\s\S]*?)<\/classification>/);
+      
+      if (match) {
+        const classification = JSON.parse(match[1].trim());
+        console.log('AI Classification Result:', classification);
+        
+        // Cache das Ergebnis
+        this.cacheClassification(prompt, classification);
+        
+        return classification;
+      }
+      
+      // Fallback zu JSON parsing wenn keine Tags
+      try {
+        const classification = JSON.parse(classificationText);
+        this.cacheClassification(prompt, classification);
+        return classification;
+      } catch (e) {
+        console.log('Failed to parse classification, using intelligent fallback');
+      }
+      
+    } catch (error) {
+      console.error('AI Classification failed:', error);
+    }
+
+    // Intelligenter Fallback ohne Keywords
+    return this.intelligentFallback(prompt);
+  }
+
+  /**
+   * Intelligenter Fallback basierend auf Satzstruktur statt Keywords
+   */
+  intelligentFallback(prompt) {
+    console.log('Using intelligent structural fallback');
+    
+    // Analysiere Satzstruktur
+    const isQuestion = prompt.includes('?') || 
+                      prompt.toLowerCase().startsWith('was') ||
+                      prompt.toLowerCase().startsWith('wie') ||
+                      prompt.toLowerCase().startsWith('wo') ||
+                      prompt.toLowerCase().startsWith('wer');
+    
+    const hasNumbers = /\d+/.test(prompt);
+    const isShort = prompt.split(' ').length < 5;
+    const isGreeting = isShort && !isQuestion;
+    
+    // Intent-basierte Klassifikation
+    if (isGreeting && isShort) {
+      return {
+        category: 'personal_chat',
+        confidence: 0.7,
+        intent: 'Greeting or personal interaction',
+        data_needs: [],
+        suggested_tools: [],
+        parameters: {},
+        complexity: 'simple',
+        reasoning: 'Short non-question indicates greeting'
+      };
+    }
+    
+    if (isQuestion && prompt.length > 20) {
+      // Längere Fragen deuten auf Datenabfrage hin
+      return {
+        category: 'data_retrieval',
+        confidence: 0.6,
+        intent: 'Information request',
+        data_needs: ['stammtisch_data'],
+        suggested_tools: ['get_stammtische'],
+        parameters: {},
+        complexity: 'simple',
+        reasoning: 'Question format suggests data request'
+      };
+    }
+    
+    // Default: data retrieval
+    return {
+      category: 'data_retrieval',
+      confidence: 0.5,
+      intent: 'General information request',
+      data_needs: ['general_data'],
+      suggested_tools: ['get_stammtische'],
+      parameters: {},
+      complexity: 'simple',
+      reasoning: 'Default classification'
+    };
+  }
+
+  /**
+   * Cache-Management für Performance
+   */
+  getCachedClassification(prompt) {
+    const normalized = prompt.toLowerCase().trim();
+    const cached = this.classificationCache.get(normalized);
+    
+    if (cached && (Date.now() - cached.timestamp < this.cacheMaxAge)) {
+      return cached.classification;
+    }
+    
+    return null;
+  }
+
+  cacheClassification(prompt, classification) {
+    const normalized = prompt.toLowerCase().trim();
+    
+    // LRU: Entferne älteste Einträge wenn Cache voll
+    if (this.classificationCache.size >= this.cacheMaxSize) {
+      const firstKey = this.classificationCache.keys().next().value;
+      this.classificationCache.delete(firstKey);
+    }
+    
+    this.classificationCache.set(normalized, {
+      classification,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * INTELLIGENT ORCHESTRATION: Dynamische Task-Planung
+   */
+  async orchestrateComplexTask(prompt, classification) {
+    console.log('=== INTELLIGENT ORCHESTRATOR: Dynamic Planning ===');
+    
+    const planningPrompt = `Du bist ein intelligenter Task Orchestrator.
+Erstelle einen optimalen Ausführungsplan basierend auf dem Intent und den Datenbedarfen.
+
+KLASSIFIKATION:
+${JSON.stringify(classification, null, 2)}
+
+BENUTZERANFRAGE: ${prompt}
+
+VERFÜGBARE TOOLS:
+- get_stammtische: Alle Events abrufen
+- search_stammtische: Gezielt suchen
+- get_stammtisch_statistics: Statistiken
+- get_praesentatoren: Präsentatoren
+- get_upcoming_stammtische: Zukünftige Events
+
+Erstelle einen MINIMALEN aber VOLLSTÄNDIGEN Plan:
+
+<plan>
+[
+  {
+    "step": 1,
+    "tool": "tool_name",
+    "parameters": {},
+    "purpose": "Warum dieser Schritt",
+    "expected_output": "Was wir erwarten"
+  }
+]
+</plan>
+
+WICHTIG: Nutze nur die minimal nötigen Tools!`;
+
+    try {
+      const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration');
+      const client = new OrchestrationClient({
+        llm: { model_name: "gpt-4o-mini" },
+        templating: { template: [{ role: 'user', content: '{{?user_prompt}}' }] }
+      });
+
+      const response = await client.chatCompletion({
+        inputParams: { user_prompt: planningPrompt },
+        params: { max_tokens_to_sample: 800, temperature: 0.2 }
+      });
+
+      const content = response.getContent();
+      const planMatch = content.match(/<plan>([\s\S]*?)<\/plan>/);
+
+      if (planMatch) {
+        const plan = JSON.parse(planMatch[1].trim());
+        console.log('Execution Plan:', plan);
+        
+        this.currentPlan = { steps: plan };
+        return await this.executePlan(plan);
+      }
+    } catch (error) {
+      console.error('Orchestration failed:', error);
+    }
+
+    // Fallback zu suggested tools
+    return await this.executeToolsFromClassification(classification);
+  }
+
+  /**
+   * Tool-Ausführung basierend auf Klassifikation
+   */
+  async executeToolsFromClassification(classification) {
+    const results = [];
+    
+    for (const tool of (classification.suggested_tools || [])) {
+      try {
+        const result = await this.dbTools.executeTool(
+          tool, 
+          classification.parameters || {}
+        );
+        results.push({
+          tool,
+          result,
+          success: true
+        });
+      } catch (error) {
+        results.push({
+          tool,
+          error: error.message,
+          success: false
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * SMART RESPONSE GENERATION: Kontextabhängige Antworten
+   */
+  async generateResponse(prompt, classification, toolResults = []) {
+    console.log('=== SMART RESPONSE: Context-aware Generation ===');
+    
+    // Für personal_chat und help_task keine AI-Generation nötig
+    if (classification.category === 'personal_chat') {
+      return this.generatePersonalResponse(prompt, classification);
+    }
+    
+    if (classification.category === 'help_task') {
+      return this.generateHelpResponse(prompt, classification);
+    }
+    
+    // Für datenbasierte Antworten nutze AI
+    const responsePrompt = `Du bist ein hilfreicher Assistant für die StammtischAI-Anwendung.
+Erstelle eine benutzerfreundliche Antwort basierend auf den Daten.
+
+BENUTZERANFRAGE: ${prompt}
+
+INTENT: ${classification.intent}
+
+VERFÜGBARE DATEN:
+${JSON.stringify(toolResults, null, 2)}
+
+ANFORDERUNGEN:
+- Beantworte die Frage DIREKT und PRÄZISE
+- Nutze Markdown für bessere Lesbarkeit
+- Sei freundlich aber effizient
+- Fokussiere auf die relevanten Informationen
+- Keine unnötigen Einleitungen
+
+ANTWORT:`;
+
+    try {
+      const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration');
+      const client = new OrchestrationClient({
+        llm: { model_name: "gpt-4o-mini" },
+        templating: { template: [{ role: 'user', content: '{{?user_prompt}}' }] }
+      });
+
+      const response = await client.chatCompletion({
+        inputParams: { user_prompt: responsePrompt },
+        params: { 
+          max_tokens_to_sample: 2000, 
+          temperature: 0.3,
+          presence_penalty: 0.1 // Reduziert Wiederholungen
+        }
+      });
+
+      return response.getContent();
+      
+    } catch (error) {
+      console.error('Response generation failed:', error);
+      return this.generateFallbackResponse(toolResults);
+    }
+  }
+
+  /**
+   * Optimierte Response-Generatoren
+   */
+  generatePersonalResponse(prompt, classification) {
+    const responses = {
+      'greeting': `## 👋 Hallo! Willkommen bei StammtischAI!
+
+Ich bin Ihr intelligenter Assistant und helfe Ihnen gerne bei allen Fragen zu Ihren Stammtisch-Events.
+
+**Was kann ich für Sie tun?**
+- 📊 Daten und Statistiken abrufen
+- 🔍 Nach Events und Teilnehmern suchen
+- 📈 Analysen und Auswertungen erstellen
+
+Fragen Sie einfach los!`,
+
+      'identity': `## 🤖 Über mich
+
+Ich bin der StammtischAI Assistant - ein intelligenter Agent, der speziell für die Verwaltung und Analyse Ihrer Stammtisch-Events entwickelt wurde.
+
+**Meine Fähigkeiten:**
+- Schnelle Datenabfragen
+- Intelligente Suche
+- Komplexe Analysen
+- Hilfreiche Empfehlungen
+
+Wie kann ich Ihnen helfen?`,
+
+      'default': `## 💬 StammtischAI Assistant
+
+Ich bin hier, um Ihnen bei Ihren Stammtisch-Events zu helfen. Stellen Sie mir gerne eine Frage!`
+    };
+
+    // Wähle passende Antwort basierend auf Intent
+    const intentType = classification.intent?.toLowerCase().includes('greet') ? 'greeting' :
+                      classification.intent?.toLowerCase().includes('identity') ? 'identity' : 
+                      'default';
+    
+    return responses[intentType];
+  }
+
+  generateHelpResponse(prompt, classification) {
+    return `## 📚 StammtischAI Hilfe
+
+**Verfügbare Funktionen:**
+
+### 📊 Daten abrufen
+- "Zeige alle Stammtische"
+- "Liste der Präsentatoren"
+- "Kommende Events"
+
+### 🔍 Suchen
+- "Finde CAP-Workshops"
+- "Suche Online-Events"
+
+### 📈 Analysen
+- "Statistiken anzeigen"
+- "Event-Performance analysieren"
+
+### 💡 Tipps
+- Stellen Sie konkrete Fragen für beste Ergebnisse
+- Ich kann mehrere Datenquellen kombinieren
+- Bei komplexen Analysen erstelle ich detaillierte Berichte
+
+**Wie kann ich Ihnen konkret helfen?**`;
+  }
+
+  generateFallbackResponse(toolResults) {
+    if (!toolResults || toolResults.length === 0) {
+      return "Entschuldigung, ich konnte keine Daten zu Ihrer Anfrage finden.";
+    }
+    
+    const successfulResults = toolResults.filter(r => r.success);
+    if (successfulResults.length === 0) {
+      return "Es gab einen Fehler beim Abrufen der Daten. Bitte versuchen Sie es erneut.";
+    }
+    
+    // Strukturierte Darstellung der Rohdaten
+    let response = "## 📊 Ergebnisse\n\n";
+    successfulResults.forEach((result, index) => {
+      response += `### ${result.tool}\n\`\`\`json\n${JSON.stringify(result.result.data, null, 2)}\n\`\`\`\n\n`;
+    });
+    
+    return response;
+  }
+
+  /**
+   * PERFORMANCE MONITORING
+   */
+  async evaluatePerformance(response, classification, executionTime) {
+    const performance = {
+      executionTime,
+      classificationConfidence: classification.confidence,
+      toolsUsed: classification.suggested_tools?.length || 0,
+      complexity: classification.complexity,
+      cacheHit: false // wird vom Cache gesetzt
+    };
+
+    // Schnelle Selbstbewertung
+    if (executionTime > 5000) {
+      performance.warning = 'Slow execution detected';
+    }
+    
+    if (classification.confidence < 0.6) {
+      performance.warning = 'Low classification confidence';
+    }
+
+    return performance;
+  }
+
+  /**
+   * MAIN PROCESSING mit verbessertem Flow
+   */
+  async processRequest(prompt) {
+    console.log('\n=== ENHANCED AI AGENT: Processing Request ===');
+    const startTime = Date.now();
+    
+    try {
+      // Step 1: Intelligente Klassifikation
+      const classification = await this.classifyRequest(prompt);
+      
+      let toolResults = [];
+      let response = '';
+
+      // Step 2: Kategorie-basierte Verarbeitung
+      switch (classification.category) {
+        case 'personal_chat':
+        case 'help_task':
+          // Direkte Antwort ohne Tools
+          response = await this.generateResponse(prompt, classification);
+          break;
+          
+        case 'data_retrieval':
+        case 'search_operation':
+          // Einfache Tool-Ausführung
+          toolResults = await this.executeToolsFromClassification(classification);
+          response = await this.generateResponse(prompt, classification, toolResults);
+          break;
+          
+        case 'analytical_task':
+        case 'complex_workflow':
+          // Orchestrierte Ausführung
+          toolResults = await this.orchestrateComplexTask(prompt, classification);
+          response = await this.generateResponse(prompt, classification, toolResults);
+          break;
+          
+        default:
+          // Fallback
+          toolResults = await this.executeToolsFromClassification(classification);
+          response = await this.generateResponse(prompt, classification, toolResults);
+      }
+
+      // Step 3: Performance Monitoring
+      const executionTime = Date.now() - startTime;
+      const performance = await this.evaluatePerformance(response, classification, executionTime);
+
+      // Step 4: Response-Optimierung
+      const htmlResponse = MarkdownConverter.convertForStammtischAI(response);
+
+      // Step 5: Logging
+      this.logExecution({
+        prompt,
+        classification,
+        performance,
+        success: true
+      });
+
+      console.log(`Request processed in ${executionTime}ms`);
+      return htmlResponse;
+
+    } catch (error) {
+      console.error('Agent processing failed:', error);
+      
+      this.logExecution({
+        prompt,
+        error: error.message,
+        executionTime: Date.now() - startTime,
+        success: false
+      });
+
+      return this.generateErrorResponse(error);
+    }
+  }
+
+  /**
+   * Plan-Ausführung
+   */
+  async executePlan(steps) {
+    console.log('=== Executing Plan ===');
+    const results = [];
+    
+    for (const step of steps) {
+      console.log(`Step ${step.step}: ${step.purpose}`);
+      
+      try {
+        const toolResult = await this.dbTools.executeTool(
+          step.tool, 
+          step.parameters || {}
+        );
+        
+        results.push({
+          step: step.step,
+          tool: step.tool,
+          result: toolResult,
+          purpose: step.purpose,
+          success: true
+        });
+        
+      } catch (error) {
+        console.error(`Step ${step.step} failed:`, error);
+        results.push({
+          step: step.step,
+          tool: step.tool,
+          error: error.message,
+          success: false
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * Error Response
+   */
+  generateErrorResponse(error) {
+    return `## ❌ Fehler aufgetreten
+
+Es tut mir leid, aber bei der Verarbeitung ist ein Fehler aufgetreten.
+
+**Fehler:** ${error.message}
+
+**Was Sie tun können:**
+- Versuchen Sie es in einem Moment erneut
+- Formulieren Sie Ihre Anfrage um
+- Kontaktieren Sie den Support bei anhaltenden Problemen
+
+Kann ich Ihnen anderweitig helfen?`;
+  }
+
+  /**
+   * Execution Logging
+   */
+  logExecution(details) {
+    this.executionHistory.push({
+      ...details,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Keep last 100 executions
+    if (this.executionHistory.length > 100) {
+      this.executionHistory = this.executionHistory.slice(-100);
+    }
+  }
+
+  /**
+   * Performance Stats
+   */
+  getPerformanceStats() {
+    const stats = {
+      totalRequests: this.executionHistory.length,
+      successRate: this.executionHistory.filter(e => e.success).length / this.executionHistory.length,
+      averageExecutionTime: 0,
+      categoryDistribution: {},
+      cacheHitRate: 0
+    };
+
+    // Berechne Durchschnitte
+    let totalTime = 0;
+    let cacheHits = 0;
+    
+    this.executionHistory.forEach(entry => {
+      if (entry.performance?.executionTime) {
+        totalTime += entry.performance.executionTime;
+      }
+      if (entry.performance?.cacheHit) {
+        cacheHits++;
+      }
+      if (entry.classification?.category) {
+        stats.categoryDistribution[entry.classification.category] = 
+          (stats.categoryDistribution[entry.classification.category] || 0) + 1;
+      }
+    });
+
+    stats.averageExecutionTime = totalTime / this.executionHistory.length;
+    stats.cacheHitRate = cacheHits / this.executionHistory.length;
+
+    return stats;
+  }
+
+  /**
+   * Cache-Wartung
+   */
+  clearCache() {
+    this.classificationCache.clear();
+    console.log('Classification cache cleared');
+  }
+
+  pruneCache() {
+    const now = Date.now();
+    for (const [key, value] of this.classificationCache.entries()) {
+      if (now - value.timestamp > this.cacheMaxAge) {
+        this.classificationCache.delete(key);
+      }
+    }
+  }
+}
+
+module.exports = EnhancedAIAgent;
+</file>
+
+<file path="lib/mcp-client.js">
+// srv/lib/mcp-client.js
+
+import cds from '@sap/cds';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const dbConfig = cds.env.requires.db;
+let postgresClient = null;
+let braveSearchClient = null;
+let playwrightClient = null;
+let filesystemClient = null;
+let excelClient = null; // +++ NEU: Excel Client Variable
+
+function getPostgresUri() {
+  const creds = dbConfig.credentials;
+  return `postgresql://${creds.user}:${creds.password}@${creds.host}:${creds.port}/${creds.database}`;
+}
+
+export async function initPostgresMCPClient() {
+  if (postgresClient) return postgresClient;
+  console.log(`Initializing PostgreSQL MCP client...`);
+  const postgresUri = getPostgresUri();
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "mcp-postgres-full-access", postgresUri],
+  });
+  postgresClient = new Client({ name: "postgres-client", version: "1.0.0" }, {});
+  await postgresClient.connect(transport);
+  console.log("✅ PostgreSQL MCP Client initialized successfully.");
+  return postgresClient;
+}
+
+export async function initBraveSearchMCPClient() {
+  if (braveSearchClient) return braveSearchClient;
+  const braveApiKey = process.env.BRAVE_API_KEY || cds.env.BRAVE_API_KEY;
+  if (!braveApiKey) throw new Error("BRAVE_API_KEY is required but not provided");
+  console.log(`Initializing Brave Search MCP client...`);
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-brave-search"],
+    env: { ...process.env, BRAVE_API_KEY: braveApiKey }
+  });
+  braveSearchClient = new Client({ name: "brave-search-client", version: "1.0.0" }, {});
+  await braveSearchClient.connect(transport);
+  console.log("✅ Brave Search MCP Client initialized successfully.");
+  return braveSearchClient;
+}
+
+export async function initPlaywrightMCPClient() {
+  if (playwrightClient) return playwrightClient;
+  console.log(`Initializing Playwright MCP client...`);
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "@executeautomation/playwright-mcp-server"],
+    env: {
+      ...process.env,
+      PLAYWRIGHT_BROWSER: process.env.PLAYWRIGHT_BROWSER || "chromium",
+      PLAYWRIGHT_HEADLESS: process.env.PLAYWRIGHT_HEADLESS || "true"
+    }
+  });
+  playwrightClient = new Client({ name: "playwright-client", version: "1.0.0" }, {});
+  await playwrightClient.connect(transport);
+  console.log("✅ Playwright MCP Client initialized successfully.");
+  return playwrightClient;
+}
+
+export async function initFilesystemMCPClient() {
+  if (filesystemClient) return filesystemClient;
+  console.log(`Initializing Filesystem MCP client...`);
+  const allowedDirectory = process.cwd();
+  console.log(`Filesystem access is sandboxed to: ${allowedDirectory}`);
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory, "C:/Users/HoangDuong/Desktop/StammtischAI"]
+  });
+  filesystemClient = new Client({ name: "filesystem-client", version: "1.0.0" }, {});
+  await filesystemClient.connect(transport);
+  console.log("✅ Filesystem MCP Client initialized successfully.");
+  return filesystemClient;
+}
+
+// +++ NEUE FUNKTION: Excel MCP Client initialisieren +++
+export async function initExcelMCPClient() {
+  if (excelClient) return excelClient;
+
+  console.log(`Initializing Excel MCP client...`);
+
+  // Konfiguration basierend auf der README des Excel MCP Servers.
+  // Diese Konfiguration ist für Windows. Für andere Plattformen (macOS/Linux)
+  // wäre der Befehl: { command: "npx", args: ["--yes", "@negokaz/excel-mcp-server"] }
+  const transport = new StdioClientTransport({
+    command: "cmd",
+    args: ["/c", "npx", "--yes", "@negokaz/excel-mcp-server"],
+    env: {
+      ...process.env,
+      EXCEL_MCP_PAGING_CELLS_LIMIT: "4000" // Wie im Beispiel der README
+    }
+  });
+
+  excelClient = new Client({ name: "excel-client", version: "1.0.0" }, {});
+  await excelClient.connect(transport);
+  console.log("✅ Excel MCP Client initialized successfully.");
+  return excelClient;
+}
+
+
+export async function initAllMCPClients() {
+  console.log("Initializing all MCP clients...");
+  
+  // +++ ERWEITERT: Excel Client wird mit initialisiert +++
+  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient] = await Promise.all([
+    initPostgresMCPClient(),
+    initBraveSearchMCPClient(),
+    initPlaywrightMCPClient(),
+    initFilesystemMCPClient(),
+    initExcelMCPClient() // Neuer Client
+  ]);
+
+  return {
+    postgres: pgClient,
+    braveSearch: braveClient,
+    playwright: playwrightClient,
+    filesystem: fsClient,
+    excel: xlsxClient, // Neuer Client im Rückgabeobjekt
+  };
+}
+
+export async function closeMCPClients() {
+  const closePromises = [];
+  
+  if (postgresClient) {
+    console.log("Closing PostgreSQL MCP client connection");
+    closePromises.push(postgresClient.close());
+    postgresClient = null;
+  }
+  if (braveSearchClient) {
+    console.log("Closing Brave Search MCP client connection");
+    closePromises.push(braveSearchClient.close());
+    braveSearchClient = null;
+  }
+  if (playwrightClient) {
+    console.log("Closing Playwright MCP client connection");
+    closePromises.push(playwrightClient.close());
+    playwrightClient = null;
+  }
+  if (filesystemClient) {
+    console.log("Closing Filesystem MCP client connection");
+    closePromises.push(filesystemClient.close());
+    filesystemClient = null;
+  }
+  // +++ ERWEITERT: Excel Client wird geschlossen +++
+  if (excelClient) {
+    console.log("Closing Excel MCP client connection");
+    closePromises.push(excelClient.close());
+    excelClient = null;
+  }
+  
+  await Promise.all(closePromises);
+  console.log("✅ All MCP clients closed");
+}
+
+// Backward compatibility
+export const initMCPClient = initPostgresMCPClient;
+export const closeMCPClient = closeMCPClients;
+</file>
+
+<file path="prompts/assistant-prompt.js">
+// prompts/assistant-prompt.js
+/**
+ * System Prompt für den StammtischAI Assistant
+ * Hier können Sie den AI-Assistant Prompt zentral verwalten
+ */
+
+const SYSTEM_PROMPT = `Du bist ein intelligenter AI-Agent für die SAP CAP Anwendung "StammtischAI", entwickelt mit SAP Cloud Application Programming Model. Du hilfst Benutzern dabei, die Anwendung effektiv zu bedienen und hast direkten Zugriff auf die Datenbank.
+
+## Deine Rolle und Persönlichkeit
+- Du bist ein freundlicher, kompetenter SAP-Experte mit Datenbankzugriff
+- Du sprichst Deutsch und verwendest SAP-Terminologie korrekt
+- Du hilfst proaktiv und gibst strukturierte, datenbasierte Antworten
+- Du kennst die Anwendung im Detail und kannst auf Live-Daten zugreifen
+- Du bist ein AI-Agent mit Tools - nicht nur ein Chatbot
+
+## Anwendungskontext: StammtischAI
+
+### Zweck der Anwendung
+Die StammtischAI-Anwendung verwaltet regelmäßige Fachvorträge und Networking-Events ("Stammtische") mit folgenden Hauptfunktionen:
+- Verwaltung von Stammtisch-Events mit Thema, Datum, Ort
+- Verwaltung von Präsentatoren mit Kontaktdaten
+- Verwaltung von Teilnehmern pro Event
+- AI-basierte Unterstützung mit Datenbankzugriff
+
+### Agent-Fähigkeiten
+Du kannst direkt auf diese Daten zugreifen:
+- **Stammtische**: Alle Events, Details, Suche
+- **Präsentatoren**: Referenten-Informationen, Aktivitäten
+- **Teilnehmer**: Anmeldungen pro Event
+- **Statistiken**: Live-Auswertungen, Trends
+- **Kommende Events**: Zukunftsplanung
+
+### Datenmodell
+Entitäten mit Live-Zugriff:
+1. **Stammtische** (Hauptentität)
+   - ID, Thema, Datum, Ort, Notizen
+   - Verknüpfung zu einem Präsentator
+   - Komposition von Teilnehmern
+
+2. **Präsentatoren**
+   - Name, E-Mail, LinkedIn-Profil
+   - Können mehrere Stammtische halten
+
+3. **Teilnehmer**
+   - Name, E-Mail
+   - Zugeordnet zu einem Stammtisch
+
+## Agent-Verhalten
+
+### Datenbasierte Antworten
+- **Immer aktuelle Daten verwenden**, wenn verfügbar
+- **Konkrete Zahlen und Details** aus der Datenbank nennen
+- **Live-Statistiken** bei Bedarf abrufen
+- **Spezifische Events** suchen und anzeigen
+
+### Beispiel-Interaktionen
+
+**Benutzer fragt**: "Wie viele Stammtische haben wir?"
+**Du antwortest**: 
+
+📊 **Aktuelle Stammtisch-Statistiken** (Live-Daten):
+
+- **Gesamte Stammtische**: 47 Events
+- **Aktive Präsentatoren**: 12 Referenten
+- **Gesamte Teilnehmer**: 284 Anmeldungen
+
+**Top-Veranstaltungsorte:**
+1. SAP Walldorf (23 Events)
+2. Online (15 Events)
+3. München (9 Events)
+
+**Benutzer fragt**: "Suche nach CAP Workshops"
+**Du antwortest**:
+
+🔍 **Suchergebnisse für "CAP Workshops":**
+
+**Gefundene Stammtische (3 Ergebnisse):**
+
+1. **"Einführung in SAP CAP"**
+   - 📅 26. Oktober 2023, 19:00
+   - 📍 SAP Walldorf WDF01
+   - 👤 Max Mustermann
+
+2. **"CAP Best Practices"**
+   - 📅 15. November 2023, 18:30
+   - 📍 Online
+   - 👤 Erika Beispiel
+
+### Kommunikation
+
+#### Antwortstil
+- Verwende klare, strukturierte Antworten mit Live-Daten
+- Nutze Markdown-Formatierung für bessere Lesbarkeit
+- Gib konkrete Schritte und aktuelle Beispiele
+- Verwende SAP-Fachbegriffe korrekt
+- **Verweise immer auf Datenquelle** bei faktischen Aussagen
+
+#### Hilfebereiche mit Datenzugriff
+
+##### 1. Navigation und Bedienung mit aktuellen Daten
+
+**Navigation in StammtischAI:**
+- **Startseite**: List Report mit [AKTUELLE ANZAHL] Stammtischen
+- **Nächster Event**: [NÄCHSTES DATUM UND THEMA]
+- **Stammtisch öffnen**: Klick auf eine Zeile → Object Page
+- **AI Agent**: Ich kann Ihnen Live-Daten zu allem liefern!
+
+##### 2. Datenmanagement mit Beispielen
+- Erklärung mit konkreten Daten aus der DB
+- Referenz auf bestehende Präsentatoren
+- Live-Beispiele von Teilnehmer-Anmeldungen
+
+##### 3. Suchfunktionen mit Ergebnissen
+- Smart Filter mit aktuellen Werten
+- Live-Suchbeispiele aus der Datenbank
+- Export mit tatsächlichen Datenmengen
+
+## Erweiterte Agent-Funktionen
+
+### Proaktive Datenanalyse
+- **Trends erkennen**: "Ich sehe, dass Online-Events zunehmen..."
+- **Empfehlungen geben**: "Basierend auf den Daten empfehle ich..."
+- **Probleme identifizieren**: "Die Teilnehmerzahl ist bei Event X niedrig..."
+
+### Intelligente Suche
+- **Fuzzy Search**: Auch bei Tippfehlern helfen
+- **Kontextuelle Suche**: Ähnliche Events vorschlagen
+- **Multi-Parameter**: Nach Datum, Ort, Thema gleichzeitig suchen
+
+## Wichtige Agent-Regeln
+
+### Daten-Priorität
+1. **Live-Daten haben Vorrang** vor allgemeinen Aussagen
+2. **Immer Datenquelle angeben**: "Laut aktuellen Datenbank-Daten..."
+3. **Bei fehlenden Daten**: Klar kommunizieren was nicht verfügbar ist
+4. **Datenqualität**: Auf unvollständige/alte Daten hinweisen
+
+### Fehlerbehandlung
+- **Tool-Fehler transparent machen**: "Datenbankzugriff fehlgeschlagen..."
+- **Fallback anbieten**: "Ich kann Ihnen stattdessen bei... helfen"
+- **Retry vorschlagen**: "Versuchen Sie es in einem Moment erneut"
+
+### Responsivität
+- **Schnelle Antworten** bei einfachen Datenabfragen
+- **Detaillierte Analysen** bei komplexen Fragen
+- **Strukturierte Ausgabe** bei großen Datenmengen
+
+Wenn du spezifische Fragen zur StammtischAI-Anwendung oder deren Daten hast, bin ich hier, um zu helfen! Teile mir mit, welche Informationen du benötigst - ich habe direkten Zugriff auf alle aktuellen Daten.
+
+**Wichtige Agent-Hinweise:**
+- Antworte immer höflich und professionell
+- Nutze Live-Daten wann immer möglich
+- Gib konkrete, umsetzbare Hilfestellungen mit aktuellen Beispielen
+- Erkläre SAP-Begriffe für weniger erfahrene Benutzer
+- Frage nach, wenn etwas unklar ist
+- Bei technischen Problemen: Datenbank-Tools erwähnen
+- Verweise bei Agent-Fehlern an den Administrator`;
+
+/**
+ * Zusätzliche Prompts für spezielle Situationen
+ */
+const PROMPTS = {
+  // Standard System Prompt
+  system: SYSTEM_PROMPT,
+  
+  // Kurzer Prompt für einfache Fragen
+  simple: `Du bist ein SAP-Experte für die StammtischAI-Anwendung. Beantworte Fragen klar und präzise auf Deutsch. Die App verwaltet Stammtisch-Events, Präsentatoren und Teilnehmer mit SAP Fiori Elements UI.`,
+  
+  // Technical Support Prompt
+  technical: `${SYSTEM_PROMPT}
+
+**ZUSÄTZLICH - Technischer Support Modus:**
+- Fokus auf technische Probleme und Debugging
+- Detaillierte Erklärungen zu CAP, OData, und SAP UI5
+- Code-Beispiele und Konfigurationshilfen
+- Datenbankverbindung und Performance-Optimierung`,
+
+  // Training Mode für neue Benutzer
+  training: `${SYSTEM_PROMPT}
+
+**ZUSÄTZLICH - Trainings-Modus:**
+- Besonders ausführliche Erklärungen
+- Grundlagen von SAP Fiori Elements erklären
+- Schritt-für-Schritt Anleitungen mit Screenshots-Beschreibungen
+- Geduldig bei Nachfragen
+- Motivation und Ermutigung für neue Benutzer`
+};
+
+/**
+ * Prompt Builder für verschiedene Kontexte
+ */
+class PromptBuilder {
+  static getPrompt(mode = 'system', userContext = {}) {
+    let prompt = PROMPTS[mode] || PROMPTS.system;
+    
+    // Kontext-spezifische Anpassungen
+    if (userContext.currentPage) {
+      prompt += `\n\n**AKTUELLER KONTEXT:** Der Benutzer befindet sich auf der "${userContext.currentPage}" Seite.`;
+    }
+    
+    if (userContext.hasError) {
+      prompt += `\n\n**FEHLERSITUATION:** Der Benutzer hat möglicherweise ein technisches Problem. Fokussiere auf Problemlösung.`;
+    }
+    
+    return prompt;
+  }
+  
+  static buildPromptWithUserMessage(userMessage, mode = 'system', userContext = {}) {
+    const systemPrompt = this.getPrompt(mode, userContext);
+    return `${systemPrompt}\n\n**Benutzeranfrage:** ${userMessage}`;
+  }
+}
+
+module.exports = {
+  SYSTEM_PROMPT,
+  PROMPTS,
+  PromptBuilder
+};
+</file>
+
+<file path="prompts/prompt-config.json">
+{
+  "modes": {
+    "system": {
+      "description": "Standard AI Assistant",
+      "maxTokens": 2000,
+      "temperature": 0.3
+    },
+    "technical": {
+      "description": "Technischer Support",
+      "maxTokens": 3000,
+      "temperature": 0.2
+    },
+    "training": {
+      "description": "Benutzer-Training",
+      "maxTokens": 2500,
+      "temperature": 0.4
+    },
+    "simple": {
+      "description": "Einfache Antworten",
+      "maxTokens": 1000,
+      "temperature": 0.3
+    }
+  },
+  "features": {
+    "emojiEnhancement": true,
+    "germanTranslation": true,
+    "contextAwareness": true,
+    "errorHandling": true
+  },
+  "debugging": {
+    "logFullPrompts": false,
+    "logResponses": true,
+    "logErrors": true
+  }
+}
+</file>
+
+<file path="service.cds">
+using { sap.stammtisch as StammtischModel } from '../db/schema';
+using from '../app/annotations'; 
+
+service StammtischService @(path: '/service/stammtisch') { 
+
+    @odata.draft.enabled // Aktiviere Draft-Modus für diese Entität
+    entity Stammtische as projection on StammtischModel.Stammtische {
+        *,
+        // Navigation Properties explizit exponieren
+        praesentator : redirected to Praesentatoren,
+        teilnehmer : redirected to Teilnehmer
+    };
+
+    entity Praesentatoren as projection on StammtischModel.Praesentatoren {
+        *,
+        stammtische : redirected to Stammtische
+    };
+    
+    entity Teilnehmer as projection on StammtischModel.Teilnehmer {
+        *,
+        stammtisch : redirected to Stammtische
+    };
+
+    action callLLM (prompt: String) returns { response: String };
+
+}
+</file>
+
+<file path="service.js">
+// srv/StammtischService.js
+
+import cds from '@sap/cds';
+import { loadMcpTools } from '@langchain/mcp-adapters';
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
+import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
+import { MemorySaver } from "@langchain/langgraph-checkpoint";
+import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
+import MarkdownConverter from './utils/markdown-converter.js';
+
+export default class StammtischService extends cds.ApplicationService {
+  async init() {
+    await super.init();
+    let agentExecutor = null;
+    let mcpClients = null;
+
+    const initializeAgent = async () => {
+      if (agentExecutor) return agentExecutor;
+
+      // +++ ERWEITERT: Log-Nachricht angepasst +++
+      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem and Excel capabilities...");
+
+      try {
+        mcpClients = await initAllMCPClients();
+
+        // +++ ERWEITERT: Lade Tools vom neuen Excel Client +++
+        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools, excelTools] = await Promise.all([
+          loadMcpTools("query", mcpClients.postgres),
+          loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
+          loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright),
+          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
+          // +++ NEU: Lade alle verfügbaren Excel-Tools +++
+          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel)
+        ]);
+
+        // Kombiniere alle Tools
+        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools];
+
+        // +++ ERWEITERT: Log-Nachricht angepasst +++
+        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, and ${excelTools.length} Excel tools`);
+        console.log("Available tools:", allTools.map(tool => tool.name));
+
+        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+        const checkpointer = new MemorySaver();
+
+        agentExecutor = createReactAgent({
+          llm,
+          tools: allTools,
+          checkpointSaver: checkpointer
+        });
+        
+        // +++ ERWEITERT: Log-Nachricht angepasst +++
+        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser + Filesystem + Excel).");
+        return agentExecutor;
+
+      } catch (error) {
+        console.error("❌ Failed to initialize agent:", error);
+        throw error;
+      }
+    };
+
+    await initializeAgent();
+
+    this.on('callLLM', async (req) => {
+      const { prompt: userPrompt } = req.data;
+      if (!userPrompt) {
+        req.error(400, 'Prompt is required');
+        return;
+      }
+
+      console.log('🚀 Received prompt for Multi-Modal Agent:', userPrompt);
+      const executor = await initializeAgent();
+
+      try {
+        const systemMessage = {
+          role: "system",
+          content: `You are a helpful assistant with access to database queries, web search, browser automation, local filesystem, and MS Excel capabilities.
+
+                  DATABASE ACCESS:
+                  - You can query a PostgreSQL database using the 'query' tool.
+                  - IMPORTANT: Use PostgreSQL syntax.
+
+                  WEB SEARCH ACCESS:
+                  - You can search the web using 'brave_web_search'. 
+
+                  BROWSER AUTOMATION ACCESS (Playwright):
+                  - You can control a web browser to perform tasks like testing web applications.
+
+                  FILESYSTEM ACCESS:
+                  - You can read, write, and manage files and directories in the project.
+                  - SECURITY: You can ONLY operate within the allowed project directory.
+                  - Use 'list_directory' with '.' or a subdirectory to see available files first.
+                  - For 'edit_file', ALWAYS use 'dryRun: true' first to preview changes.
+
+                  EXCEL ACCESS:
+                  - You can read from and write to MS Excel files (.xlsx, .xlsm, etc.).
+                  - Available tools: excel_describe_sheets, excel_read_sheet, excel_write_to_sheet, excel_create_table, excel_copy_sheet, excel_screen_capture (Windows only).
+                  - ALWAYS start by using 'excel_describe_sheets' to understand the file's structure (sheet names).
+                  - For all Excel tools, you MUST provide the 'fileAbsolutePath' to the target Excel file.
+                  - When reading large sheets, the tool uses pagination. Pay attention to the 'knownPagingRanges' argument to read subsequent parts.
+                  - When writing with 'excel_write_to_sheet', you can create a new sheet by setting 'newSheet: true'. Be careful as writing can modify files permanently.
+
+                  ANALYSIS & VISUALIZATION WORKFLOW:
+                  - If the user asks for an "analysis", "report", or "visualization" of data, you MUST follow this specific workflow:
+                  1.  **Query Data:** First, use the 'query' tool to retrieve the necessary data from the PostgreSQL database. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which tables and columns are relevant for the analysis.
+                  2.  **Generate HTML File:** After successfully retrieving the data, you will generate a single, self-contained HTML file to present the analysis and visualization.
+                      -   **Structure:** Create a well-structured HTML5 document.
+                      -   **Styling:** Include some basic CSS in a <style> tag in the <head> for a clean and professional look (e.g., set a modern font, center content, add padding).
+                      -   **Visualization Library:** You MUST use a JavaScript charting library like **Chart.js** to create professional-looking charts (e.g., bar charts, line charts, pie charts). Include the library via its CDN link in a <script> tag in the <head>. Example: <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                      -   **Content:** The HTML body should contain:
+                          -   A clear headline (<h1>) describing the analysis (e.g., "Analyse der monatlichen Umsätze").
+                          -   A <canvas> element where the chart will be rendered.
+                          -   A <script> block at the end of the body. Inside this script, you will:
+                              a) Store the data retrieved from the database in a JavaScript variable.
+                              b) Write the JavaScript code to initialize Chart.js and render the chart on the canvas, using the data.
+                  3.  **Save the File:** Use the 'edit_file' tool to write the complete HTML code into a new file.
+                  4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
+
+                  RESPONSE GUIDELINES:
+                   - First, determine which tool or combination of tools is best for the user's request.
+              - Clearly explain your plan before executing it.
+              - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
+              - Always provide context about where information is coming from.
+                    `
+                      };
+
+        const userMessage = {
+          role: "user",
+          content: userPrompt
+        };
+        
+        const stream = await executor.stream(
+          {
+            messages: [systemMessage, userMessage]
+          },
+          {
+            configurable: { thread_id: `session_test}` }
+          }
+        );
+
+        const finalResponseParts = [];
+        console.log("\n\n---- AGENT STREAM START ----\n");
+
+        for await (const chunk of stream) {
+          if (chunk.agent?.messages) {
+            const message = chunk.agent.messages[chunk.agent.messages.length - 1];
+            if (message && message.content) {
+              process.stdout.write(message.content);
+              finalResponseParts.push(message.content);
+            }
+            if (message.tool_calls && message.tool_calls.length > 0) {
+              const toolCall = message.tool_calls[0];
+              const toolCallStr = `\n\n<TOOL_CALL>\n  Tool: ${toolCall.name}\n  Args: ${JSON.stringify(toolCall.args)}\n</TOOL_CALL>\n\n`;
+              process.stdout.write(toolCallStr);
+            }
+          }
+
+          if (chunk.tools?.messages) {
+             const toolMessage = chunk.tools.messages[0];
+             const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
+             process.stdout.write(toolOutputStr);
+          }
+        }
+        console.log("\n---- AGENT STREAM END ----\n");
+
+        const rawResponse = finalResponseParts.join("");
+        const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
+
+        return { response: htmlResponse };
+
+      } catch (error) {
+        console.error('💥 Error during agent execution:', error);
+        req.error(500, `Failed to process query: ${error.message}`);
+      }
+    });
+
+    this.on('EXIT', async () => {
+      console.log('Shutting down MCP clients...');
+      await closeMCPClients();
+    });
+  }
+}
+</file>
+
+<file path="tools/database-tools.js">
+// srv/tools/database-tools.js - Verbesserte Version
+/**
+ * Database Tools für den StammtischAI Agent
+ * Moderne CDS-Syntax ohne deprecated APIs
+ */
+
+const cds = require('@sap/cds');
+
+class DatabaseTools {
+  
+  constructor() {
+    this.tools = {
+      'get_stammtische': this.getStammtische.bind(this),
+      'get_stammtisch_by_id': this.getStammtischById.bind(this),
+      'search_stammtische': this.searchStammtische.bind(this),
+      'get_praesentatoren': this.getPraesentatoren.bind(this),
+      'get_teilnehmer': this.getTeilnehmer.bind(this),
+      'get_stammtisch_statistics': this.getStammtischStatistics.bind(this),
+      'get_upcoming_stammtische': this.getUpcomingStammtische.bind(this)
+    };
+  }
+
+  /**
+   * Hauptmethode: Führt ein Tool aus
+   */
+  async executeTool(toolName, parameters = {}) {
+    console.log(`=== Executing Tool: ${toolName} ===`);
+    console.log('Parameters:', parameters);
+
+    if (!this.tools[toolName]) {
+      throw new Error(`Tool '${toolName}' not found. Available tools: ${Object.keys(this.tools).join(', ')}`);
+    }
+
+    try {
+      const result = await this.tools[toolName](parameters);
+      console.log(`Tool ${toolName} executed successfully`);
+      return {
+        success: true,
+        tool: toolName,
+        data: result,
+        message: `Tool ${toolName} executed successfully`
+      };
+    } catch (error) {
+      console.error(`Error executing tool ${toolName}:`, error);
+      return {
+        success: false,
+        tool: toolName,
+        error: error.message,
+        message: `Error executing tool ${toolName}: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Tool: Alle Stammtische abrufen
+   */
+  async getStammtische(params = {}) {
+    const { limit = 10, offset = 0 } = params;
+    
+    const query = SELECT.from('sap.stammtisch.Stammtische')
+      .columns(['ID', 'thema', 'datum', 'ort', 'notizen'])
+      .limit(limit, offset)
+      .orderBy('datum desc');
+
+    const result = await cds.run(query);
+    
+    return {
+      count: result.length,
+      stammtische: result.map(s => ({
+        id: s.ID,
+        thema: s.thema,
+        datum: s.datum,
+        ort: s.ort,
+        notizen: s.notizen ? s.notizen.substring(0, 100) + '...' : null
+      }))
+    };
+  }
+
+  /**
+   * Tool: Einzelnen Stammtisch abrufen
+   */
+  async getStammtischById(params) {
+    const { id } = params;
+    
+    if (!id) {
+      throw new Error('Parameter "id" is required');
+    }
+
+    const query = SELECT.from('sap.stammtisch.Stammtische')
+      .where({ ID: id })
+      .columns(['ID', 'thema', 'datum', 'ort', 'notizen', 'praesentator_ID']);
+
+    const result = await cds.run(query);
+
+    if (!result || result.length === 0) {
+      throw new Error(`Stammtisch with ID ${id} not found`);
+    }
+
+    const stammtisch = result[0];
+
+    // Präsentator-Daten laden
+    if (stammtisch.praesentator_ID) {
+      const praesentatorQuery = SELECT.from('sap.stammtisch.Praesentatoren')
+        .where({ ID: stammtisch.praesentator_ID })
+        .columns(['name', 'email', 'linkedin']);
+      
+      const praesentator = await cds.run(praesentatorQuery);
+      stammtisch.praesentator = praesentator[0] || null;
+    }
+
+    // Teilnehmer laden
+    const teilnehmerQuery = SELECT.from('sap.stammtisch.Teilnehmer')
+      .where({ stammtisch_ID: id })
+      .columns(['ID', 'name', 'email']);
+    
+    const teilnehmer = await cds.run(teilnehmerQuery);
+    stammtisch.teilnehmer = teilnehmer;
+
+    return stammtisch;
+  }
+
+  /**
+   * Tool: Stammtische suchen - SICHERE VERSION
+   */
+  async searchStammtische(params) {
+    const { query: searchQuery, limit = 10 } = params;
+    
+    if (!searchQuery) {
+      throw new Error('Parameter "query" is required');
+    }
+
+    console.log(`Searching for: "${searchQuery}"`);
+
+    // Option 1: Sichere Parametrisierte Query
+    try {
+      // Verwende mehrere einzelne WHERE-Bedingungen mit OR
+      const result = await cds.run(
+        SELECT.from('sap.stammtisch.Stammtische')
+          .columns(['ID', 'thema', 'datum', 'ort'])
+          .where(
+            { thema: { like: `%${searchQuery}%` } },
+            'or',
+            { ort: { like: `%${searchQuery}%` } },
+            'or', 
+            { notizen: { like: `%${searchQuery}%` } }
+          )
+          .limit(limit)
+          .orderBy('datum desc')
+      );
+
+      console.log(`Search found ${result.length} results`);
+      
+      return {
+        searchQuery,
+        count: result.length,
+        results: result
+      };
+
+    } catch (error) {
+      console.warn('Parametrisierte Query fehlgeschlagen, versuche Alternative:', error.message);
+      
+      // Option 2: Alternative mit separaten Queries
+      return await this.searchStammtischeAlternative(searchQuery, limit);
+    }
+  }
+
+  /**
+   * Alternative Such-Implementierung
+   */
+  async searchStammtischeAlternative(searchQuery, limit = 10) {
+    console.log('Using alternative search method');
+    
+    try {
+      // Alle Stammtische laden und client-seitig filtern
+      const allStammtische = await cds.run(
+        SELECT.from('sap.stammtisch.Stammtische')
+          .columns(['ID', 'thema', 'datum', 'ort', 'notizen'])
+          .orderBy('datum desc')
+      );
+
+      // Client-seitige Filterung
+      const searchLower = searchQuery.toLowerCase();
+      const filtered = allStammtische.filter(s => 
+        (s.thema && s.thema.toLowerCase().includes(searchLower)) ||
+        (s.ort && s.ort.toLowerCase().includes(searchLower)) ||
+        (s.notizen && s.notizen.toLowerCase().includes(searchLower))
+      ).slice(0, limit);
+
+      console.log(`Alternative search found ${filtered.length} results`);
+
+      return {
+        searchQuery,
+        count: filtered.length,
+        results: filtered.map(s => ({
+          ID: s.ID,
+          thema: s.thema,
+          datum: s.datum,
+          ort: s.ort
+        }))
+      };
+
+    } catch (error) {
+      console.error('Alternative search failed:', error);
+      throw new Error(`Search failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Tool: Alle Präsentatoren abrufen
+   */
+  async getPraesentatoren(params = {}) {
+    const { limit = 20 } = params;
+    
+    const query = SELECT.from('sap.stammtisch.Praesentatoren')
+      .columns(['ID', 'name', 'email', 'linkedin'])
+      .limit(limit);
+
+    const result = await cds.run(query);
+    
+    return {
+      count: result.length,
+      praesentatoren: result
+    };
+  }
+
+  /**
+   * Tool: Teilnehmer für einen Stammtisch abrufen
+   */
+  async getTeilnehmer(params) {
+    const { stammtischId } = params;
+    
+    if (!stammtischId) {
+      throw new Error('Parameter "stammtischId" is required');
+    }
+
+    const query = SELECT.from('sap.stammtisch.Teilnehmer')
+      .where({ stammtisch_ID: stammtischId })
+      .columns(['ID', 'name', 'email']);
+
+    const result = await cds.run(query);
+    
+    return {
+      stammtischId,
+      count: result.length,
+      teilnehmer: result
+    };
+  }
+
+  /**
+   * Tool: Statistiken abrufen
+   */
+  async getStammtischStatistics(params = {}) {
+    try {
+      // Gesamtanzahl Stammtische
+      const totalStammtische = await cds.run(
+        SELECT.one(['count(*) as total']).from('sap.stammtisch.Stammtische')
+      );
+
+      // Gesamtanzahl Teilnehmer
+      const totalTeilnehmer = await cds.run(
+        SELECT.one(['count(*) as total']).from('sap.stammtisch.Teilnehmer')
+      );
+
+      // Gesamtanzahl Präsentatoren
+      const totalPraesentatoren = await cds.run(
+        SELECT.one(['count(*) as total']).from('sap.stammtisch.Praesentatoren')
+      );
+
+      // Stammtische nach Ort - vereinfacht
+      const stammtischeByOrt = await cds.run(
+        SELECT(['ort', 'count(*) as anzahl'])
+          .from('sap.stammtisch.Stammtische')
+          .groupBy('ort')
+          .orderBy('anzahl desc')
+          .limit(10)
+      );
+
+      // Aktivste Präsentatoren - vereinfacht für bessere Kompatibilität
+      let aktivePraesentatoren = [];
+      try {
+        aktivePraesentatoren = await cds.run(
+          SELECT(['p.name', 'count(s.ID) as stammtische_count'])
+            .from('sap.stammtisch.Praesentatoren as p')
+            .join('sap.stammtisch.Stammtische as s').on('s.praesentator_ID = p.ID')
+            .groupBy('p.ID', 'p.name')
+            .orderBy('stammtische_count desc')
+            .limit(5)
+        );
+      } catch (joinError) {
+        console.warn('JOIN query failed, using alternative approach:', joinError.message);
+        // Fallback: Lade alle Daten und berechne client-seitig
+        aktivePraesentatoren = await this.calculateActivePresentersAlternative();
+      }
+
+      return {
+        summary: {
+          totalStammtische: totalStammtische.total || 0,
+          totalTeilnehmer: totalTeilnehmer.total || 0,
+          totalPraesentatoren: totalPraesentatoren.total || 0
+        },
+        stammtischeByOrt: stammtischeByOrt || [],
+        aktivePraesentatoren: aktivePraesentatoren || []
+      };
+
+    } catch (error) {
+      console.error('Statistics query failed:', error);
+      throw new Error(`Failed to get statistics: ${error.message}`);
+    }
+  }
+
+  /**
+   * Alternative Berechnung für aktivste Präsentatoren
+   */
+  async calculateActivePresentersAlternative() {
+    try {
+      const praesentatoren = await cds.run(
+        SELECT.from('sap.stammtisch.Praesentatoren').columns(['ID', 'name'])
+      );
+      
+      const stammtische = await cds.run(
+        SELECT.from('sap.stammtisch.Stammtische').columns(['praesentator_ID'])
+      );
+
+      // Client-seitige Aggregation
+      const counts = {};
+      stammtische.forEach(s => {
+        if (s.praesentator_ID) {
+          counts[s.praesentator_ID] = (counts[s.praesentator_ID] || 0) + 1;
+        }
+      });
+
+      // Top 5 aktivste Präsentatoren
+      const result = praesentatoren
+        .map(p => ({
+          name: p.name,
+          stammtische_count: counts[p.ID] || 0
+        }))
+        .filter(p => p.stammtische_count > 0)
+        .sort((a, b) => b.stammtische_count - a.stammtische_count)
+        .slice(0, 5);
+
+      console.log('Alternative presenter calculation successful');
+      return result;
+
+    } catch (error) {
+      console.error('Alternative presenter calculation failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Tool: Kommende Stammtische abrufen
+   */
+  async getUpcomingStammtische(params = {}) {
+    const { limit = 5 } = params;
+    const now = new Date().toISOString();
+
+    try {
+      const query = SELECT.from('sap.stammtisch.Stammtische')
+        .where({ datum: { '>=': now } })
+        .columns(['ID', 'thema', 'datum', 'ort'])
+        .orderBy('datum asc')
+        .limit(limit);
+
+      const result = await cds.run(query);
+      
+      return {
+        count: result.length,
+        upcomingStammtische: result
+      };
+
+    } catch (error) {
+      console.warn('Date query failed, using alternative approach:', error.message);
+      
+      // Alternative: Alle Stammtische laden und client-seitig filtern
+      const allStammtische = await cds.run(
+        SELECT.from('sap.stammtisch.Stammtische')
+          .columns(['ID', 'thema', 'datum', 'ort'])
+          .orderBy('datum asc')
+      );
+
+      const upcoming = allStammtische
+        .filter(s => s.datum && new Date(s.datum) >= new Date())
+        .slice(0, limit);
+
+      return {
+        count: upcoming.length,
+        upcomingStammtische: upcoming
+      };
+    }
+  }
+
+  /**
+   * Gibt verfügbare Tools zurück
+   */
+  getAvailableTools() {
+    return {
+      'get_stammtische': {
+        description: 'Ruft alle Stammtische ab',
+        parameters: {
+          limit: 'Anzahl der Ergebnisse (optional, default: 10)',
+          offset: 'Offset für Paginierung (optional, default: 0)'
+        }
+      },
+      'get_stammtisch_by_id': {
+        description: 'Ruft einen spezifischen Stammtisch mit Details ab',
+        parameters: {
+          id: 'UUID des Stammtisches (erforderlich)'
+        }
+      },
+      'search_stammtische': {
+        description: 'Sucht nach Stammtischen basierend auf Suchbegriff',
+        parameters: {
+          query: 'Suchbegriff (erforderlich)',
+          limit: 'Anzahl der Ergebnisse (optional, default: 10)'
+        }
+      },
+      'get_praesentatoren': {
+        description: 'Ruft alle Präsentatoren ab',
+        parameters: {
+          limit: 'Anzahl der Ergebnisse (optional, default: 20)'
+        }
+      },
+      'get_teilnehmer': {
+        description: 'Ruft Teilnehmer für einen Stammtisch ab',
+        parameters: {
+          stammtischId: 'UUID des Stammtisches (erforderlich)'
+        }
+      },
+      'get_stammtisch_statistics': {
+        description: 'Ruft Statistiken über alle Stammtische ab',
+        parameters: {}
+      },
+      'get_upcoming_stammtische': {
+        description: 'Ruft kommende Stammtische ab',
+        parameters: {
+          limit: 'Anzahl der Ergebnisse (optional, default: 5)'
+        }
+      }
+    };
+  }
+}
+
+module.exports = DatabaseTools;
+</file>
+
+<file path="utils/markdown-converter.js">
+// srv/utils/markdown-converter.js
+/**
+ * Einfacher Markdown-zu-HTML Konverter für AI-Antworten
+ * Speziell optimiert für SAP UI5 FormattedText Component
+ */
+
+class MarkdownConverter {
+  
+  /**
+   * Konvertiert Markdown zu HTML für SAP UI5 FormattedText
+   * @param {string} markdown - Markdown Text
+   * @returns {string} HTML String
+   */
+  static convertToHTML(markdown) {
+    if (!markdown || typeof markdown !== 'string') {
+      return '';
+    }
+
+    let html = markdown;
+
+    // 1. Code-Blöcke (müssen zuerst verarbeitet werden)
+    html = this.convertCodeBlocks(html);
+
+    // 2. Inline Code
+    html = this.convertInlineCode(html);
+
+    // 3. Headers (H1-H4)
+    html = this.convertHeaders(html);
+
+    // 4. Bold und Italic
+    html = this.convertTextFormatting(html);
+
+    // 5. Listen
+    html = this.convertLists(html);
+
+    // 6. Links (falls vorhanden)
+    html = this.convertLinks(html);
+
+    // 7. Emojis und Sonderzeichen beibehalten
+    html = this.preserveEmojis(html);
+
+    // 8. Zeilenumbrüche
+    html = this.convertLineBreaks(html);
+
+    // 9. SAP UI5 spezifische Optimierungen
+    html = this.optimizeForSAPUI5(html);
+
+    return html.trim();
+  }
+
+  /**
+   * Konvertiert Code-Blöcke
+   */
+  static convertCodeBlocks(text) {
+    // ```language \n code \n ```
+    return text.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, language, code) => {
+      const cleanCode = this.escapeHTML(code.trim());
+      return `<div class="ai-code-block">
+        <div class="ai-code-header">${language || 'Code'}</div>
+        <pre class="ai-code-content"><code>${cleanCode}</code></pre>
+      </div>`;
+    });
+  }
+
+  /**
+   * Konvertiert Inline-Code
+   */
+  static convertInlineCode(text) {
+    return text.replace(/`([^`]+)`/g, '<code class="ai-inline-code">$1</code>');
+  }
+
+  /**
+   * Konvertiert Headers
+   */
+  static convertHeaders(text) {
+    // ### Header 3
+    text = text.replace(/^### (.+)$/gm, '<h3 class="ai-header-3">$1</h3>');
+    // ## Header 2  
+    text = text.replace(/^## (.+)$/gm, '<h2 class="ai-header-2">$1</h2>');
+    // # Header 1
+    text = text.replace(/^# (.+)$/gm, '<h1 class="ai-header-1">$1</h1>');
+    
+    return text;
+  }
+
+  /**
+   * Konvertiert Bold und Italic
+   */
+  static convertTextFormatting(text) {
+    // **Bold**
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="ai-bold">$1</strong>');
+    // *Italic*
+    text = text.replace(/\*([^*]+)\*/g, '<em class="ai-italic">$1</em>');
+    
+    return text;
+  }
+
+  /**
+   * Konvertiert Listen
+   */
+  static convertLists(text) {
+    // Unordered Lists
+    text = text.replace(/^- (.+)$/gm, '<li class="ai-list-item">$1</li>');
+    
+    // Wrap consecutive list items in <ul>
+    text = text.replace(/(<li class="ai-list-item">.*<\/li>\s*)+/gs, (match) => {
+      return `<ul class="ai-unordered-list">${match}</ul>`;
+    });
+
+    // Numbered Lists (vereinfacht)
+    text = text.replace(/^\d+\. (.+)$/gm, '<li class="ai-numbered-item">$1</li>');
+    
+    // Wrap consecutive numbered items in <ol>
+    text = text.replace(/(<li class="ai-numbered-item">.*<\/li>\s*)+/gs, (match) => {
+      return `<ol class="ai-ordered-list">${match}</ol>`;
+    });
+
+    return text;
+  }
+
+  /**
+   * Konvertiert Links
+   */
+  static convertLinks(text) {
+    // [Text](URL)
+    return text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="#" class="ai-link" data-url="$2" title="$2">$1</a>');
+  }
+
+  /**
+   * Behält Emojis bei
+   */
+  static preserveEmojis(text) {
+    // Emojis sind bereits Unicode, keine Konvertierung nötig
+    return text;
+  }
+
+  /**
+   * Konvertiert Zeilenumbrüche
+   */
+  static convertLineBreaks(text) {
+    // Doppelte Zeilenumbrüche zu Paragraphen
+    text = text.replace(/\n\n+/g, '</p><p class="ai-paragraph">');
+    
+    // Einzelne Zeilenumbrüche zu <br>
+    text = text.replace(/\n/g, '<br/>');
+    
+    // Wrap in paragraph wenn nicht schon in anderen Tags
+    if (!text.startsWith('<') && text.length > 0) {
+      text = `<p class="ai-paragraph">${text}</p>`;
+    }
+
+    return text;
+  }
+
+  /**
+   * SAP UI5 spezifische Optimierungen
+   */
+  static optimizeForSAPUI5(text) {
+    // Bereinige leere Paragraphen
+    text = text.replace(/<p class="ai-paragraph"><\/p>/g, '');
+    
+    // Stelle sicher, dass alle Tags geschlossen sind
+    text = this.closeOpenTags(text);
+    
+    return text;
+  }
+
+  /**
+   * HTML Escaping für Sicherheit
+   */
+  static escapeHTML(text) {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    };
+    return text.replace(/[&<>"']/g, (m) => map[m]);
+  }
+
+  /**
+   * Schließt offene Tags (vereinfacht)
+   */
+  static closeOpenTags(html) {
+    // Einfache Implementation - für Produktionsumgebung sollte ein richtiger HTML-Parser verwendet werden
+    const openTags = [];
+    const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)[^>]*>/g;
+    
+    let match;
+    while ((match = tagRegex.exec(html)) !== null) {
+      if (match[0].startsWith('</')) {
+        // Closing tag
+        const tag = match[1].toLowerCase();
+        const index = openTags.lastIndexOf(tag);
+        if (index !== -1) {
+          openTags.splice(index, 1);
+        }
+      } else if (!match[0].endsWith('/>')) {
+        // Opening tag (not self-closing)
+        openTags.push(match[1].toLowerCase());
+      }
+    }
+
+    // Schließe offene Tags
+    for (let i = openTags.length - 1; i >= 0; i--) {
+      html += `</${openTags[i]}>`;
+    }
+
+    return html;
+  }
+
+  /**
+   * Spezielle Konvertierung für SAP-spezifische Inhalte
+   */
+  static convertSAPContent(text) {
+    // SAP UI5 Komponenten-Namen hervorheben
+    text = text.replace(/\b(List Report|Object Page|Draft|Value Help|Smart Filter Bar)\b/g, 
+      '<span class="ai-sap-term">$1</span>');
+    
+    // Schritt-für-Schritt Anleitungen
+    text = text.replace(/^\*\*Schritt (\d+)\*\*:?/gm, 
+      '<div class="ai-step-header">📋 <strong>Schritt $1</strong></div>');
+    
+    return text;
+  }
+
+  /**
+   * Hauptmethode für die Konvertierung mit SAP-spezifischen Verbesserungen
+   */
+  static convertForStammtischAI(markdown) {
+    let html = this.convertToHTML(markdown);
+    html = this.convertSAPContent(html);
+    return html;
+  }
+}
+
+export default MarkdownConverter;
+</file>
+
+</files>
