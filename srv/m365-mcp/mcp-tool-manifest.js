@@ -151,26 +151,9 @@ export const toolDefinitions = [
         },
         attendees: {
           type: 'array',
-          description: 'Liste von Empfängern (E-Mail oder Objekt mit address/name/type).',
+          description: 'Liste von Empfängern (E-Mail-Adressen als Strings).',
           items: {
-            anyOf: [
-              { type: 'string' },
-              {
-                type: 'object',
-                properties: {
-                  address: { type: 'string' },
-                  email: { type: 'string' },
-                  mail: { type: 'string' },
-                  emailAddress: { type: 'string' },
-                  name: { type: 'string' },
-                  displayName: { type: 'string' },
-                  type: {
-                    type: 'string',
-                    enum: ['required', 'optional', 'resource']
-                  }
-                }
-              }
-            ]
+            type: 'string'
           }
         },
         location: {
