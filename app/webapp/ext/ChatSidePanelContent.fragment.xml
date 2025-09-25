@@ -49,6 +49,7 @@
                                 <Link text="{notifications>subject}" press="onOpenNotificationLink" wrapping="true"/>
                                 <Text text="{notifications>receivedLabel}"/>
                             </HBox>
+                            <ObjectStatus text="{notifications>category}" state="{notifications>categoryState}" visible="{= !!${notifications>category} }" class="sapUiTinyMarginTop"/>
                             <HBox alignItems="Center" justifyContent="SpaceBetween">
                                 <Text text="{notifications>summary}" wrapping="true" renderWhitespace="true">
                                     <layoutData>
@@ -59,8 +60,12 @@
                             </HBox>
                             <Text text="{notifications>fromDisplay}"/>
                             <HBox justifyContent="End" class="sapUiTinyMarginTop">
-                                <Button text="Als gelesen" type="Transparent" press="onMarkNotificationRead"/>
+                                <Button text="An Agent senden" type="Emphasized" press="onSendNotificationToAgent"/>
                                 <Button text="Schließen" type="Transparent" press="onCloseNotification"/>
+                                <!--
+                                    Button für künftiges „Als gelesen“ vorerst deaktiviert.
+                                    <Button text="Als gelesen" type="Transparent" press="onMarkNotificationRead"/>
+                                -->
                             </HBox>
                         </VBox>
                     </content>

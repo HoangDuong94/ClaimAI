@@ -129,7 +129,7 @@ export class GraphClient {
       options.headers['Content-Type'] = 'application/json';
     }
 
-    this.logger.debug?.(`Graph request ${method} ${url} with body ${safeJson(body)}`);
+    // this.logger.debug?.(`Graph request ${method} ${url} with body ${safeJson(body)}`);
 
     const response = await fetch(url, options);
     if (!response.ok) {
@@ -186,6 +186,46 @@ export class GraphClient {
             isInline: attachment.isInline
           }))
         : []
+    };
+  }
+
+  async replyToMessage({
+    messageId,
+    comment = '',
+    body,
+    contentType = 'Text',
+    replyAll = false
+  } = {}) {
+    if (!messageId) {
+      throw new Error('messageId is required to reply to a mail.');
+    }
+
+    const normalizedType = (contentType || 'Text').toUpperCase() === 'HTML' ? 'HTML' : 'Text';
+    const payload = {
+      comment: comment ?? ''
+    };
+
+    if (body) {
+      payload.message = {
+        body: {
+          contentType: normalizedType,
+          content: body
+        }
+      };
+    }
+
+    const endpoint = replyAll
+      ? `/me/messages/${encodeURIComponent(messageId)}/replyAll`
+      : `/me/messages/${encodeURIComponent(messageId)}/reply`;
+
+    await this.request('POST', endpoint, {
+      body: payload,
+      scopes: ['Mail.Send']
+    });
+
+    return {
+      status: 'sent',
+      replyAll: Boolean(replyAll)
     };
   }
 

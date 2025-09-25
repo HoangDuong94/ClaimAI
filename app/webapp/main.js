@@ -58,7 +58,16 @@ sap.ui.define([
             const addressCandidate = fromEntry.address || fromEntry.emailAddress;
             formatted.fromDisplay = nameCandidate || addressCandidate || 'Unbekannter Absender';
 
+            if (item.agentContext) {
+                formatted.agentContext = item.agentContext;
+            }
+
             formatted.hasAttachments = Boolean(item.hasAttachments);
+
+            const categoryRaw = typeof item.category === 'string' ? item.category.trim() : '';
+            const category = categoryRaw || 'Notification';
+            formatted.category = category;
+            formatted.categoryState = this.mapCategoryToState(category);
 
             const rawSummary = typeof item.summary === 'string'
                 ? item.summary
@@ -117,6 +126,66 @@ sap.ui.define([
             return formatted;
         }
 
+        buildMailActionPrompt(mailItem) {
+            const agentContext = mailItem?.agentContext;
+            const contextObject = typeof agentContext === 'string' ? { context: agentContext } : agentContext;
+            const contextJson = contextObject ? JSON.stringify(contextObject, null, 2) : null;
+            const subject = mailItem?.subject || 'Ohne Betreff';
+            const baseSummary = mailItem?.summary || '';
+            const category = mailItem?.category || 'Notification';
+
+            return [
+                'Du bist ein KI-Assistent, der Anwendern hilft, sinnvolle Folgeaktionen für eingehende E-Mails zu planen.',
+                'Analysiere den untenstehenden JSON-Kontext und schlage drei konkrete nächste Schritte vor.',
+                'Formatiere die Ausgabe als nummerierte Liste. Für jede Aktion: kurze Beschreibung, warum sie sinnvoll ist, und falls nötig welche Informationen fehlen.',
+                'Die Felder "bodyText" (bereinigter Volltext) und "bodyHtml" (sanitisierte HTML-Struktur) enthalten den vollständigen Inhalt.',
+                'Antworte auf Deutsch und fasse dich prägnant.',
+                '',
+                `Betreff: ${subject}`,
+                `Kategorie (Vorhersage): ${category}`,
+                baseSummary ? `Zusammenfassung: ${baseSummary}` : '',
+                '',
+                'E-Mail-Kontext (JSON):',
+                contextJson || 'Kein Kontext verfügbar'
+            ].filter(Boolean).join('\n');
+        }
+
+        async sendMailContextToAgent(mailItem) {
+            if (!mailItem) {
+                this.setStatusMessage('Keine Mail ausgewählt', 2000);
+                return;
+            }
+
+            if (!mailItem.agentContext) {
+                this.setStatusMessage('Kein Kontext für diese Mail verfügbar', 3000);
+                return;
+            }
+
+            const subject = mailItem.subject || 'Ohne Betreff';
+            const userMessage = `Welche Aktionen empfiehlst du für die E-Mail "${subject}"?`;
+
+            this.addMessage('user', userMessage);
+            this.chatModel.setProperty('/isTyping', true);
+            this.setStatusMessage('Agent analysiert die E-Mail...', 0);
+
+            const prompt = this.buildMailActionPrompt(mailItem);
+
+            const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+            if (pop && pop.isOpen && pop.isOpen()) {
+                pop.close();
+                this.setHasNew(false);
+            }
+
+            try {
+                const response = await this.callLLMViaOperationBinding(prompt);
+                this.handleAIResponse(response);
+                this.setStatusMessage('Agent-Antwort erhalten', 2000);
+            } catch (error) {
+                console.error('Error while sending mail to agent:', error);
+                this.handleAIError(error.message || 'Analyse fehlgeschlagen');
+            }
+        }
+
         setNotifications(items) {
             const arr = Array.isArray(items) ? items : [];
             const formatted = arr.map((entry) => this.formatNotificationForDisplay(entry));
@@ -126,6 +195,22 @@ sap.ui.define([
                 this.notificationsModel.setProperty('/hasNew', false);
             }
             this.notificationsModel.refresh(true);
+        }
+
+        mapCategoryToState(category) {
+            switch (category) {
+                case 'Action needed':
+                case 'To Respond':
+                    return 'Warning';
+                case 'Completed':
+                    return 'Success';
+                case 'Notification':
+                case 'FYI':
+                case 'Meeting Update':
+                    return 'Information';
+                default:
+                    return 'None';
+            }
         }
 
         addNotification(item) {
@@ -558,6 +643,17 @@ sap.ui.define([
             const obj = ctx?.getObject();
             if (obj?.id) {
                 chatManager.removeNotificationById(obj.id);
+            }
+        },
+
+        async onSendNotificationToAgent(event) {
+            try {
+                const ctx = event.getSource().getBindingContext('notifications');
+                const obj = ctx?.getObject();
+                await chatManager.sendMailContextToAgent(obj);
+            } catch (e) {
+                console.error('Failed to send mail context to agent:', e);
+                chatManager.setStatusMessage('Konnte Mail nicht an Agent senden', 3000);
             }
         },
         async onSendChatMessageInSidePanel() {

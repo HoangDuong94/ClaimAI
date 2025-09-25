@@ -62,3 +62,27 @@ export async function handleMailMessagesList({ input, graphClient, logger }) {
     messages
   };
 }
+
+export async function handleMailMessageReply({ input, graphClient, logger }) {
+  const info = getInfoLogger(logger);
+  const masked = {
+    ...input,
+    body: input.body ? '[redacted]' : undefined,
+    comment: input.comment ? '[provided]' : undefined
+  };
+  info('M365 mail.message.reply invoked with input:', safeJson(masked));
+
+  if (!input.messageId) {
+    throw new Error('messageId is required');
+  }
+
+  const result = await graphClient.replyToMessage({
+    messageId: input.messageId,
+    comment: input.comment,
+    body: input.body,
+    contentType: input.contentType,
+    replyAll: input.replyAll
+  });
+
+  return result;
+}

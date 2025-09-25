@@ -61,6 +61,8 @@ export default class StammtischService extends cds.ApplicationService {
     const SUMMARY_MAX_INPUT_CHARS = 6000;
     const SUMMARY_MAX_OUTPUT_CHARS = 280;
     const SUMMARY_FALLBACK = 'Keine Zusammenfassung verfügbar.';
+    const SUMMARY_CATEGORIES = ['To Respond', 'Notification', 'FYI', 'Meeting Update', 'Action needed', 'Completed'];
+    const DEFAULT_CATEGORY = 'Notification';
 
     const stripHtml = (html = '') => html
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -72,6 +74,42 @@ export default class StammtischService extends cds.ApplicationService {
     const truncate = (text = '', maxLength = SUMMARY_MAX_OUTPUT_CHARS) => {
       if (text.length <= maxLength) return text;
       return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+    };
+
+    const escapeHtml = (text = '') => text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const sanitizeEmailHtml = (html = '') => {
+      if (!html) return '';
+      let sanitized = html;
+      sanitized = sanitized.replace(/<script[\s\S]*?<\/script>/gi, '');
+      sanitized = sanitized.replace(/<style[\s\S]*?<\/style>/gi, '');
+      sanitized = sanitized.replace(/<link[\s\S]*?>/gi, '');
+      sanitized = sanitized.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+      sanitized = sanitized.replace(/<object[\s\S]*?<\/object>/gi, '');
+      sanitized = sanitized.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+      sanitized = sanitized.replace(/<base[\s\S]*?>/gi, '');
+      sanitized = sanitized.replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '');
+      sanitized = sanitized.replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '');
+      sanitized = sanitized.replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '');
+      sanitized = sanitized.replace(/javascript:/gi, '');
+      sanitized = sanitized.replace(/data:text\/html;[^"'>]+/gi, '');
+      return sanitized.trim();
+    };
+
+    const getSanitizedBodyHtml = (message) => {
+      if (!message?.body?.content) return null;
+      const { content, contentType } = message.body;
+      if (!content) return null;
+      if (contentType === 'html') {
+        return sanitizeEmailHtml(content);
+      }
+      const plain = typeof content === 'string' ? content : String(content);
+      return `<pre>${escapeHtml(plain)}</pre>`;
     };
 
     const extractMessageContent = (message) => {
@@ -105,16 +143,69 @@ export default class StammtischService extends cds.ApplicationService {
       return '';
     };
 
+    const formatMailAddress = (entry) => {
+      if (!entry) return null;
+      const emailAddress = entry.emailAddress || entry;
+      const address = emailAddress?.address || emailAddress?.emailAddress || emailAddress?.value || entry.address;
+      const name = emailAddress?.name || emailAddress?.displayName || entry.name || entry.displayName;
+      if (name && address) return `${name} <${address}>`;
+      return name || address || null;
+    };
+
+    const mapRecipients = (list = []) => {
+      if (!Array.isArray(list)) return [];
+      return list
+        .map(formatMailAddress)
+        .filter(Boolean);
+    };
+
+    const buildAgentContext = (message, summary, category) => {
+      const content = extractMessageContent(message) || '';
+      const bodyPreview = normalizeWhitespace(message.bodyPreview || '').slice(0, SUMMARY_MAX_OUTPUT_CHARS);
+      const from = formatMailAddress(message.from) || null;
+      const bodyHtml = getSanitizedBodyHtml(message);
+      return {
+        id: message.id,
+        subject: message.subject || '',
+        from,
+        toRecipients: mapRecipients(message.toRecipients),
+        ccRecipients: mapRecipients(message.ccRecipients),
+        receivedDateTime: message.receivedDateTime || null,
+        webLink: message.webLink || null,
+        hasAttachments: Boolean(message.hasAttachments),
+        attachmentCount: Array.isArray(message.attachments) ? message.attachments.length : null,
+        category,
+        summary,
+        bodyPreview,
+        body: content,
+        bodyText: content,
+        bodyHtml,
+        importance: message.importance || null,
+        inferenceClassification: message.inferenceClassification || null
+      };
+    };
+
+    const finalizeSummaryResult = (message, summaryText, categoryText) => {
+      const fallback = message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+      const normalizedSummary = normalizeWhitespace(summaryText || fallback);
+      const truncated = truncate(normalizedSummary || fallback, SUMMARY_MAX_OUTPUT_CHARS);
+      const normalizedCategory = SUMMARY_CATEGORIES.includes(categoryText) ? categoryText : DEFAULT_CATEGORY;
+      const agentContext = buildAgentContext(message, truncated || fallback, normalizedCategory);
+      return { summary: truncated || fallback, category: normalizedCategory, agentContext };
+    };
+
     const generateSummaryForMessage = async (message) => {
       const content = extractMessageContent(message);
       const safeContent = content ? content.slice(0, SUMMARY_MAX_INPUT_CHARS) : '';
       const subject = message.subject || '';
 
       if (!safeContent) {
-        return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+        return finalizeSummaryResult(message, message.bodyPreview, DEFAULT_CATEGORY);
       }
 
-      const userPrompt = `Fasse die folgende E-Mail in höchstens zwei Sätzen zusammen. Maximal 280 Zeichen.
+      const userPrompt = `Fasse die folgende E-Mail in höchstens zwei Sätzen (maximal 280 Zeichen) zusammen und kategorisiere sie.
+Gültige Kategorien: To Respond, Notification, FYI, Meeting Update, Action needed, Completed.
+Gib das Ergebnis ausschließlich als kompaktes JSON-Objekt zurück: {"summary":"...","category":"..."}.
 
 Betreff: ${subject || '—'}
 
@@ -124,7 +215,7 @@ ${safeContent}`;
         const response = await summarizer.invoke([
           {
             role: 'system',
-            content: 'Du bist ein Assistent, der E-Mails prägnant in bis zu zwei Sätzen (maximal 280 Zeichen) zusammenfasst. Verwende klare, neutrale Sprache und vermeide Aufzählungen.'
+            content: 'Du bist ein Assistent, der eingehende E-Mails prägnant in höchstens zwei Sätzen (maximal 280 Zeichen) zusammenfasst und sie in eine vorgegebene Kategorie einordnet. Antworte ausschließlich mit gültigem JSON im Format {"summary":"...","category":"..."}.'
           },
           {
             role: 'user',
@@ -132,20 +223,37 @@ ${safeContent}`;
           }
         ]);
 
-        const rawSummary = extractModelOutput(response);
-        const cleaned = normalizeWhitespace(rawSummary);
-        if (!cleaned) {
-          return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+        const rawContent = (extractModelOutput(response) || '').trim();
+        if (!rawContent) {
+          return finalizeSummaryResult(message, null, DEFAULT_CATEGORY);
         }
-        return truncate(cleaned, SUMMARY_MAX_OUTPUT_CHARS);
+        let parsed = null;
+        try {
+          const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0]);
+          } else {
+            parsed = JSON.parse(rawContent);
+          }
+        } catch (parseError) {
+          parsed = null;
+        }
+
+        if (parsed && typeof parsed === 'object') {
+          const summaryCandidate = typeof parsed.summary === 'string' ? parsed.summary : null;
+          const categoryCandidate = typeof parsed.category === 'string' ? parsed.category : DEFAULT_CATEGORY;
+          return finalizeSummaryResult(message, summaryCandidate, categoryCandidate);
+        }
+
+        return finalizeSummaryResult(message, rawContent, DEFAULT_CATEGORY);
       } catch (error) {
         console.warn('Failed to generate mail summary:', error?.message || error);
-        return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+        return finalizeSummaryResult(message, message.bodyPreview, DEFAULT_CATEGORY);
       }
     };
 
     const ensureSummaryForMessage = async (session, message) => {
-      if (!message?.id) return SUMMARY_FALLBACK;
+      if (!message?.id) return finalizeSummaryResult(message, null, DEFAULT_CATEGORY);
       if (session.summaries.has(message.id)) {
         return session.summaries.get(message.id);
       }
@@ -166,7 +274,7 @@ ${safeContent}`;
 
     // Microsoft Graph client (CLI login based)
     const graph = new GraphClient({ logger: console });
-    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite']);
+    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send']);
 
     const POLL_INTERVAL_MS = 10_000;
     const MAX_INIT_UNREAD = 10;
@@ -226,16 +334,21 @@ ${safeContent}`;
       }
     };
 
-    const sanitizeMessage = (msg, session) => ({
-      id: msg.id,
-      subject: msg.subject || '',
-      from: msg.from || null,
-      receivedDateTime: msg.receivedDateTime,
-      isRead: Boolean(msg.isRead),
-      webLink: msg.webLink || '',
-      summary: session?.summaries?.get(msg.id) || null,
-      hasAttachments: Boolean(msg.hasAttachments)
-    });
+    const sanitizeMessage = (msg, session) => {
+      const cacheEntry = session?.summaries?.get(msg.id) || null;
+      return {
+        id: msg.id,
+        subject: msg.subject || '',
+        from: msg.from || null,
+        receivedDateTime: msg.receivedDateTime,
+        isRead: Boolean(msg.isRead),
+        webLink: msg.webLink || '',
+        summary: cacheEntry?.summary || null,
+        category: cacheEntry?.category || null,
+        agentContext: cacheEntry?.agentContext || null,
+        hasAttachments: Boolean(msg.hasAttachments)
+      };
+    };
 
     // SSE stream endpoint
     app.get('/service/stammtisch/notifications/stream', async (req, res) => {

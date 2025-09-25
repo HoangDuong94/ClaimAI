@@ -66,9 +66,42 @@ export const toolDefinitions = [
           type: 'string',
           description: 'Absoluter Ablageort für den heruntergeladenen Anhang.'
         }
-      }
+    }
     },
     metadata: { scopes: ['Mail.Read'] }
+  },
+  {
+    name: 'mail.message.reply',
+    description: 'Antwortet auf eine vorhandene Nachricht (wahlweise Reply-All) mit Text oder HTML-Inhalt.',
+    inputSchema: {
+      type: 'object',
+      required: ['messageId'],
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'ID der Nachricht, auf die geantwortet werden soll.'
+        },
+        comment: {
+          type: 'string',
+          description: 'Optionaler Kommentar, der oberhalb des Antworttexts eingefügt wird (Plain Text).'
+        },
+        body: {
+          type: 'string',
+          description: 'Optionaler kompletter Antworttext. Wird entsprechend contentType als Text oder HTML interpretiert.'
+        },
+        contentType: {
+          type: 'string',
+          description: 'Legt fest, ob der Body als Text oder HTML interpretiert wird.',
+          enum: ['Text', 'HTML'],
+          default: 'Text'
+        },
+        replyAll: {
+          type: 'boolean',
+          description: 'true, um „Allen antworten“ zu verwenden. Standard: false.'
+        }
+      }
+    },
+    metadata: { scopes: ['Mail.Send'] }
   },
   {
     name: 'calendar.events.list',
