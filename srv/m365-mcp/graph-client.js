@@ -381,4 +381,105 @@ export class GraphClient {
     // Give pending CLI processes a moment to settle; mainly relevant for unit tests.
     await delay(10);
   }
+
+  async createCalendarEvent({
+    subject,
+    body,
+    contentType = 'Text',
+    startDateTime,
+    endDateTime,
+    timezone = 'UTC',
+    attendees = [],
+    teams = false,
+    location,
+    reminderMinutesBeforeStart,
+    allowNewTimeProposals,
+    isOnlineMeeting,
+    onlineMeetingProvider
+  } = {}) {
+    if (!subject) {
+      throw new Error('subject is required to create an event.');
+    }
+    if (!startDateTime || !endDateTime) {
+      throw new Error('startDateTime and endDateTime are required.');
+    }
+
+    const normalizedContentType = (contentType || 'Text').toUpperCase() === 'HTML' ? 'HTML' : 'Text';
+    const attendeeArray = Array.isArray(attendees) ? attendees : [];
+
+    const eventPayload = {
+      subject,
+      start: {
+        dateTime: startDateTime,
+        timeZone: timezone || 'UTC'
+      },
+      end: {
+        dateTime: endDateTime,
+        timeZone: timezone || 'UTC'
+      },
+      attendees: attendeeArray
+        .map((entry) => {
+          if (!entry) return null;
+          if (typeof entry === 'string') {
+            return {
+              emailAddress: {
+                address: entry
+              },
+              type: 'required'
+            };
+          }
+          const address = entry.address || entry.email || entry.mail || entry.emailAddress;
+          if (!address) return null;
+          return {
+            emailAddress: {
+              address,
+              name: entry.name || entry.displayName || undefined
+            },
+            type: entry.type || 'required'
+          };
+        })
+        .filter(Boolean)
+    };
+
+    if (body) {
+      eventPayload.body = {
+        contentType: normalizedContentType,
+        content: body
+      };
+    }
+
+    if (location) {
+      eventPayload.location = typeof location === 'string'
+        ? { displayName: location }
+        : location;
+    }
+
+    if (typeof reminderMinutesBeforeStart === 'number') {
+      eventPayload.reminderMinutesBeforeStart = reminderMinutesBeforeStart;
+    }
+
+    if (typeof allowNewTimeProposals === 'boolean') {
+      eventPayload.allowNewTimeProposals = allowNewTimeProposals;
+    }
+
+    if (typeof isOnlineMeeting === 'boolean') {
+      eventPayload.isOnlineMeeting = isOnlineMeeting;
+    }
+
+    if (onlineMeetingProvider) {
+      eventPayload.onlineMeetingProvider = onlineMeetingProvider;
+    }
+
+    if (teams) {
+      eventPayload.isOnlineMeeting = true;
+      eventPayload.onlineMeetingProvider = 'teamsForBusiness';
+    }
+
+    const response = await this.request('POST', '/me/events', {
+      body: eventPayload,
+      scopes: ['Calendars.ReadWrite']
+    });
+
+    return response;
+  }
 }

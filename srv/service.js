@@ -8,6 +8,9 @@ import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
 import { MemorySaver } from "@langchain/langgraph-checkpoint";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
 import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
@@ -63,6 +66,18 @@ export default class StammtischService extends cds.ApplicationService {
     const SUMMARY_FALLBACK = 'Keine Zusammenfassung verfügbar.';
     const SUMMARY_CATEGORIES = ['To Respond', 'Notification', 'FYI', 'Meeting Update', 'Action needed', 'Completed'];
     const DEFAULT_CATEGORY = 'Notification';
+    const ATTACHMENTS_DIR = process.env.M365_ATTACHMENT_BASE_PATH
+      ? path.resolve(process.env.M365_ATTACHMENT_BASE_PATH)
+      : path.resolve(process.cwd(), 'tmp', 'attachments');
+    const EXCEL_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm', '.xlsb', '.csv']);
+    const EXCEL_MIME_PREFIXES = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml',
+      'application/vnd.ms-excel',
+      'text/csv',
+      'application/vnd.ms-excel.sheet'
+    ];
+
+    let attachmentDirReadyPromise = null;
 
     const stripHtml = (html = '') => html
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -74,6 +89,180 @@ export default class StammtischService extends cds.ApplicationService {
     const truncate = (text = '', maxLength = SUMMARY_MAX_OUTPUT_CHARS) => {
       if (text.length <= maxLength) return text;
       return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+    };
+
+    const ensureAttachmentDir = async () => {
+      if (!attachmentDirReadyPromise) {
+        attachmentDirReadyPromise = mkdir(ATTACHMENTS_DIR, { recursive: true }).catch(() => {});
+      }
+      await attachmentDirReadyPromise;
+    };
+
+    const sanitizeFileName = (name = '') => {
+      const safe = name.replace(/[^a-z0-9_.-]+/gi, '_').replace(/_+/g, '_').trim();
+      if (safe) return safe;
+      return `attachment_${Date.now()}`;
+    };
+
+    const isExcelAttachment = (attachment) => {
+      if (!attachment) return false;
+      const name = (attachment.name || '').toLowerCase();
+      const ext = path.extname(name);
+      if (ext && EXCEL_EXTENSIONS.has(ext)) return true;
+      const type = (attachment.contentType || '').toLowerCase();
+      return EXCEL_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
+    };
+
+    const parseMcpContent = (payload) => {
+      if (!payload) return null;
+      if (typeof payload === 'string') {
+        try {
+          return JSON.parse(payload);
+        } catch {
+          return payload;
+        }
+      }
+      if (Array.isArray(payload)) {
+        const parsed = payload
+          .map((entry) => parseMcpContent(entry))
+          .filter((entry) => entry !== null && entry !== undefined);
+        if (parsed.length === 1) return parsed[0];
+        return parsed;
+      }
+      if (typeof payload === 'object') {
+        if (Array.isArray(payload.content)) {
+          const parts = payload.content
+            .map((part) => {
+              if (!part) return null;
+              if (typeof part === 'string') return parseMcpContent(part);
+              if (typeof part.text === 'string') return parseMcpContent(part.text);
+              if (part.json !== undefined) return part.json;
+              if (part.data !== undefined) return part.data;
+              return null;
+            })
+            .filter((entry) => entry !== null && entry !== undefined);
+          if (parts.length === 1) return parts[0];
+          return parts;
+        }
+        return payload;
+      }
+      return payload;
+    };
+
+    const callExcelTool = async (toolName, args) => {
+      if (!mcpClients?.excel) return null;
+      try {
+        const result = await mcpClients.excel.callTool({ name: toolName, arguments: args });
+        return parseMcpContent(result) ?? null;
+      } catch (error) {
+        console.warn(`Excel tool ${toolName} failed:`, error?.message || error);
+        return null;
+      }
+    };
+
+    const extractSheetNames = (describeResult) => {
+      if (!describeResult) return [];
+      if (Array.isArray(describeResult)) {
+        return describeResult
+          .map((entry) => {
+            if (!entry) return null;
+            if (typeof entry === 'string') return entry;
+            if (entry.name) return entry.name;
+            if (entry.sheetName) return entry.sheetName;
+            return null;
+          })
+          .filter(Boolean);
+      }
+      if (Array.isArray(describeResult.sheets)) {
+        return describeResult.sheets
+          .map((sheet) => (sheet?.name || sheet?.sheetName || (typeof sheet === 'string' ? sheet : null)))
+          .filter(Boolean);
+      }
+      if (Array.isArray(describeResult.sheetNames)) {
+        return describeResult.sheetNames.filter(Boolean);
+      }
+      if (typeof describeResult.sheetName === 'string') {
+        return [describeResult.sheetName];
+      }
+      return [];
+    };
+
+    const loadExcelAttachmentContext = async (filePath) => {
+      const describeResult = await callExcelTool('excel_describe_sheets', { fileAbsolutePath: filePath });
+      const sheetNames = extractSheetNames(describeResult);
+
+      const sheets = [];
+      for (const sheetName of sheetNames) {
+        try {
+          const sheetData = await callExcelTool('excel_read_sheet', {
+            fileAbsolutePath: filePath,
+            sheetName
+          });
+          sheets.push({ sheetName, data: sheetData });
+        } catch (error) {
+          console.warn('Failed to read Excel sheet', sheetName, error?.message || error);
+          sheets.push({ sheetName, error: String(error?.message || error) });
+        }
+      }
+
+      return {
+        describe: describeResult,
+        sheets
+      };
+    };
+
+    const ensureExcelAttachmentDetails = async (message, summaryEntry) => {
+      if (!summaryEntry?.agentContext) return;
+      const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+      if (!attachments.length) return;
+
+      await ensureAttachmentDir();
+
+      const enriched = [];
+      for (const attachment of attachments) {
+        const baseInfo = {
+          id: attachment.id || null,
+          name: attachment.name || null,
+          contentType: attachment.contentType || null,
+          size: attachment.size ?? null,
+          isInline: Boolean(attachment.isInline)
+        };
+
+        if (!isExcelAttachment(attachment) || attachment.isInline) {
+          enriched.push(baseInfo);
+          continue;
+        }
+
+        if (!attachment.id || !message.id) {
+          enriched.push({ ...baseInfo, error: 'attachment id or message id missing' });
+          continue;
+        }
+
+        const safeName = sanitizeFileName(attachment.name || `${message.id}-${attachment.id}.xlsx`);
+        const targetPath = path.join(ATTACHMENTS_DIR, safeName);
+
+        try {
+          if (!existsSync(targetPath)) {
+            await graph.downloadAttachment({
+              messageId: message.id,
+              attachmentId: attachment.id,
+              targetPath
+            });
+          }
+
+          const excel = await loadExcelAttachmentContext(targetPath);
+          enriched.push({
+            ...baseInfo,
+            path: targetPath,
+            excel
+          });
+        } catch (error) {
+          console.warn('Failed to process Excel attachment:', attachment.name, error?.message || error);
+          enriched.push({ ...baseInfo, path: targetPath, error: String(error?.message || error) });
+        }
+      }
+
+      summaryEntry.agentContext.attachments = enriched;
     };
 
     const escapeHtml = (text = '') => text
@@ -181,7 +370,8 @@ export default class StammtischService extends cds.ApplicationService {
         bodyText: content,
         bodyHtml,
         importance: message.importance || null,
-        inferenceClassification: message.inferenceClassification || null
+        inferenceClassification: message.inferenceClassification || null,
+        attachments: []
       };
     };
 
@@ -258,6 +448,11 @@ ${safeContent}`;
         return session.summaries.get(message.id);
       }
       const summary = await generateSummaryForMessage(message);
+      try {
+        await ensureExcelAttachmentDetails(message, summary);
+      } catch (error) {
+        console.warn('ensureExcelAttachmentDetails failed:', error?.message || error);
+      }
       session.summaries.set(message.id, summary);
       return summary;
     };
@@ -274,7 +469,7 @@ ${safeContent}`;
 
     // Microsoft Graph client (CLI login based)
     const graph = new GraphClient({ logger: console });
-    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send']);
+    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'Calendars.Read', 'Calendars.ReadWrite']);
 
     const POLL_INTERVAL_MS = 10_000;
     const MAX_INIT_UNREAD = 10;
