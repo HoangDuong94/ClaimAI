@@ -33,7 +33,7 @@
     "flexEnabled": true,
     "dependencies": {
       "minUI5Version": "1.120.0",
-      "libs": { "sap.m": {}, "sap.ui.core": {}, "sap.fe.templates": {} }
+      "libs": { "sap.m": {}, "sap.ui.core": {}, "sap.ui.layout": {}, "sap.fe.templates": {} }
     },
     "contentDensities": { "compact": true, "cozy": true },
     "models": {

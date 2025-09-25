@@ -1,8 +1,10 @@
 sap.ui.define([
     "sap/ui/core/Component",
     "sap/ui/core/ComponentContainer",
-    "sap/ui/layout/DynamicSideContent",
     "sap/ui/core/Fragment",
+    "sap/ui/layout/Splitter",
+    "sap/ui/layout/SplitterLayoutData",
+    "sap/m/Panel",
     "sap/ui/model/json/JSONModel",
     "sap/m/App",
     "sap/m/Page",
@@ -10,7 +12,7 @@ sap.ui.define([
     "sap/m/Title",
     "sap/m/MessageToast",
     "sap/ui/model/Filter"
-], (Component, ComponentContainer, DynamicSideContent, Fragment, JSONModel, App, Page, Bar, Title, MessageToast, Filter) => {
+], (Component, ComponentContainer, Fragment, Splitter, SplitterLayoutData, Panel, JSONModel, App, Page, Bar, Title, MessageToast, Filter) => {
     "use strict";
 
     // Modern class-based approach for Chat functionality
@@ -18,7 +20,8 @@ sap.ui.define([
         constructor() {
             this.chatModel = null;
             this.notificationsModel = null;
-            this.dynamicSideContent = null;
+            this.mainSplitter = null;
+            this.chatPanel = null;
             this.feAppComponentInstance = null;
             this.currentRecognition = null;
             this.serviceUrl = "/service/stammtisch"; // Service URL from manifest.json
@@ -309,7 +312,7 @@ sap.ui.define([
 
         // Smooth scroll to bottom of chat
         scrollToBottom() {
-            if (!this.dynamicSideContent) return;
+            if (!this.chatPanel) return;
 
             const scrollContainer = sap.ui.core.Fragment.byId(
                 "chatSidePanelFragmentGlobal",
@@ -622,7 +625,7 @@ sap.ui.define([
         }
 
         scrollToBottomEnhanced() {
-            if (!this.dynamicSideContent) return;
+            if (!this.chatPanel) return;
 
             const scrollContainer = sap.ui.core.Fragment.byId(
                 "chatSidePanelFragmentGlobal",
@@ -1386,21 +1389,25 @@ sap.ui.define([
             chatManager.initializeChatModel();
             chatManager.initializeNotificationsModel();
 
-            // Create DynamicSideContent
-            chatManager.dynamicSideContent = new DynamicSideContent("appDynamicSideContentGlobal", {
-                sideContentVisible: false,
-                height: "100%"
-            });
-            chatManager.dynamicSideContent.setModel(chatManager.chatModel, "chat");
-            chatManager.dynamicSideContent.setModel(chatManager.notificationsModel, "notifications");
-
             // Load chat fragment
             const chatPanelContent = await Fragment.load({
                 id: "chatSidePanelFragmentGlobal",
                 name: "sap.stammtisch.ui.app.ext.ChatSidePanelContent",
                 controller: chatController
             });
-            chatManager.dynamicSideContent.addSideContent(chatPanelContent);
+
+            chatManager.chatPanel = new Panel("chatRightPane", {
+                height: "100%",
+                width: "100%",
+                content: [chatPanelContent]
+            });
+            chatManager.chatPanel.setModel(chatManager.chatModel, "chat");
+            chatManager.chatPanel.setModel(chatManager.notificationsModel, "notifications");
+            chatManager.chatPanel.setLayoutData(new SplitterLayoutData({
+                size: "420px",
+                resizable: true,
+                minSize: 280
+            }));
 
             chatController._ensureMentionBindings();
 
@@ -1416,7 +1423,7 @@ sap.ui.define([
             if (feComponent.setExternalDependencies) {
                 feComponent.setExternalDependencies(
                     chatManager.chatModel,
-                    chatManager.dynamicSideContent
+                    chatManager.chatPanel
                 );
             } else {
                 console.warn(
@@ -1430,11 +1437,17 @@ sap.ui.define([
                 component: feComponent,
                 height: "100%"
             });
-            chatManager.dynamicSideContent.addMainContent(componentContainer);
+
+            chatManager.mainSplitter = new Splitter("mainSplitter", {
+                height: "100%",
+                orientation: "Horizontal"
+            });
+            chatManager.mainSplitter.addContentArea(componentContainer);
+            chatManager.mainSplitter.addContentArea(chatManager.chatPanel);
 
             const mainPage = new Page("mainAppPage", {
                 showHeader: false,
-                content: [chatManager.dynamicSideContent],
+                content: [chatManager.mainSplitter],
                 height: "100%"
             });
 
