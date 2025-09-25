@@ -233,7 +233,8 @@ ${safeContent}`;
       receivedDateTime: msg.receivedDateTime,
       isRead: Boolean(msg.isRead),
       webLink: msg.webLink || '',
-      summary: session?.summaries?.get(msg.id) || null
+      summary: session?.summaries?.get(msg.id) || null,
+      hasAttachments: Boolean(msg.hasAttachments)
     });
 
     // SSE stream endpoint

@@ -58,16 +58,32 @@ sap.ui.define([
             const addressCandidate = fromEntry.address || fromEntry.emailAddress;
             formatted.fromDisplay = nameCandidate || addressCandidate || 'Unbekannter Absender';
 
+            formatted.hasAttachments = Boolean(item.hasAttachments);
+
             const rawSummary = typeof item.summary === 'string'
                 ? item.summary
                 : (item.bodyPreview || '');
-            let preparedSummary = rawSummary.replace(/\s+/g, ' ').trim();
-            if (!preparedSummary) {
+
+            let preparedSummary = String(rawSummary || '')
+                .replace(/\r\n/g, '\n')
+                .trim();
+
+            if (preparedSummary) {
+                // Normalize whitespace around explicit line breaks
+                preparedSummary = preparedSummary
+                    .split('\n')
+                    .map((line) => line.trim().replace(/\s{2,}/g, ' '))
+                    .filter(Boolean)
+                    .join('\n');
+
+                // If no line breaks provided, insert one after sentence endings for readability
+                if (!preparedSummary.includes('\n')) {
+                    preparedSummary = preparedSummary.replace(/\.\s+/g, '.\n');
+                }
+            } else {
                 preparedSummary = 'Keine Zusammenfassung verfügbar.';
             }
-            if (preparedSummary.length > 260) {
-                preparedSummary = `${preparedSummary.slice(0, 257).trim()}…`;
-            }
+
             formatted.summary = preparedSummary;
 
             if (item.receivedDateTime) {

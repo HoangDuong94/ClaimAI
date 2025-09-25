@@ -49,7 +49,14 @@
                                 <Link text="{notifications>subject}" press="onOpenNotificationLink" wrapping="true"/>
                                 <Text text="{notifications>receivedLabel}"/>
                             </HBox>
-                            <Text text="{notifications>summary}" wrapping="true" maxLines="2"/>
+                            <HBox alignItems="Center" justifyContent="SpaceBetween">
+                                <Text text="{notifications>summary}" wrapping="true" renderWhitespace="true">
+                                    <layoutData>
+                                        <FlexItemData growFactor="1"/>
+                                    </layoutData>
+                                </Text>
+                                <core:Icon src="sap-icon://attachment" visible="{notifications>hasAttachments}" class="sapUiTinyMarginBegin" tooltip="Anhang vorhanden"/>
+                            </HBox>
                             <Text text="{notifications>fromDisplay}"/>
                             <HBox justifyContent="End" class="sapUiTinyMarginTop">
                                 <Button text="Als gelesen" type="Transparent" press="onMarkNotificationRead"/>
