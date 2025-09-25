@@ -6,12 +6,39 @@
     
     <VBox height="100%" class="modernChatContainer">
         <!-- SAP Horizon Chat Header -->
+        <dependents>
+            <Popover
+                id="mentionPopover"
+                class="cpMentionPopover"
+                placement="Auto"
+                showHeader="false"
+                showArrow="false"
+                contentWidth="28rem"
+                horizontalScrolling="false"
+                afterClose="onMentionPopoverClosed">
+                <List
+                    id="mentionList"
+                    mode="SingleSelectMaster"
+                    includeItemInSelection="true"
+                    showSeparators="None"
+                    itemPress="onMentionListItemPress"
+                    items="{chat>/suggestions}">
+                    <items>
+                        <CustomListItem type="Active" press="onMentionItemPress">
+                            <VBox width="100%" class="cpMentionItem">
+                                <Text text="{chat>text}" wrapping="true" class="cpMentionItemText"/>
+                            </VBox>
+                        </CustomListItem>
+                    </items>
+                </List>
+            </Popover>
+        </dependents>
+
         <HBox class="modernChatHeader" justifyContent="SpaceBetween" alignItems="Center">
             <HBox alignItems="Center">
                 <core:Icon src="sap-icon://discussion-2" class="modernHeaderIcon"/>
                 <VBox class="sapUiTinyMarginBegin">
-                    <Title text="SAP AI Assistant" level="H5" class="modernHeaderTitle"/>
-                    <Text text="Bereit zu helfen" class="modernHeaderStatus"/>
+                    <Title text="PureAI Agent" level="H5" class="modernHeaderTitle"/>
                 </VBox>
             </HBox>
             <HBox>
@@ -88,6 +115,7 @@
                     items="{chat>/chatHistory}"
                     showSeparators="None"
                     mode="None"
+                    showNoData="false"
                     class="modernMessagesList">
                     
                     <CustomListItem class="modernMessageItem">
@@ -99,26 +127,12 @@
                                         <FormattedText htmlText="{chat>text}" class="modernMessageText modernUserText"/>
                                         <Text text="{chat>timestamp}" class="modernTimestamp modernUserTimestamp"/>
                                     </VBox>
-                                    <Avatar 
-                                        src="" 
-                                        initials="Sie" 
-                                        displaySize="XS" 
-                                        backgroundColor="Accent6"
-                                        imageFitType="Cover"
-                                        class="modernUserAvatar"/>
                                 </HBox>
                             </VBox>
                             
                             <!-- Assistant Message -->
                             <VBox visible="{= ${chat>type} === 'assistant' }" class="modernAssistantMessageContainer">
                                 <HBox justifyContent="Start" class="modernMessageRow">
-                                    <Avatar 
-                                        src="" 
-                                        initials="AI" 
-                                        displaySize="XS" 
-                                        backgroundColor="Accent1"
-                                        imageFitType="Cover"
-                                        class="modernAssistantAvatar"/>
                                     <VBox class="modernAssistantMessage">
                                         <FormattedText htmlText="{chat>text}" class="modernMessageText modernAssistantText"/>
                                         <HBox justifyContent="SpaceBetween" alignItems="Center" class="modernMessageFooter">
@@ -186,12 +200,6 @@
                     visible="{chat>/isTyping}" 
                     justifyContent="Start" 
                     class="modernTypingContainer modernMessageRow">
-                    <Avatar 
-                        src="" 
-                        initials="AI" 
-                        displaySize="XS" 
-                        backgroundColor="Accent1"
-                        class="modernAssistantAvatar"/>
                     <VBox class="modernTypingMessage">
                         <HBox alignItems="Center">
                             <VBox class="modernTypingIndicator">
@@ -214,7 +222,8 @@
                     <TextArea
                         id="chatInputField"
                         value="{chat>/userInput}"
-                        placeholder="Nachricht an SAP AI Assistant..."
+                        liveChange="onInputLiveChange"
+                        placeholder="Nachricht an PureAI Agent..."
                         rows="3"
                         maxLength="4000"
                         width="100%"

@@ -609,24 +609,21 @@ ${safeContent}`;
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with Database, Web Search, Browser, Filesystem, Excel, Microsoft 365, and Time capabilities...");
+      console.log("Initializing Agent with Database, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
 
       try {
         mcpClients = await initAllMCPClients();
 
-        // +++ ERWEITERT: Lade Tools vom neuen Excel Client +++
-        const [postgresTools, braveSearchTools, playwrightTools, filesystemTools, excelTools, timeTools] = await Promise.all([
+        const [postgresTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
           loadMcpTools("query", mcpClients.postgres),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
-          loadMcpTools("take_screenshot,goto_page,click_element,fill_input,execute_javascript,get_page_content,wait_for_element,generate_test_code", mcpClients.playwright),
           loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
-          // +++ NEU: Lade alle verfügbaren Excel-Tools +++
           loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel),
           loadMcpTools("get_current_time,convert_time", mcpClients.time)
         ]);
 
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...braveSearchTools, ...playwrightTools, ...filesystemTools, ...excelTools, ...timeTools];
+        const allTools = [...postgresTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
 
         // Lade Microsoft 365 Tools dynamisch aus dem Manifest
         if (mcpClients.m365) {
@@ -648,7 +645,7 @@ ${safeContent}`;
           console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
         }
 
-        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools`);
+        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
         const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -661,7 +658,7 @@ ${safeContent}`;
         });
         
         // +++ ERWEITERT: Log-Nachricht angepasst +++
-        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Browser + Filesystem + Excel + M365 + Time).");
+        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Filesystem + Excel + M365 + Time).");
         return agentExecutor;
 
       } catch (error) {
@@ -685,17 +682,23 @@ ${safeContent}`;
       try {
         const systemMessage = {
           role: "system",
-          content: `You are a helpful assistant with access to database queries, web search, browser automation, local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities.
+          content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities.
 
                   DATABASE ACCESS:
                   - You can query a PostgreSQL database using the 'query' tool.
                   - IMPORTANT: Use PostgreSQL syntax.
 
+                  STAMMTISCH IMPORT RULES (POC):
+                  - When the user confirms that a neues Thema importiert werden soll, write to table sap.stammtisch.Stammtische using 'execute_dml_ddl_dcl_tcl' and call 'execute_commit' afterwards.
+                  - Always set ID = gen_random_uuid().
+                  - Build the event timestamp from the provided date at 18:00 local time (use ISO format, e.g. '2025-09-30T18:00:00Z'). If no date is provided, ask for it.
+                  - Set ort = 'Luzern' unless the user supplies a different location.
+                  - If the input (e.g. Excel column "Vorgetragen durch") lists presenter names, query sap.stammtisch.Praesentatoren by name (case-insensitive). If a match exists, set praesentator to that ID; if not, leave it NULL and note the names in notizen.
+                  - Store other optional remarks in notizen as needed.
+                  - Do not insert duplicate Themen: compare normalized values from BekannteThemenJSON, and only proceed after explicit user approval.
+
                   WEB SEARCH ACCESS:
                   - You can search the web using 'brave_web_search'. 
-
-                  BROWSER AUTOMATION ACCESS (Playwright):
-                  - You can control a web browser to perform tasks like testing web applications.
 
                   FILESYSTEM ACCESS:
                   - You can read, write, and manage files and directories in the project.
@@ -706,6 +709,7 @@ ${safeContent}`;
                   MICROSOFT 365 ACCESS:
                   - Use mail tools for reading, replying, or downloading attachments.
                   - Use calendar tools only if the user explicitly asks to schedule or modify a meeting; do not create events when the user only requests text drafts.
+                  - Before scheduling events with relative dates ("morgen", "übermorgen", "in X Tagen"), call the 'get_current_time' tool with timezone 'Europe/Berlin', compute the exact target date/time, confirm it with the user if unclear, and then create the event.
 
                   EXCEL ACCESS:
                   - You can read from and write to MS Excel files (.xlsx, .xlsm, etc.).
@@ -732,10 +736,11 @@ ${safeContent}`;
                   4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
 
                   RESPONSE GUIDELINES:
-                   - First, determine which tool or combination of tools is best for the user's request.
-              - Clearly explain your plan before executing it.
-              - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
-              - Always provide context about where information is coming from.
+              //      - First, determine which tool or combination of tools is best for the user's request.
+              // - Clearly explain your plan before executing it.
+              // - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
+              // - Always provide context about where information is coming from.
+              - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
                     `
                       };
 

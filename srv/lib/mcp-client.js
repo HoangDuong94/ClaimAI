@@ -54,21 +54,8 @@ export async function initBraveSearchMCPClient() {
 }
 
 export async function initPlaywrightMCPClient() {
-  if (playwrightClient) return playwrightClient;
-  console.log(`Initializing Playwright MCP client...`);
-  const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["-y", "@executeautomation/playwright-mcp-server"],
-    env: {
-      ...process.env,
-      PLAYWRIGHT_BROWSER: process.env.PLAYWRIGHT_BROWSER || "chromium",
-      PLAYWRIGHT_HEADLESS: process.env.PLAYWRIGHT_HEADLESS || "true"
-    }
-  });
-  playwrightClient = new Client({ name: "playwright-client", version: "1.0.0" }, {});
-  await playwrightClient.connect(transport);
-  console.log("✅ Playwright MCP Client initialized successfully.");
-  return playwrightClient;
+  console.log('⏸️ Playwright MCP client initialization is temporarily disabled.');
+  return null;
 }
 
 export async function initFilesystemMCPClient() {
@@ -153,10 +140,9 @@ export async function initAllMCPClients() {
   console.log("Initializing all MCP clients...");
   
   // +++ ERWEITERT: Excel Client wird mit initialisiert +++
-  const [pgClient, braveClient, playwrightClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+  const [pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
-    initPlaywrightMCPClient(),
     initFilesystemMCPClient(),
     initExcelMCPClient(), // Neuer Client
     initM365Client(),
@@ -166,7 +152,7 @@ export async function initAllMCPClients() {
   return {
     postgres: pgClient,
     braveSearch: braveClient,
-    playwright: playwrightClient,
+    playwright: null,
     filesystem: fsClient,
     excel: xlsxClient, // Neuer Client im Rückgabeobjekt
     m365: microsoft365Client,
@@ -186,11 +172,6 @@ export async function closeMCPClients() {
     console.log("Closing Brave Search MCP client connection");
     closePromises.push(braveSearchClient.close());
     braveSearchClient = null;
-  }
-  if (playwrightClient) {
-    console.log("Closing Playwright MCP client connection");
-    closePromises.push(playwrightClient.close());
-    playwrightClient = null;
   }
   if (filesystemClient) {
     console.log("Closing Filesystem MCP client connection");

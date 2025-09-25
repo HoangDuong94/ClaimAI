@@ -8,8 +8,9 @@ sap.ui.define([
     "sap/m/Page",
     "sap/m/Bar",
     "sap/m/Title",
-    "sap/m/MessageToast"
-], (Component, ComponentContainer, DynamicSideContent, Fragment, JSONModel, App, Page, Bar, Title, MessageToast) => {
+    "sap/m/MessageToast",
+    "sap/ui/model/Filter"
+], (Component, ComponentContainer, DynamicSideContent, Fragment, JSONModel, App, Page, Bar, Title, MessageToast, Filter) => {
     "use strict";
 
     // Modern class-based approach for Chat functionality
@@ -22,24 +23,43 @@ sap.ui.define([
             this.currentRecognition = null;
             this.serviceUrl = "/service/stammtisch"; // Service URL from manifest.json
             this.notificationsEventSource = null;
+            this.topicsCache = [];
+            this.topicsCacheTimestamp = 0;
+            this.topicsLoadingPromise = null;
+            this.TOPIC_CACHE_MAX_AGE_MS = 30000;
+            this.isMentionOpen = false;
+            this._mentionTokenStart = null;
+            this._mentionFilter = "";
+            this._mentionCursor = null;
+            this._mentionValue = "";
+            this._mentionSelectionIndex = 0;
         }
 
         // Initialize chat model with welcome message
         initializeChatModel() {
+            this.isMentionOpen = false;
+            this._mentionTokenStart = null;
+            this._mentionFilter = '';
+            this._mentionCursor = null;
+            this._mentionValue = '';
+            this._mentionSelectionIndex = 0;
+
             this.chatModel = new JSONModel({
                 chatHistory: [],
                 userInput: "",
                 isTyping: false,
-                statusMessage: ""
+                statusMessage: "",
+                showSuggestions: false,
+                suggestions: [
+                    { text: 'Zeige mir die neueste Mail aus dem Posteingang.' },
+                    { text: 'Ist dort ein Anhang vorhanden?' },
+                    { text: 'Kannst du den Excel Anhang auslesen?' },
+                    { text: 'Antworte auf die letzte Mail und bitte um fehlende Dokumente.' },
+                    { text: 'Welche Termine stehen diese Woche im Kalender?' },
+                    { text: "Lies die Tabelle 'Stammtisch Planung' aus der Excel im OneDrive." }
+                ]
             });
 
-            const welcomeHistory = [{
-                type: "system",
-                text: "👋 Welcome! I'm your AI assistant. I can help you with questions, tasks, and provide information. What would you like to know?",
-                timestamp: this.getCurrentTimestamp()
-            }];
-
-            this.chatModel.setProperty("/chatHistory", welcomeHistory);
         }
 
         initializeNotificationsModel() {
@@ -313,11 +333,13 @@ sap.ui.define([
                     throw new Error("OData Model not found");
                 }
 
+                const finalPrompt = await this.addTopicContextToPrompt(prompt);
+
                 // Erstelle Operation Binding für unbound Action
                 const oOperationBinding = oDataModel.bindContext("/callLLM(...)");
 
                 // Setze Parameter
-                oOperationBinding.setParameter("prompt", prompt);
+                oOperationBinding.setParameter("prompt", finalPrompt);
 
                 // Führe Action aus
                 await oOperationBinding.execute();
@@ -328,12 +350,109 @@ sap.ui.define([
 
                 console.log("Claude operation result:", result);
 
+                this.refreshTopicsCache().catch((refreshError) => {
+                    console.warn("Aktualisierung der Stammtisch-Themen nach Agent-Call fehlgeschlagen:", refreshError);
+                });
+
                 return result.response || "No response received";
 
             } catch (error) {
                 console.error("Error in callLLMViaOperationBinding:", error);
                 throw error;
             }
+        }
+
+        async addTopicContextToPrompt(prompt) {
+            const topics = await this.getTopicsSnapshot().catch((error) => {
+                console.warn("Konnte Themenliste nicht ermitteln:", error);
+                return [];
+            });
+
+            if (!Array.isArray(topics) || topics.length === 0) {
+                return prompt;
+            }
+
+            const listForPrompt = topics.map((entry) => ({
+                id: entry.id,
+                thema: entry.thema,
+                normalized: entry.normalized
+            }));
+
+            const instructions = [
+                "Kontext: Verwende die folgende JSON-Liste, um neue Stammtisch-Themen auf Duplikate (case-insensitive, trim) zu prüfen, bevor du Einträge anlegst.",
+                "Wenn bereits ein Thema existiert, informiere den Nutzer, frage nach dem gewünschten Vorgehen und führe kein INSERT ohne explizite Freigabe aus.",
+                `BekannteThemenJSON=${JSON.stringify(listForPrompt)}`,
+                "---",
+                prompt
+            ];
+
+            return instructions.join("\n\n");
+        }
+
+        normalizeTopicName(thema) {
+            return typeof thema === "string" ? thema.trim().toLowerCase() : "";
+        }
+
+        async getTopicsSnapshot(options = {}) {
+            const { force = false } = options;
+            const now = Date.now();
+            const isStale = now - this.topicsCacheTimestamp > this.TOPIC_CACHE_MAX_AGE_MS;
+
+            if (!force && this.topicsCache.length && !isStale) {
+                return this.topicsCache;
+            }
+
+            if (this.topicsLoadingPromise) {
+                return this.topicsLoadingPromise;
+            }
+
+            this.topicsLoadingPromise = this.refreshTopicsCache()
+                .catch((error) => {
+                    this.topicsLoadingPromise = null;
+                    throw error;
+                })
+                .then((result) => {
+                    this.topicsLoadingPromise = null;
+                    return result;
+                });
+
+            return this.topicsLoadingPromise;
+        }
+
+        async refreshTopicsCache() {
+            if (!this.feAppComponentInstance) {
+                return this.topicsCache;
+            }
+
+            const model = this.feAppComponentInstance.getModel();
+            if (!model) {
+                return this.topicsCache;
+            }
+
+            const listBinding = model.bindList("/Stammtische");
+
+            try {
+                const contexts = await listBinding.requestContexts(0, 500);
+                const snapshot = contexts
+                    .map((ctx) => ctx?.getObject?.())
+                    .filter((entry) => entry && typeof entry.thema === "string" && entry.thema.trim());
+
+                this.topicsCache = snapshot.map((entry) => ({
+                    id: entry.ID,
+                    thema: entry.thema,
+                    normalized: this.normalizeTopicName(entry.thema)
+                }));
+                this.topicsCacheTimestamp = Date.now();
+
+                return this.topicsCache;
+            } finally {
+                listBinding.destroy();
+            }
+        }
+
+        invalidateTopicsCache() {
+            this.topicsCacheTimestamp = 0;
+            this.topicsCache = [];
         }
 
         // Update status message with auto-clear
@@ -596,67 +715,346 @@ sap.ui.define([
 
     // Modern Chat Controller with arrow functions
     const chatController = {
-        onToggleNotifications() {
-            const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
-            const btn = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsButton');
-            if (pop && btn) {
-                if (pop.isOpen && pop.isOpen()) {
-                    pop.close();
-                    chatManager.setHasNew(false);
-                } else {
-                    pop.openBy(btn);
-                    chatManager.setHasNew(false);
+        mentionEventsBound: false,
+
+        onInputLiveChange(event) {
+            const inputControl = event.getSource();
+            const value = event.getParameter('value');
+
+            chatManager.chatModel.setProperty('/userInput', value);
+            this._refreshMentionSuggestions(inputControl);
+        },
+
+        onMentionListItemPress(event) {
+            const listItem = event.getParameter('listItem');
+            const ctx = listItem?.getBindingContext('chat');
+            const text = ctx?.getProperty('text');
+            if (text) {
+                this._applyMentionSelection(text);
+            }
+        },
+
+        onMentionItemPress(event) {
+            const ctx = event.getSource()?.getBindingContext('chat');
+            const text = ctx?.getProperty('text');
+            if (text) {
+                this._applyMentionSelection(text);
+            }
+        },
+
+        onMentionPopoverClosed() {
+            this._resetMentionState();
+        },
+
+        _getInputControl() {
+            return sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'chatInputField');
+        },
+
+        _getMentionPopover() {
+            return sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'mentionPopover');
+        },
+
+        _getMentionList() {
+            return sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'mentionList');
+        },
+
+        _isMentionPopoverOpen() {
+            return Boolean(chatManager.isMentionOpen);
+        },
+
+        _ensureMentionBindings() {
+            if (this.mentionEventsBound) {
+                return;
+            }
+
+            const input = this._getInputControl();
+            if (!input || typeof input.attachBrowserEvent !== 'function') {
+                return;
+            }
+
+            input.attachBrowserEvent('keydown', (event) => {
+                this._handleInputKeydown(event, input);
+            });
+
+            input.attachBrowserEvent('keyup', () => {
+                this._refreshMentionSuggestions(input);
+            });
+
+            input.attachBrowserEvent('click', () => {
+                this._refreshMentionSuggestions(input);
+            });
+
+            input.attachBrowserEvent('focusout', () => {
+                setTimeout(() => {
+                    const popover = this._getMentionPopover();
+                    const popDom = popover?.getDomRef?.();
+                    const active = document.activeElement;
+                    if (popover && popover.isOpen && popover.isOpen() && popDom && active && popDom.contains(active)) {
+                        return;
+                    }
+                    this._closeMentionPopover();
+                }, 0);
+            });
+
+            this.mentionEventsBound = true;
+        },
+
+        _handleInputKeydown(event, inputControl) {
+            const popover = this._getMentionPopover();
+            const mentionOpen = popover && popover.isOpen && popover.isOpen();
+
+            if (mentionOpen) {
+                if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+                    event.preventDefault();
+                    this._moveMentionSelection(1);
+                    return;
+                }
+
+                if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+                    event.preventDefault();
+                    this._moveMentionSelection(-1);
+                    return;
+                }
+
+                if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+                    event.preventDefault();
+                    const list = this._getMentionList();
+                    const selected = list?.getSelectedItem?.();
+                    const item = selected || (list?.getItems ? list.getItems()[0] : null);
+                    const ctx = item?.getBindingContext('chat');
+                    const text = ctx?.getProperty('text');
+                    if (text) {
+                        this._applyMentionSelection(text);
+                    } else {
+                        this._closeMentionPopover();
+                    }
+                    return;
+                }
+
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    this._closeMentionPopover();
+                    return;
+                }
+            }
+
+            if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+                event.preventDefault();
+                const currentValue = inputControl.getValue ? inputControl.getValue() : chatManager.chatModel.getProperty('/userInput');
+                chatManager.chatModel.setProperty('/userInput', currentValue);
+                if (typeof inputControl.fireChange === 'function') {
+                    inputControl.fireChange({ value: currentValue });
+                }
+                this.onSendChatMessageInSidePanel(currentValue);
+                return;
+            }
+
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+                setTimeout(() => {
+                    this._refreshMentionSuggestions(inputControl);
+                }, 0);
+            }
+        },
+
+        _moveMentionSelection(offset) {
+            const list = this._getMentionList();
+            if (!list || !list.getItems) {
+                return;
+            }
+
+            const items = list.getItems();
+            if (!items.length) {
+                return;
+            }
+
+            let nextIndex = chatManager._mentionSelectionIndex || 0;
+            nextIndex = (nextIndex + offset + items.length) % items.length;
+            chatManager._mentionSelectionIndex = nextIndex;
+
+            const item = items[nextIndex];
+            if (item && list.setSelectedItem) {
+                list.setSelectedItem(item);
+            }
+        },
+
+        _refreshMentionSuggestions(inputControl) {
+            if (!inputControl || typeof inputControl.getValue !== 'function') {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const domRef = inputControl.getFocusDomRef && inputControl.getFocusDomRef();
+            if (!domRef || domRef.selectionStart == null) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const value = inputControl.getValue() || '';
+            const cursor = domRef.selectionStart;
+            const tokenStart = this._locateMentionTokenStart(value, cursor);
+
+            if (tokenStart === -1) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const rawFilter = value.slice(tokenStart + 1, cursor);
+            if (/\s/.test(rawFilter)) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const filterValue = rawFilter.trim().toLowerCase();
+            const popover = this._getMentionPopover();
+            const list = this._getMentionList();
+
+            if (!popover || !list) {
+                return;
+            }
+
+            const binding = list.getBinding && list.getBinding('items');
+            if (binding) {
+                const filters = filterValue
+                    ? [new Filter({ path: 'text', test: (text) => typeof text === 'string' && text.toLowerCase().includes(filterValue) })]
+                    : [];
+                binding.filter(filters);
+            }
+
+            const items = list.getItems ? list.getItems() : [];
+            if (!items.length) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            chatManager.isMentionOpen = true;
+            chatManager._mentionTokenStart = tokenStart;
+            chatManager._mentionCursor = cursor;
+            chatManager._mentionValue = value;
+            chatManager._mentionFilter = rawFilter;
+            chatManager._mentionSelectionIndex = 0;
+            chatManager.chatModel.setProperty('/showSuggestions', true);
+
+            if (list.removeSelections) {
+                list.removeSelections(true);
+            }
+            if (list.setSelectedItem) {
+                list.setSelectedItem(items[0]);
+            }
+
+            if (popover.isOpen && popover.isOpen()) {
+                if (popover.rerender) {
+                    popover.rerender();
+                }
+            } else if (popover.openBy) {
+                popover.openBy(inputControl);
+            }
+        },
+
+        _locateMentionTokenStart(value, cursor) {
+            if (!value || cursor == null) {
+                return -1;
+            }
+
+            let index = cursor - 1;
+            while (index >= 0) {
+                const ch = value.charAt(index);
+                if (ch === '@') {
+                    const prev = index > 0 ? value.charAt(index - 1) : ' ';
+                    if (/\s/.test(prev)) {
+                        return index;
+                    }
+                    return -1;
+                }
+                if (/\s/.test(ch)) {
+                    return -1;
+                }
+                index -= 1;
+            }
+            return -1;
+        },
+
+        _applyMentionSelection(selectedText) {
+            if (!selectedText) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const inputControl = this._getInputControl();
+            const domRef = inputControl?.getFocusDomRef?.();
+            if (!inputControl || !domRef) {
+                this._closeMentionPopover();
+                return;
+            }
+
+            const currentValue = inputControl.getValue() || '';
+            const cursor = domRef.selectionStart != null ? domRef.selectionStart : chatManager._mentionCursor || currentValue.length;
+            let tokenStart = chatManager._mentionTokenStart;
+
+            if (tokenStart == null || tokenStart < 0 || currentValue.charAt(tokenStart) !== '@') {
+                tokenStart = this._locateMentionTokenStart(currentValue, cursor);
+                if (tokenStart === -1) {
+                    this._closeMentionPopover();
+                    return;
+                }
+            }
+
+            const tokenEnd = cursor;
+            const before = currentValue.slice(0, tokenStart);
+            const after = currentValue.slice(tokenEnd);
+            const cleanText = String(selectedText).trim();
+            const needsSpace = after.length === 0 ? true : !/^\s/.test(after);
+            const insertion = needsSpace ? `${cleanText} ` : cleanText;
+            const newValue = `${before}${insertion}${after}`;
+
+            inputControl.setValue(newValue);
+            chatManager.chatModel.setProperty('/userInput', newValue);
+
+            this._closeMentionPopover();
+
+            setTimeout(() => {
+                const focusDom = inputControl.getFocusDomRef && inputControl.getFocusDomRef();
+                if (focusDom && typeof focusDom.setSelectionRange === 'function') {
+                    const pos = before.length + cleanText.length + (needsSpace ? 1 : 0);
+                    focusDom.setSelectionRange(pos, pos);
+                }
+            }, 0);
+        },
+
+        _closeMentionPopover() {
+            const popover = this._getMentionPopover();
+            if (popover && popover.isOpen && popover.isOpen()) {
+                popover.close();
+            } else {
+                this._resetMentionState();
+            }
+        },
+
+        _resetMentionState() {
+            chatManager.isMentionOpen = false;
+            chatManager._mentionTokenStart = null;
+            chatManager._mentionFilter = '';
+            chatManager._mentionCursor = null;
+            chatManager._mentionValue = '';
+            chatManager._mentionSelectionIndex = 0;
+            if (chatManager.chatModel) {
+                chatManager.chatModel.setProperty('/showSuggestions', false);
+            }
+
+            const list = this._getMentionList();
+            if (list) {
+                if (list.removeSelections) {
+                    list.removeSelections(true);
+                }
+                const binding = list.getBinding && list.getBinding('items');
+                if (binding) {
+                    binding.filter([]);
                 }
             }
         },
 
-        onOpenNotificationLink(event) {
-            const ctx = event.getSource().getBindingContext('notifications');
-            const obj = ctx?.getObject();
-            const url = obj?.webLink;
-            if (url) {
-                window.open(url, '_blank', 'noopener,noreferrer');
-            }
-        },
-
-        async onMarkNotificationRead(event) {
-            try {
-                const ctx = event.getSource().getBindingContext('notifications');
-                const obj = ctx?.getObject();
-                if (!obj?.id) return;
-                const csrf = await chatManager.getCSRFToken();
-                const res = await fetch(`${chatManager.serviceUrl}/notifications/markRead`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-                    body: JSON.stringify({ id: obj.id })
-                });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                // Optimistic: locally remove (server also broadcasts)
-                chatManager.removeNotificationById(obj.id);
-            } catch (e) {
-                chatManager.setStatusMessage('Konnte nicht als gelesen markieren', 3000);
-            }
-        },
-
-        onCloseNotification(event) {
-            const ctx = event.getSource().getBindingContext('notifications');
-            const obj = ctx?.getObject();
-            if (obj?.id) {
-                chatManager.removeNotificationById(obj.id);
-            }
-        },
-
-        async onSendNotificationToAgent(event) {
-            try {
-                const ctx = event.getSource().getBindingContext('notifications');
-                const obj = ctx?.getObject();
-                await chatManager.sendMailContextToAgent(obj);
-            } catch (e) {
-                console.error('Failed to send mail context to agent:', e);
-                chatManager.setStatusMessage('Konnte Mail nicht an Agent senden', 3000);
-            }
-        },
         async onSendChatMessageInSidePanel() {
+            this._closeMentionPopover();
+
             // Get the input field to ensure we have the latest value
             const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
             const currentValue = inputField?.getValue()?.trim() || "";
@@ -694,6 +1092,87 @@ sap.ui.define([
             } catch (error) {
                 console.error("Claude service call failed:", error);
                 chatManager.handleAIError(error.message || "Failed to get response from AI service");
+            }
+        },
+
+        onToggleNotifications(event) {
+            const popover = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+            if (!popover) {
+                return;
+            }
+
+            const isOpen = popover.isOpen && popover.isOpen();
+            if (isOpen) {
+                popover.close();
+                return;
+            }
+
+            const sourceButton = event?.getSource?.();
+            const fallbackButton = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsButton');
+            const target = sourceButton || fallbackButton;
+
+            if (popover.openBy && target) {
+                popover.openBy(target);
+            } else if (popover.open) {
+                popover.open();
+            }
+
+            chatManager.setHasNew(false);
+        },
+
+        onSendNotificationToAgent(event) {
+            const control = event?.getSource?.();
+            const context = control?.getBindingContext('notifications');
+            const mailItem = context?.getObject();
+
+            if (!mailItem) {
+                chatManager.setStatusMessage('Keine Mail ausgewählt', 2000);
+                return;
+            }
+
+            chatManager.sendMailContextToAgent(mailItem);
+        },
+
+        onCloseNotification(event) {
+            const control = event?.getSource?.();
+            const context = control?.getBindingContext('notifications');
+            const mailItem = context?.getObject();
+
+            if (!mailItem || !mailItem.id) {
+                chatManager.setStatusMessage('Benachrichtigung nicht gefunden', 2000);
+                return;
+            }
+
+            chatManager.removeNotificationById(mailItem.id);
+
+            const remaining = chatManager.notificationsModel?.getProperty('/items') || [];
+            if (!remaining.length) {
+                const popover = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+                if (popover?.isOpen && popover.isOpen()) {
+                    popover.close();
+                }
+            }
+        },
+
+        onOpenNotificationLink(event) {
+            const control = event?.getSource?.();
+            const context = control?.getBindingContext('notifications');
+            const mailItem = context?.getObject();
+
+            if (!mailItem) {
+                chatManager.setStatusMessage('Keine Mail ausgewählt', 2000);
+                return;
+            }
+
+            const linkTarget = mailItem.webLink
+                || mailItem.deepLink
+                || mailItem.url
+                || mailItem.link;
+
+            if (linkTarget) {
+                window.open(linkTarget, '_blank', 'noopener,noreferrer');
+            } else {
+                chatManager.setStatusMessage('Kein Link für diese Benachrichtigung vorhanden', 2000);
             }
         },
 
@@ -757,6 +1236,8 @@ sap.ui.define([
 
         // Erweiterte Nachrichtenbehandlung
         onSendChatMessageInSidePanelEnhanced: async function () {
+            this._closeMentionPopover();
+
             const userInput = chatManager.chatModel.getProperty("/userInput")?.trim();
 
             if (!userInput) {
@@ -865,21 +1346,35 @@ sap.ui.define([
     // Modern keyboard shortcuts with better event handling
     const setupKeyboardShortcuts = () => {
         document.addEventListener('keydown', (event) => {
-            const { key, ctrlKey, metaKey, shiftKey } = event;
-            const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
-            const isInputFocused = inputField?.getFocusDomRef() === document.activeElement;
-
-            if (!isInputFocused) return;
-
-            // Enter without Shift to send message (Shift+Enter for new line)
-            if (key === 'Enter' && !shiftKey) {
-                event.preventDefault();
-                chatController.onSendChatMessageInSidePanel();
+            if (event.defaultPrevented) {
+                return;
             }
 
-            // Escape to clear input
-            if (key === 'Escape') {
-                chatManager.chatModel.setProperty("/userInput", "");
+            const { key, ctrlKey, metaKey, shiftKey, altKey } = event;
+            const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
+            const inputDomRef = inputField?.getFocusDomRef();
+            const isInputFocused = inputDomRef === document.activeElement;
+
+            if (!isInputFocused) {
+                return;
+            }
+
+            if (chatController._isMentionPopoverOpen()) {
+                if (key === 'Escape' && !shiftKey && !ctrlKey && !metaKey && !altKey) {
+                    event.preventDefault();
+                    chatController._closeMentionPopover();
+                }
+                return;
+            }
+
+            if (key === 'Enter' && !shiftKey && !ctrlKey && !metaKey && !altKey) {
+                event.preventDefault();
+                chatController.onSendChatMessageInSidePanel();
+                return;
+            }
+
+            if (key === 'Escape' && !ctrlKey && !metaKey && !altKey) {
+                chatManager.chatModel.setProperty('/userInput', '');
             }
         });
     };
@@ -906,6 +1401,8 @@ sap.ui.define([
                 controller: chatController
             });
             chatManager.dynamicSideContent.addSideContent(chatPanelContent);
+
+            chatController._ensureMentionBindings();
 
             // Create Fiori Elements component
             const feComponent = await Component.create({
@@ -954,6 +1451,12 @@ sap.ui.define([
 
             // Connect notifications stream
             chatManager.setupNotificationsSSE();
+
+            try {
+                await chatManager.getTopicsSnapshot({ force: true });
+            } catch (topicError) {
+                console.warn("Initiales Laden der Stammtisch-Themen fehlgeschlagen:", topicError);
+            }
 
             console.log("Application initialized successfully");
 
