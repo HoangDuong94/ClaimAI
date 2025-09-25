@@ -156,6 +156,14 @@ sap.ui.define([
             const subject = mailItem?.subject || 'Ohne Betreff';
             const baseSummary = mailItem?.summary || '';
             const category = mailItem?.category || 'Notification';
+            const sender = contextObject?.sender;
+            const senderDisplay = sender?.formatted || sender?.email || sender?.name || 'Unbekannt';
+            const defaultRecipients = Array.isArray(contextObject?.replyGuidelines?.defaultEmailRecipients)
+                ? contextObject.replyGuidelines.defaultEmailRecipients.filter(Boolean)
+                : [];
+            const defaultRecipientLine = defaultRecipients.length
+                ? `Standard-Empfänger (laut Kontext): ${defaultRecipients.join(', ')}`
+                : null;
 
             return [
                 'Du bist ein KI-Assistent, der Anwendern hilft, sinnvolle Folgeaktionen für eingehende E-Mails zu planen.',
@@ -163,6 +171,8 @@ sap.ui.define([
                 'Formatiere die Ausgabe als nummerierte Liste. Für jede Aktion: kurze Beschreibung, warum sie sinnvoll ist, und falls nötig welche Informationen fehlen.',
                 'Die Felder "bodyText" (bereinigter Volltext) und "bodyHtml" (sanitisierte HTML-Struktur) enthalten den vollständigen Inhalt.',
                 'Antworte auf Deutsch und fasse dich prägnant.',
+                `Bei Antworten oder Kalendereinladungen: Nutze standardmäßig den ursprünglichen Absender (${senderDisplay}) als Empfänger, sofern der Nutzer keine weiteren Personen nennt.`,
+                defaultRecipientLine,
                 '',
                 `Betreff: ${subject}`,
                 `Kategorie (Vorhersage): ${category}`,

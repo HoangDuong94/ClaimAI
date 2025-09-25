@@ -332,13 +332,23 @@ export default class StammtischService extends cds.ApplicationService {
       return '';
     };
 
-    const formatMailAddress = (entry) => {
+    const extractMailParticipant = (entry) => {
       if (!entry) return null;
       const emailAddress = entry.emailAddress || entry;
-      const address = emailAddress?.address || emailAddress?.emailAddress || emailAddress?.value || entry.address;
-      const name = emailAddress?.name || emailAddress?.displayName || entry.name || entry.displayName;
-      if (name && address) return `${name} <${address}>`;
-      return name || address || null;
+      const address = emailAddress?.address || emailAddress?.emailAddress || emailAddress?.value || entry.address || null;
+      const name = emailAddress?.name || emailAddress?.displayName || entry.name || entry.displayName || null;
+      const formatted = name && address ? `${name} <${address}>` : (name || address || null);
+      if (!formatted) return null;
+      return {
+        name,
+        email: address,
+        formatted
+      };
+    };
+
+    const formatMailAddress = (entry) => {
+      const participant = extractMailParticipant(entry);
+      return participant?.formatted || null;
     };
 
     const mapRecipients = (list = []) => {
@@ -348,17 +358,40 @@ export default class StammtischService extends cds.ApplicationService {
         .filter(Boolean);
     };
 
+    const mapRecipientDetails = (list = []) => {
+      if (!Array.isArray(list)) return [];
+      return list
+        .map(extractMailParticipant)
+        .filter(Boolean)
+        .map((participant) => ({
+          name: participant.name || null,
+          email: participant.email || null
+        }));
+    };
+
     const buildAgentContext = (message, summary, category) => {
       const content = extractMessageContent(message) || '';
       const bodyPreview = normalizeWhitespace(message.bodyPreview || '').slice(0, SUMMARY_MAX_OUTPUT_CHARS);
-      const from = formatMailAddress(message.from) || null;
+      const sender = extractMailParticipant(message.from);
+      const from = sender?.formatted || null;
+      const toDetails = mapRecipientDetails(message.toRecipients);
+      const ccDetails = mapRecipientDetails(message.ccRecipients);
       const bodyHtml = getSanitizedBodyHtml(message);
       return {
         id: message.id,
         subject: message.subject || '',
         from,
+        sender: sender
+          ? {
+              name: sender.name || null,
+              email: sender.email || null,
+              formatted: sender.formatted
+            }
+          : null,
         toRecipients: mapRecipients(message.toRecipients),
+        toRecipientDetails: toDetails,
         ccRecipients: mapRecipients(message.ccRecipients),
+        ccRecipientDetails: ccDetails,
         receivedDateTime: message.receivedDateTime || null,
         webLink: message.webLink || null,
         hasAttachments: Boolean(message.hasAttachments),
@@ -371,6 +404,11 @@ export default class StammtischService extends cds.ApplicationService {
         bodyHtml,
         importance: message.importance || null,
         inferenceClassification: message.inferenceClassification || null,
+        replyGuidelines: {
+          defaultEmailRecipients: sender?.email ? [sender.email] : [],
+          defaultCalendarAttendees: sender?.email ? [sender.email] : [],
+          instructions: 'Bei Antworten oder Kalendereinladungen den ursprünglichen Absender automatisch als Empfänger hinzufügen, es sei denn, der Nutzer nennt ausdrücklich weitere Teilnehmer.'
+        },
         attachments: []
       };
     };
@@ -684,18 +722,28 @@ ${safeContent}`;
           role: "system",
           content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities.
 
+                   RESPONSE GUIDELINES:
+              - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
+              - Highlight the most important information for the user by wrapping key phrases or sentences in **bold**.
+
                   DATABASE ACCESS:
-                  - You can query a PostgreSQL database using the 'query' tool.
-                  - IMPORTANT: Use PostgreSQL syntax.
+                  - You can query a PostgreSQL database using the 'query' tool (SELECT only).
+                  - Use 'execute_dml_ddl_dcl_tcl' for INSERT/UPDATE/DELETE/DDL and 'execute_commit' / 'execute_rollback' for transactions.
+                  - IMPORTANT: PostgreSQL + CAP naming — never use dot-notation like sap.stammtisch.*.
+                    CAP flattens CDS names to underscore table names. Always discover with 'list_tables' and verify columns with 'describe_table' before writing.
+                  - Relevant tables: sap_stammtisch_stammtische (events), sap_stammtisch_praesentatoren (presenters), sap_stammtisch_teilnehmer (attendees).
+                  - Quote columns exactly as returned by 'describe_table' (e.g., "ID", "praesentator_ID").
+                  - If a command fails and you see "current transaction is aborted", immediately call 'execute_rollback' and then retry with corrected SQL.
 
                   STAMMTISCH IMPORT RULES (POC):
-                  - When the user confirms that a neues Thema importiert werden soll, write to table sap.stammtisch.Stammtische using 'execute_dml_ddl_dcl_tcl' and call 'execute_commit' afterwards.
-                  - Always set ID = gen_random_uuid().
-                  - Build the event timestamp from the provided date at 18:00 local time (use ISO format, e.g. '2025-09-30T18:00:00Z'). If no date is provided, ask for it.
-                  - Set ort = 'Luzern' unless the user supplies a different location.
-                  - If the input (e.g. Excel column "Vorgetragen durch") lists presenter names, query sap.stammtisch.Praesentatoren by name (case-insensitive). If a match exists, set praesentator to that ID; if not, leave it NULL and note the names in notizen.
-                  - Store other optional remarks in notizen as needed.
-                  - Do not insert duplicate Themen: compare normalized values from BekannteThemenJSON, and only proceed after explicit user approval.
+                  - On explicit user approval to import a neues Thema, INSERT into table sap_stammtisch_stammtische using 'execute_dml_ddl_dcl_tcl' and then call 'execute_commit'.
+                  - Columns to consider (confirm via 'describe_table'): "ID", "thema", "datum", "ort", "notizen", "praesentator_ID".
+                  - ID: Prefer DB default. If needed, set "ID" = gen_random_uuid(); if the function is unavailable, omit "ID" so that the DB default generates it.
+                  - datum: Build a timestamp at 18:00 local (ISO string, e.g., '2025-09-30T18:00:00Z'). Ask the user if the date is unknown.
+                  - ort: Default to 'Luzern' unless the user provides a different location.
+                  - Presenter mapping: When the Excel column "Vorgetragen durch" contains names, SELECT from sap_stammtisch_praesentatoren by case-insensitive name.
+                    If a match exists, set "praesentator_ID" to that "ID". If not, set it to NULL and append the raw names to "notizen".
+                  - Duplicate prevention: Compare normalized Themen against BekannteThemenJSON (case-insensitive, trim). If a duplicate is found, do not insert without explicit user approval.
 
                   WEB SEARCH ACCESS:
                   - You can search the web using 'brave_web_search'. 
@@ -735,12 +783,6 @@ ${safeContent}`;
                   3.  **Save the File:** Use the 'edit_file' tool to write the complete HTML code into a new file.
                   4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
 
-                  RESPONSE GUIDELINES:
-              //      - First, determine which tool or combination of tools is best for the user's request.
-              // - Clearly explain your plan before executing it.
-              // - Combine information from different sources clearly, distinguishing between database results, web content, file content, and Excel data.
-              // - Always provide context about where information is coming from.
-              - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
                     `
                       };
 
