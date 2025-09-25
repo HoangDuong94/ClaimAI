@@ -15,6 +15,14 @@
                 </VBox>
             </HBox>
             <HBox>
+                <Button
+                    id="notificationsButton"
+                    icon="{= ${notifications>/hasNew} ? 'sap-icon://email' : 'sap-icon://email-read' }"
+                    type="{= ${notifications>/hasNew} ? 'Emphasized' : 'Transparent' }"
+                    tooltip="Ungelesene Mails"
+                    text="{= ${notifications>/unreadCount} ? ${notifications>/unreadCount} : '' }"
+                    press="onToggleNotifications"
+                    ariaLabel="Ungelesene Mails anzeigen"/>
                 <Button 
                     icon="sap-icon://restart" 
                     type="Transparent" 
@@ -30,6 +38,28 @@
                     ariaLabel="Einstellungen öffnen"/>
             </HBox>
         </HBox>
+
+        <!-- Notifications Popover -->
+        <Popover id="notificationsPopover" placement="Bottom" contentWidth="420px" title="Neue E-Mails">
+            <List id="notificationsList" items="{notifications>/items}" showSeparators="Inner">
+                <CustomListItem>
+                    <content>
+                        <VBox class="sapUiSmallMargin">
+                            <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                <Link text="{notifications>subject}" press="onOpenNotificationLink" wrapping="true"/>
+                                <Text text="{notifications>receivedLabel}"/>
+                            </HBox>
+                            <Text text="{notifications>summary}" wrapping="true" maxLines="2"/>
+                            <Text text="{notifications>fromDisplay}"/>
+                            <HBox justifyContent="End" class="sapUiTinyMarginTop">
+                                <Button text="Als gelesen" type="Transparent" press="onMarkNotificationRead"/>
+                                <Button text="Schließen" type="Transparent" press="onCloseNotification"/>
+                            </HBox>
+                        </VBox>
+                    </content>
+                </CustomListItem>
+            </List>
+        </Popover>
 
         <!-- Chat Messages Area -->
         <ScrollContainer 

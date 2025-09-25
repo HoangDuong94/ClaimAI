@@ -1,6 +1,7 @@
 // srv/StammtischService.js
 
 import cds from '@sap/cds';
+import express from 'express';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
@@ -9,6 +10,7 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
 import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
+import { GraphClient } from './m365-mcp/graph-client.js';
 import MarkdownConverter from './utils/markdown-converter.js';
 
 export default class StammtischService extends cds.ApplicationService {
@@ -16,6 +18,283 @@ export default class StammtischService extends cds.ApplicationService {
     await super.init();
     let agentExecutor = null;
     let mcpClients = null;
+    const app = cds.app;
+
+    // Lightweight in-memory notification hub (per-user)
+    const notificationSessions = new Map(); // userId -> { clients:Set<Response>, buffer:[], knownIds:Set<string>, timer:NodeJS.Timer|null }
+
+    const getUserId = (req) => {
+      try {
+        return (req.user && (req.user.id || req.user.name)) || 'local';
+      } catch {
+        return 'local';
+      }
+    };
+
+    const sseSend = (res, payload) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const broadcastToUser = (userId, payload) => {
+      const session = notificationSessions.get(userId);
+      if (!session) return;
+      for (const client of session.clients) {
+        try { sseSend(client, payload); } catch { /* ignore */ }
+      }
+    };
+
+    const ensureSession = (userId) => {
+      if (!notificationSessions.has(userId)) {
+        notificationSessions.set(userId, {
+          clients: new Set(),
+          buffer: [],
+          knownIds: new Set(),
+          summaries: new Map(),
+          timer: null
+        });
+      }
+      return notificationSessions.get(userId);
+    };
+
+    const summarizer = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+
+    const SUMMARY_MAX_INPUT_CHARS = 6000;
+    const SUMMARY_MAX_OUTPUT_CHARS = 280;
+    const SUMMARY_FALLBACK = 'Keine Zusammenfassung verfügbar.';
+
+    const stripHtml = (html = '') => html
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ');
+
+    const normalizeWhitespace = (text = '') => text.replace(/\s+/g, ' ').trim();
+
+    const truncate = (text = '', maxLength = SUMMARY_MAX_OUTPUT_CHARS) => {
+      if (text.length <= maxLength) return text;
+      return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+    };
+
+    const extractMessageContent = (message) => {
+      if (!message) return '';
+      const { body } = message;
+      if (body?.content) {
+        const raw = body.contentType === 'html' ? stripHtml(body.content) : body.content;
+        return normalizeWhitespace(raw);
+      }
+      if (message.bodyPreview) {
+        return normalizeWhitespace(message.bodyPreview);
+      }
+      return '';
+    };
+
+    const extractModelOutput = (result) => {
+      if (!result) return '';
+      if (typeof result === 'string') return result;
+      if (typeof result.content === 'string') return result.content;
+      if (Array.isArray(result.content)) {
+        return result.content
+          .map((part) => {
+            if (typeof part === 'string') return part;
+            if (part?.text) return part.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join(' ');
+      }
+      if (result.text) return result.text;
+      return '';
+    };
+
+    const generateSummaryForMessage = async (message) => {
+      const content = extractMessageContent(message);
+      const safeContent = content ? content.slice(0, SUMMARY_MAX_INPUT_CHARS) : '';
+      const subject = message.subject || '';
+
+      if (!safeContent) {
+        return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+      }
+
+      const userPrompt = `Fasse die folgende E-Mail in höchstens zwei Sätzen zusammen. Maximal 280 Zeichen.
+
+Betreff: ${subject || '—'}
+
+${safeContent}`;
+
+      try {
+        const response = await summarizer.invoke([
+          {
+            role: 'system',
+            content: 'Du bist ein Assistent, der E-Mails prägnant in bis zu zwei Sätzen (maximal 280 Zeichen) zusammenfasst. Verwende klare, neutrale Sprache und vermeide Aufzählungen.'
+          },
+          {
+            role: 'user',
+            content: userPrompt
+          }
+        ]);
+
+        const rawSummary = extractModelOutput(response);
+        const cleaned = normalizeWhitespace(rawSummary);
+        if (!cleaned) {
+          return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+        }
+        return truncate(cleaned, SUMMARY_MAX_OUTPUT_CHARS);
+      } catch (error) {
+        console.warn('Failed to generate mail summary:', error?.message || error);
+        return message.bodyPreview?.trim() || SUMMARY_FALLBACK;
+      }
+    };
+
+    const ensureSummaryForMessage = async (session, message) => {
+      if (!message?.id) return SUMMARY_FALLBACK;
+      if (session.summaries.has(message.id)) {
+        return session.summaries.get(message.id);
+      }
+      const summary = await generateSummaryForMessage(message);
+      session.summaries.set(message.id, summary);
+      return summary;
+    };
+
+    const ensureSummariesForMessages = async (session, messages = []) => {
+      for (const message of messages) {
+        try {
+          await ensureSummaryForMessage(session, message);
+        } catch (error) {
+          console.warn('ensureSummaryForMessage failed:', error?.message || error);
+        }
+      }
+    };
+
+    // Microsoft Graph client (CLI login based)
+    const graph = new GraphClient({ logger: console });
+    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite']);
+
+    const POLL_INTERVAL_MS = 10_000;
+    const MAX_INIT_UNREAD = 10;
+
+    const startPollerIfNeeded = async (userId) => {
+      const session = ensureSession(userId);
+      if (session.timer) return;
+
+      // Initial fetch
+      try {
+        const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+        session.buffer = initial;
+        session.knownIds = new Set(initial.map(m => m.id));
+        await ensureSummariesForMessages(session, session.buffer);
+      } catch (e) {
+        console.warn('Initial unread fetch failed:', e?.message || e);
+      }
+
+      session.timer = setInterval(async () => {
+        try {
+          const unread = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+          const currentIds = new Set(unread.map(m => m.id));
+
+          // New arrivals
+          for (const msg of unread) {
+            if (!session.knownIds.has(msg.id)) {
+              session.knownIds.add(msg.id);
+              session.buffer.unshift(msg);
+              // Trim buffer
+              if (session.buffer.length > MAX_INIT_UNREAD) session.buffer.length = MAX_INIT_UNREAD;
+              await ensureSummaryForMessage(session, msg);
+              broadcastToUser(userId, { type: 'new', item: sanitizeMessage(msg, session) });
+            }
+          }
+
+          // Items that disappeared (likely got marked as read elsewhere)
+          for (const id of Array.from(session.knownIds)) {
+            if (!currentIds.has(id)) {
+              session.knownIds.delete(id);
+              session.buffer = session.buffer.filter(x => x.id !== id);
+              session.summaries.delete(id);
+              broadcastToUser(userId, { type: 'read', id });
+            }
+          }
+        } catch (e) {
+          console.warn('Polling unread messages failed:', e?.message || e);
+        }
+      }, POLL_INTERVAL_MS);
+    };
+
+    const stopPollerIfOrphaned = (userId) => {
+      const session = notificationSessions.get(userId);
+      if (!session) return;
+      if (session.clients.size === 0 && session.timer) {
+        clearInterval(session.timer);
+        session.timer = null;
+      }
+    };
+
+    const sanitizeMessage = (msg, session) => ({
+      id: msg.id,
+      subject: msg.subject || '',
+      from: msg.from || null,
+      receivedDateTime: msg.receivedDateTime,
+      isRead: Boolean(msg.isRead),
+      webLink: msg.webLink || '',
+      summary: session?.summaries?.get(msg.id) || null
+    });
+
+    // SSE stream endpoint
+    app.get('/service/stammtisch/notifications/stream', async (req, res) => {
+      const userId = getUserId(req);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const session = ensureSession(userId);
+      session.clients.add(res);
+
+      // Send initial buffer (unread only)
+      try {
+        // Ensure we have fresh buffer for this connect
+        if (!session.buffer.length) {
+          const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+          session.buffer = initial;
+          session.knownIds = new Set(initial.map(m => m.id));
+          await ensureSummariesForMessages(session, session.buffer);
+        } else {
+          await ensureSummariesForMessages(session, session.buffer);
+        }
+        sseSend(res, { type: 'init', items: session.buffer.map((msg) => sanitizeMessage(msg, session)) });
+      } catch (e) {
+        sseSend(res, { type: 'error', message: String(e?.message || e) });
+      }
+
+      // Start poller if needed
+      startPollerIfNeeded(userId);
+
+      req.on('close', () => {
+        const s = notificationSessions.get(userId);
+        if (s) {
+          s.clients.delete(res);
+          stopPollerIfOrphaned(userId);
+        }
+      });
+    });
+
+    // Mark-as-read endpoint (backend-only, no MCP tool)
+    app.post('/service/stammtisch/notifications/markRead', express.json(), async (req, res) => {
+      try {
+        const userId = getUserId(req);
+        const { id } = req.body || {};
+        if (!id) return res.status(400).json({ error: 'id is required' });
+        await graph.markMessageRead(id, true);
+
+        const session = ensureSession(userId);
+        session.knownIds.delete(id);
+        session.buffer = session.buffer.filter(x => x.id !== id);
+        session.summaries.delete(id);
+        broadcastToUser(userId, { type: 'read', id });
+        return res.json({ status: 'ok', id });
+      } catch (e) {
+        console.error('markRead failed:', e);
+        return res.status(500).json({ error: String(e?.message || e) });
+      }
+    });
 
     const initializeAgent = async () => {
       if (agentExecutor) return agentExecutor;
@@ -63,7 +342,7 @@ export default class StammtischService extends cds.ApplicationService {
         console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${playwrightTools.length} Playwright, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
-        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5' });
+        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
         const checkpointer = new MemorySaver();
 
         agentExecutor = createReactAgent({
@@ -199,6 +478,13 @@ export default class StammtischService extends cds.ApplicationService {
 
     this.on('EXIT', async () => {
       console.log('Shutting down MCP clients...');
+      for (const session of notificationSessions.values()) {
+        if (session.timer) {
+          clearInterval(session.timer);
+        }
+      }
+      notificationSessions.clear();
+      await graph.close();
       await closeMCPClients();
     });
   }

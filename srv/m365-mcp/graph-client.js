@@ -151,7 +151,7 @@ export class GraphClient {
         query: {
           '$top': '1',
           '$orderby': 'receivedDateTime desc',
-          '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body',
+          '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
           '$expand': 'attachments($select=id,name,contentType,size,isInline)'
         },
         scopes: ['Mail.Read']
@@ -167,6 +167,8 @@ export class GraphClient {
       from: message.from?.emailAddress || null,
       toRecipients: (message.toRecipients || []).map((entry) => entry.emailAddress),
       receivedDateTime: message.receivedDateTime,
+      isRead: Boolean(message.isRead),
+      webLink: message.webLink,
       hasAttachments: Boolean(message.hasAttachments),
       bodyPreview: message.bodyPreview || null,
       body: message.body
@@ -232,7 +234,7 @@ export class GraphClient {
     };
   }
 
-  async listMessages({ folderId = 'inbox', startDateTime, endDateTime, maxResults = 20 } = {}) {
+  async listMessages({ folderId = 'inbox', startDateTime, endDateTime, maxResults = 20, onlyUnread = false } = {}) {
     const safeTop = Number.isInteger(maxResults)
       ? Math.min(Math.max(maxResults, 1), 200)
       : 20;
@@ -244,11 +246,14 @@ export class GraphClient {
     if (endDateTime) {
       filterParts.push(`receivedDateTime le ${endDateTime}`);
     }
+    if (onlyUnread) {
+      filterParts.push('isRead eq false');
+    }
 
     const query = {
       '$orderby': 'receivedDateTime desc',
       '$top': String(safeTop),
-      '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body',
+      '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
       '$expand': 'attachments($select=id,name,contentType,size,isInline)'
     };
 
@@ -271,6 +276,8 @@ export class GraphClient {
       from: message.from?.emailAddress || null,
       toRecipients: (message.toRecipients || []).map((entry) => entry.emailAddress),
       receivedDateTime: message.receivedDateTime,
+      isRead: Boolean(message.isRead),
+      webLink: message.webLink,
       hasAttachments: Boolean(message.hasAttachments),
       bodyPreview: message.bodyPreview || null,
       attachments: Array.isArray(message.attachments)
@@ -283,6 +290,21 @@ export class GraphClient {
           }))
         : []
     }));
+  }
+
+  async listUnreadMessages({ folderId = 'inbox', maxResults = 20 } = {}) {
+    return this.listMessages({ folderId, maxResults, onlyUnread: true });
+  }
+
+  async markMessageRead(messageId, isRead = true) {
+    if (!messageId) throw new Error('messageId is required');
+    const body = { isRead: Boolean(isRead) };
+    await this.request(
+      'PATCH',
+      `/me/messages/${encodeURIComponent(messageId)}`,
+      { body, scopes: ['Mail.ReadWrite'] }
+    );
+    return { id: messageId, isRead: Boolean(isRead) };
   }
 
   async listCalendarEvents({ startDateTime, endDateTime }) {

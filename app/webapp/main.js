@@ -16,10 +16,12 @@ sap.ui.define([
     class ChatManager {
         constructor() {
             this.chatModel = null;
+            this.notificationsModel = null;
             this.dynamicSideContent = null;
             this.feAppComponentInstance = null;
             this.currentRecognition = null;
             this.serviceUrl = "/service/stammtisch"; // Service URL from manifest.json
+            this.notificationsEventSource = null;
         }
 
         // Initialize chat model with welcome message
@@ -38,6 +40,145 @@ sap.ui.define([
             }];
 
             this.chatModel.setProperty("/chatHistory", welcomeHistory);
+        }
+
+        initializeNotificationsModel() {
+            this.notificationsModel = new JSONModel({
+                items: [],
+                unreadCount: 0,
+                hasNew: false
+            });
+        }
+
+        formatNotificationForDisplay(item) {
+            if (!item) return item;
+            const formatted = { ...item };
+            const fromEntry = item.from || {};
+            const nameCandidate = fromEntry.name || fromEntry.displayName;
+            const addressCandidate = fromEntry.address || fromEntry.emailAddress;
+            formatted.fromDisplay = nameCandidate || addressCandidate || 'Unbekannter Absender';
+
+            const rawSummary = typeof item.summary === 'string'
+                ? item.summary
+                : (item.bodyPreview || '');
+            let preparedSummary = rawSummary.replace(/\s+/g, ' ').trim();
+            if (!preparedSummary) {
+                preparedSummary = 'Keine Zusammenfassung verfügbar.';
+            }
+            if (preparedSummary.length > 260) {
+                preparedSummary = `${preparedSummary.slice(0, 257).trim()}…`;
+            }
+            formatted.summary = preparedSummary;
+
+            if (item.receivedDateTime) {
+                const date = new Date(item.receivedDateTime);
+                if (!Number.isNaN(date.getTime())) {
+                    const now = new Date();
+                    const todayKey = now.toDateString();
+                    const yesterday = new Date(now);
+                    yesterday.setDate(now.getDate() - 1);
+                    const targetKey = date.toDateString();
+                    const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+                    const dateFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+                    if (targetKey === todayKey) {
+                        formatted.receivedLabel = `Heute ${timeFormatter.format(date)}`;
+                    } else if (targetKey === yesterday.toDateString()) {
+                        formatted.receivedLabel = `Gestern ${timeFormatter.format(date)}`;
+                    } else {
+                        formatted.receivedLabel = `${dateFormatter.format(date)} ${timeFormatter.format(date)}`;
+                    }
+                } else {
+                    formatted.receivedLabel = '';
+                }
+            } else {
+                formatted.receivedLabel = '';
+            }
+
+            if (!formatted.subject) {
+                formatted.subject = 'Ohne Betreff';
+            }
+
+            return formatted;
+        }
+
+        setNotifications(items) {
+            const arr = Array.isArray(items) ? items : [];
+            const formatted = arr.map((entry) => this.formatNotificationForDisplay(entry));
+            this.notificationsModel.setProperty('/items', formatted);
+            this.notificationsModel.setProperty('/unreadCount', formatted.length);
+            if (formatted.length === 0) {
+                this.notificationsModel.setProperty('/hasNew', false);
+            }
+            this.notificationsModel.refresh(true);
+        }
+
+        addNotification(item) {
+            const items = this.notificationsModel.getProperty('/items') || [];
+            if (!items.find(x => x.id === item.id)) {
+                const formatted = this.formatNotificationForDisplay(item);
+                items.unshift(formatted);
+                if (items.length > 20) items.length = 20;
+                this.setNotifications(items);
+                return true;
+            }
+            return false;
+        }
+
+        removeNotificationById(id) {
+            const items = this.notificationsModel.getProperty('/items') || [];
+            const filtered = items.filter(x => x.id !== id);
+            this.setNotifications(filtered);
+        }
+
+        setHasNew(flag) {
+            const next = Boolean(flag);
+            const current = Boolean(this.notificationsModel.getProperty('/hasNew'));
+            if (current === next) {
+                return;
+            }
+            this.notificationsModel.setProperty('/hasNew', next);
+            this.notificationsModel.refresh(true);
+        }
+
+        setupNotificationsSSE() {
+            try {
+                if (this.notificationsEventSource) {
+                    try { this.notificationsEventSource.close(); } catch (e) {}
+                }
+                const url = `${this.serviceUrl}/notifications/stream`;
+                const es = new EventSource(url);
+                this.notificationsEventSource = es;
+
+                es.onmessage = (ev) => {
+                    try {
+                        const msg = JSON.parse(ev.data || '{}');
+                        if (msg.type === 'init' && Array.isArray(msg.items)) {
+                            this.setNotifications(msg.items);
+                            this.setHasNew(false);
+                        } else if (msg.type === 'new' && msg.item) {
+                            const added = this.addNotification(msg.item);
+                            if (added) {
+                                const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+                                const isOpen = pop?.isOpen && pop.isOpen();
+                                this.setHasNew(!isOpen);
+                            }
+                        } else if (msg.type === 'read' && msg.id) {
+                            this.removeNotificationById(msg.id);
+                        } else if (msg.type === 'error' && msg.message) {
+                            console.warn('Notifications error:', msg.message);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse notifications message', e);
+                    }
+                };
+
+                es.onerror = () => {
+                    // Let browser retry automatically; show a subtle status
+                    this.setStatusMessage('Verbindung zu Benachrichtigungen gestört. Versuche erneut...', 2000);
+                };
+            } catch (e) {
+                console.warn('Failed to setup notifications SSE:', e);
+            }
         }
 
         // Get current timestamp in HH:MM format
@@ -354,6 +495,55 @@ sap.ui.define([
 
     // Modern Chat Controller with arrow functions
     const chatController = {
+        onToggleNotifications() {
+            const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+            const btn = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsButton');
+            if (pop && btn) {
+                if (pop.isOpen && pop.isOpen()) {
+                    pop.close();
+                    chatManager.setHasNew(false);
+                } else {
+                    pop.openBy(btn);
+                    chatManager.setHasNew(false);
+                }
+            }
+        },
+
+        onOpenNotificationLink(event) {
+            const ctx = event.getSource().getBindingContext('notifications');
+            const obj = ctx?.getObject();
+            const url = obj?.webLink;
+            if (url) {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            }
+        },
+
+        async onMarkNotificationRead(event) {
+            try {
+                const ctx = event.getSource().getBindingContext('notifications');
+                const obj = ctx?.getObject();
+                if (!obj?.id) return;
+                const csrf = await chatManager.getCSRFToken();
+                const res = await fetch(`${chatManager.serviceUrl}/notifications/markRead`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                    body: JSON.stringify({ id: obj.id })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                // Optimistic: locally remove (server also broadcasts)
+                chatManager.removeNotificationById(obj.id);
+            } catch (e) {
+                chatManager.setStatusMessage('Konnte nicht als gelesen markieren', 3000);
+            }
+        },
+
+        onCloseNotification(event) {
+            const ctx = event.getSource().getBindingContext('notifications');
+            const obj = ctx?.getObject();
+            if (obj?.id) {
+                chatManager.removeNotificationById(obj.id);
+            }
+        },
         async onSendChatMessageInSidePanel() {
             // Get the input field to ensure we have the latest value
             const inputField = sap.ui.core.Fragment.byId("chatSidePanelFragmentGlobal", "chatInputField");
@@ -587,6 +777,7 @@ sap.ui.define([
         try {
             // Initialize chat model
             chatManager.initializeChatModel();
+            chatManager.initializeNotificationsModel();
 
             // Create DynamicSideContent
             chatManager.dynamicSideContent = new DynamicSideContent("appDynamicSideContentGlobal", {
@@ -594,6 +785,7 @@ sap.ui.define([
                 height: "100%"
             });
             chatManager.dynamicSideContent.setModel(chatManager.chatModel, "chat");
+            chatManager.dynamicSideContent.setModel(chatManager.notificationsModel, "notifications");
 
             // Load chat fragment
             const chatPanelContent = await Fragment.load({
@@ -647,6 +839,9 @@ sap.ui.define([
 
             // Setup keyboard shortcuts
             setupKeyboardShortcuts();
+
+            // Connect notifications stream
+            chatManager.setupNotificationsSSE();
 
             console.log("Application initialized successfully");
 
