@@ -36,6 +36,8 @@ sap.ui.define([
             this._mentionCursor = null;
             this._mentionValue = "";
             this._mentionSelectionIndex = 0;
+            this.announcedMailIds = new Set();
+            this.autoAnalyzedMailIds = new Set();
         }
 
         // Initialize chat model with welcome message
@@ -159,8 +161,10 @@ sap.ui.define([
         }
 
         buildMailActionPrompt(mailItem) {
-            const agentContext = mailItem?.agentContext;
-            const contextObject = typeof agentContext === 'string' ? { context: agentContext } : agentContext;
+            const rawAgentContext = mailItem?.agentContext;
+            const contextObject = this.ensureAgentContextObject(rawAgentContext)
+                || (rawAgentContext && typeof rawAgentContext === 'object' ? rawAgentContext : null)
+                || (typeof rawAgentContext === 'string' ? { context: rawAgentContext } : null);
             const contextJson = contextObject ? JSON.stringify(contextObject, null, 2) : null;
             const subject = mailItem?.subject || 'Ohne Betreff';
             const baseSummary = mailItem?.summary || '';
@@ -192,7 +196,322 @@ sap.ui.define([
             ].filter(Boolean).join('\n');
         }
 
-        async sendMailContextToAgent(mailItem) {
+        ensureAgentContextObject(rawAgentContext) {
+            if (!rawAgentContext) {
+                return null;
+            }
+
+            if (typeof rawAgentContext === 'string') {
+                const trimmed = rawAgentContext.trim();
+                if (!trimmed) {
+                    return null;
+                }
+                try {
+                    return JSON.parse(trimmed);
+                } catch (error) {
+                    return { bodyText: trimmed };
+                }
+            }
+
+            return rawAgentContext;
+        }
+
+        convertHtmlToPlainText(html) {
+            return html
+                .replace(/<style[\s\S]*?<\/style>/gi, '')
+                .replace(/<script[\s\S]*?<\/script>/gi, '')
+                .replace(/<br\s*\/?>(\n)?/gi, '\n')
+                .replace(/<\/p>/gi, '\n\n')
+                .replace(/<\/h[1-6]>/gi, '\n\n')
+                .replace(/<li>/gi, '- ')
+                .replace(/<\/li>/gi, '\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\r\n/g, '\n');
+        }
+
+        getMailBodyString(mailItem) {
+            const agentContext = this.ensureAgentContextObject(mailItem?.agentContext);
+            if (!agentContext) {
+                return '';
+            }
+
+            const rawBodyText = typeof agentContext.bodyText === 'string' ? agentContext.bodyText.trim() : '';
+            if (rawBodyText) {
+                return rawBodyText;
+            }
+
+            const rawBodyHtml = typeof agentContext.bodyHtml === 'string' ? agentContext.bodyHtml.trim() : '';
+            if (rawBodyHtml) {
+                return this.convertHtmlToPlainText(rawBodyHtml).trim();
+            }
+
+            const rawBody = typeof agentContext.body === 'string' ? agentContext.body.trim() : '';
+            return rawBody || '';
+        }
+
+        truncateTextForDisplay(text, maxChars = 1200, maxLines = 25) {
+            if (!text) {
+                return '';
+            }
+
+            const normalizedLines = text
+                .replace(/\r\n/g, '\n')
+                .split('\n')
+                .map((line) => line.replace(/\s+$/g, ''));
+
+            let truncatedLines = normalizedLines;
+            let truncatedByLines = false;
+            if (normalizedLines.length > maxLines) {
+                truncatedLines = normalizedLines.slice(0, maxLines);
+                truncatedByLines = true;
+            }
+
+            let result = truncatedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+
+            if (truncatedByLines) {
+                result = `${result}\n...`;
+            }
+
+            if (result.length > maxChars) {
+                const trimmedResult = result.slice(0, maxChars - 3).trimEnd();
+                result = trimmedResult.endsWith('...') ? trimmedResult : `${trimmedResult}...`;
+            }
+
+            return result;
+        }
+
+        buildEmailTextForDisplay(mailItem) {
+            const primaryText = this.getMailBodyString(mailItem);
+            const summary = typeof mailItem?.summary === 'string' ? mailItem.summary.trim() : '';
+            const preview = typeof mailItem?.bodyPreview === 'string' ? mailItem.bodyPreview.trim() : '';
+            const candidate = primaryText || summary || preview || '';
+            return this.truncateTextForDisplay(candidate);
+        }
+
+        buildQuickActionSuggestions(mailItem) {
+            const suggestions = [];
+
+            suggestions.push('Nutze den Button "An Agent senden", um eine detaillierte Analyse zu starten.');
+
+            if (mailItem.hasAttachments) {
+                suggestions.push('Öffne die Anhänge und prüfe sie auf wichtige Informationen.');
+            }
+
+            const category = typeof mailItem.category === 'string' ? mailItem.category.toLowerCase() : '';
+            if (category === 'to respond' || category === 'action needed') {
+                suggestions.push('Formuliere eine zeitnahe Antwort oder plane konkrete Folgeaktionen.');
+            } else if (category === 'meeting update') {
+                suggestions.push('Aktualisiere deinen Kalender und bestätige den Termin bei Bedarf.');
+            } else if (category === 'fyi') {
+                suggestions.push('Teile die wichtigsten Punkte mit den relevanten Personen oder notiere sie.');
+            }
+
+            const sender = mailItem.fromDisplay || 'dem Absender';
+            if (suggestions.length < 3) {
+                suggestions.push(`Notiere wichtige Punkte und stimme dich bei Bedarf mit ${sender} ab.`);
+            }
+
+            if (suggestions.length < 3) {
+                suggestions.push('Lege eine Aufgabe oder Erinnerung für die nächsten Schritte an.');
+            }
+
+            // Entferne Duplikate und reduziere auf drei Einträge
+            const unique = [];
+            suggestions.forEach((entry) => {
+                if (!unique.includes(entry)) {
+                    unique.push(entry);
+                }
+            });
+
+            return unique.slice(0, 3);
+        }
+
+        escapeHtml(text) {
+            if (!text) {
+                return '';
+            }
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        renderParagraphs(text) {
+            if (!text) {
+                return '';
+            }
+            const escaped = this.escapeHtml(text)
+                .replace(/\r\n/g, '\n')
+                .split(/\n{2,}/)
+                .map((block) => block.split('\n').map((line) => line.trim()).filter(Boolean).join('<br/>'))
+                .filter(Boolean);
+
+            return escaped
+                .map((paragraph) => `<p style="margin: 0 0 8px 0;">${paragraph}</p>`)
+                .join('');
+        }
+
+        highlightKeywords(text) {
+            if (!text) {
+                return '';
+            }
+
+            const keywordPatterns = [
+                'Agent',
+                'Analyse',
+                'Anhänge',
+                'Antwort',
+                'Aufgabe',
+                'Folgeaktionen',
+                'Kalender'
+            ];
+
+            let highlighted = text;
+            keywordPatterns.forEach((keyword) => {
+                const pattern = new RegExp(`(\\b${keyword}\\b)`, 'gi');
+                highlighted = highlighted.replace(pattern, '<strong>$1</strong>');
+            });
+
+            return highlighted;
+        }
+
+        buildMailAnnouncementHtml(mailItem) {
+            const displayMail = this.formatNotificationForDisplay(mailItem);
+            const bodyExcerpt = this.buildEmailTextForDisplay(displayMail);
+            const subject = displayMail.subject || 'Ohne Betreff';
+            const sender = displayMail.fromDisplay || 'Unbekannter Absender';
+            const received = displayMail.receivedLabel || null;
+            const category = displayMail.category || null;
+            const attachments = displayMail.hasAttachments ? 'vorhanden' : null;
+            const suggestions = this.buildQuickActionSuggestions(displayMail);
+
+            const metaEntries = [
+                { label: 'Von', value: sender },
+                { label: 'Betreff', value: subject },
+                { label: 'Empfangen', value: received },
+                { label: 'Kategorie', value: category },
+                { label: 'Anhänge', value: attachments }
+            ].filter((entry) => entry.value);
+
+            const metaHtml = metaEntries.map((entry) => {
+                const safeValue = this.escapeHtml(entry.value);
+                return `<p style="margin: 0 0 6px 0; font-size: 14px;">
+                    <strong>${entry.label}:</strong>
+                    <span style="margin-left: 4px; font-weight: 600; color: #1f2933;">${safeValue}</span>
+                </p>`;
+            }).join('');
+
+            const bodyHtml = this.renderParagraphs(bodyExcerpt || 'Kein E-Mail-Text verfügbar.');
+
+            const suggestionsHtml = suggestions.length
+                ? `<ul style="margin: 0; padding-left: 18px;">
+                        ${suggestions.map((entry) => {
+                            const safeText = this.escapeHtml(entry);
+                            const highlighted = this.highlightKeywords(safeText);
+                            return `<li style="margin-bottom: 6px; line-height: 1.45;">${highlighted}</li>`;
+                        }).join('')}
+                   </ul>`
+                : '<ul style="margin: 0; padding-left: 18px;"><li>Keine Vorschläge verfügbar.</li></ul>';
+
+            return `
+                <p style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700;">Hallo Hoang 👋 neue E-Mail eingetroffen</p>
+                ${metaHtml}
+                <p style="margin: 12px 0 4px 0; font-weight: 700; color: #1a2a3b;">Inhalt (Auszug)</p>
+                ${bodyHtml || '<p style="margin: 0;">Kein E-Mail-Text verfügbar.</p>'}
+                <p style="margin: 12px 0 4px 0; font-weight: 700; color: #1a2a3b;">Mögliche nächste Schritte</p>
+                ${suggestionsHtml}
+            `;
+        }
+
+        isExcelLikeAttachment(attachment) {
+            if (!attachment) {
+                return false;
+            }
+
+            const name = typeof attachment.name === 'string' ? attachment.name.toLowerCase() : '';
+            const contentType = typeof attachment.contentType === 'string' ? attachment.contentType.toLowerCase() : '';
+
+            const extensionMatch = name.endsWith('.xlsx')
+                || name.endsWith('.xls')
+                || name.endsWith('.xlsm')
+                || name.endsWith('.xlsb')
+                || name.endsWith('.csv');
+
+            const contentTypeMatch = contentType.includes('spreadsheet')
+                || contentType.includes('excel')
+                || contentType.includes('csv');
+
+            return extensionMatch || contentTypeMatch;
+        }
+
+        hasExcelAttachment(mailItem) {
+            if (!mailItem) {
+                return false;
+            }
+
+            const agentContext = this.ensureAgentContextObject(mailItem.agentContext);
+            const contextAttachments = Array.isArray(agentContext?.attachments) ? agentContext.attachments : [];
+            const rawAttachments = Array.isArray(mailItem.attachments) ? mailItem.attachments : [];
+            const combined = [...contextAttachments, ...rawAttachments];
+
+            if (!combined.length) {
+                return false;
+            }
+
+            return combined.some((attachment) => this.isExcelLikeAttachment(attachment));
+        }
+
+        autoAnalyzeExcelMail(mailItem) {
+            const identifier = mailItem?.id || mailItem?.itemId;
+            if (identifier && this.autoAnalyzedMailIds.has(identifier)) {
+                return;
+            }
+
+            if (identifier) {
+                this.autoAnalyzedMailIds.add(identifier);
+                if (this.autoAnalyzedMailIds.size > 100) {
+                    const first = this.autoAnalyzedMailIds.values().next();
+                    if (!first.done) {
+                        this.autoAnalyzedMailIds.delete(first.value);
+                    }
+                }
+            }
+
+            this.sendMailContextToAgent(mailItem, { auto: true });
+        }
+
+        announceNewMail(mailItem) {
+            if (!mailItem || !this.chatModel) {
+                return;
+            }
+
+            const identifier = mailItem.id || mailItem.itemId;
+            if (identifier && this.announcedMailIds.has(identifier)) {
+                return;
+            }
+
+            const messageHtml = this.buildMailAnnouncementHtml(mailItem);
+            this.addMessageEnhanced('assistant', messageHtml);
+            this.setStatusMessage('Neue E-Mail eingetroffen', 2000);
+
+            if (this.hasExcelAttachment(mailItem)) {
+                this.autoAnalyzeExcelMail(mailItem);
+            }
+
+            if (identifier) {
+                this.announcedMailIds.add(identifier);
+                if (this.announcedMailIds.size > 100) {
+                    const first = this.announcedMailIds.values().next();
+                    if (!first.done) {
+                        this.announcedMailIds.delete(first.value);
+                    }
+                }
+            }
+        }
+
+        async sendMailContextToAgent(mailItem, options = {}) {
             if (!mailItem) {
                 this.setStatusMessage('Keine Mail ausgewählt', 2000);
                 return;
@@ -203,55 +522,38 @@ sap.ui.define([
                 return;
             }
 
+            const { auto = false } = options;
             const subject = mailItem.subject || 'Ohne Betreff';
-            const agentContext = typeof mailItem.agentContext === 'string'
-                ? { context: mailItem.agentContext }
-                : mailItem.agentContext;
-            const rawBodyText = agentContext?.bodyText;
-            let emailText = typeof rawBodyText === 'string' ? rawBodyText.trim() : '';
-
-            if (!emailText) {
-                const rawBodyHtml = agentContext?.bodyHtml;
-                if (typeof rawBodyHtml === 'string' && rawBodyHtml.trim()) {
-                    emailText = rawBodyHtml
-                        .replace(/<br\s*\/?>(\n)?/gi, '\n')
-                        .replace(/<\/p>/gi, '\n\n')
-                        .replace(/<li>/gi, '- ')
-                        .replace(/<[^>]+>/g, '')
-                        .replace(/\n{3,}/g, '\n\n')
-                        .replace(/[ \t]+\n/g, '\n')
-                        .replace(/\n[ \t]+/g, '\n')
-                        .trim();
-                }
+            const emailText = this.buildEmailTextForDisplay(mailItem);
+            if (auto) {
+                this.addMessage('system', `Automatische Analyse für "${subject}" gestartet.`);
+            } else {
+                const userMessageParts = [
+                    `Welche Aktionen empfiehlst du für die E-Mail "${subject}"?`,
+                    '',
+                    'E-Mail-Text:',
+                    emailText || 'Kein E-Mail-Text verfügbar.'
+                ];
+                this.addMessage('user', userMessageParts.join('\n'));
             }
 
-            if (!emailText && typeof mailItem.summary === 'string') {
-                emailText = mailItem.summary;
-            }
-
-            const userMessageParts = [
-                `Welche Aktionen empfiehlst du für die E-Mail "${subject}"?`,
-                '',
-                'E-Mail-Text:',
-                emailText || 'Kein E-Mail-Text verfügbar.'
-            ];
-
-            this.addMessage('user', userMessageParts.join('\n'));
             this.chatModel.setProperty('/isTyping', true);
-            this.setStatusMessage('Agent analysiert die E-Mail...', 0);
+            this.setStatusMessage(auto ? 'Agent analysiert neue E-Mail...' : 'Agent analysiert die E-Mail...', 0);
 
             const prompt = this.buildMailActionPrompt(mailItem);
 
-            const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
-            if (pop && pop.isOpen && pop.isOpen()) {
-                pop.close();
-                this.setHasNew(false);
+            if (!auto) {
+                const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
+                if (pop && pop.isOpen && pop.isOpen()) {
+                    pop.close();
+                    this.setHasNew(false);
+                }
             }
 
             try {
                 const response = await this.callLLMViaOperationBinding(prompt);
                 this.handleAIResponse(response);
-                this.setStatusMessage('Agent-Antwort erhalten', 2000);
+                this.setStatusMessage(auto ? 'Automatische Agent-Antwort erhalten' : 'Agent-Antwort erhalten', 2000);
             } catch (error) {
                 console.error('Error while sending mail to agent:', error);
                 this.handleAIError(error.message || 'Analyse fehlgeschlagen');
@@ -334,6 +636,7 @@ sap.ui.define([
                                 const pop = sap.ui.core.Fragment.byId('chatSidePanelFragmentGlobal', 'notificationsPopover');
                                 const isOpen = pop?.isOpen && pop.isOpen();
                                 this.setHasNew(!isOpen);
+                                this.announceNewMail(msg.item);
                             }
                         } else if (msg.type === 'read' && msg.id) {
                             this.removeNotificationById(msg.id);

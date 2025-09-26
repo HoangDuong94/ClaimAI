@@ -720,7 +720,7 @@ ${safeContent}`;
       try {
         const systemMessage = {
           role: "system",
-          content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities.
+          content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
 
                    RESPONSE GUIDELINES:
               - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
