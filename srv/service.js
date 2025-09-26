@@ -736,13 +736,13 @@ ${safeContent}`;
                   - If a command fails and you see "current transaction is aborted", immediately call 'execute_rollback' and then retry with corrected SQL.
 
                   STAMMTISCH IMPORT RULES (POC):
+                  - ID generation rule: Always generate UUIDs using gen_random_uuid() (PostgreSQL pgcrypto) for any missing "id" fields and for "praesentator_ID" when mapping presenters.
                   - On explicit user approval to import a neues Thema, INSERT into table sap_stammtisch_stammtische using 'execute_dml_ddl_dcl_tcl' and then call 'execute_commit'.
                   - Columns to consider (confirm via 'describe_table'): "ID", "thema", "datum", "ort", "notizen", "praesentator_ID".
                   - ID: Prefer DB default. If needed, set "ID" = gen_random_uuid(); if the function is unavailable, omit "ID" so that the DB default generates it.
                   - datum: Build a timestamp at 18:00 local (ISO string, e.g., '2025-09-30T18:00:00Z'). Ask the user if the date is unknown.
                   - ort: Default to 'Luzern' unless the user provides a different location.
-                  - Presenter mapping: When the Excel column "Vorgetragen durch" contains names, SELECT from sap_stammtisch_praesentatoren by case-insensitive name.
-                    If a match exists, set "praesentator_ID" to that "ID". If not, set it to NULL and append the raw names to "notizen".
+                  - Presenter mapping: For each value in the Excel column "Vorgetragen durch", set "praesentator_ID" to gen_random_uuid()
                   - Duplicate prevention: Compare normalized Themen against BekannteThemenJSON (case-insensitive, trim). If a duplicate is found, do not insert without explicit user approval.
 
                   WEB SEARCH ACCESS:

@@ -54,12 +54,21 @@ sap.ui.define([
                 statusMessage: "",
                 showSuggestions: false,
                 suggestions: [
-                    { text: 'Zeige mir die neueste Mail aus dem Posteingang.' },
-                    { text: 'Ist dort ein Anhang vorhanden?' },
-                    { text: 'Kannst du den Excel Anhang auslesen?' },
-                    { text: 'Antworte auf die letzte Mail und bitte um fehlende Dokumente.' },
-                    { text: 'Welche Termine stehen diese Woche im Kalender?' },
-                    { text: "Lies die Tabelle 'Stammtisch Planung' aus der Excel im OneDrive." }
+                    { text: 'Fasse den Excel‑Anhang mit Terminen, Themen und Kerndaten kurz zusammen.' },
+                    { text: 'Liste alle Events mit Datum, Themen und Referenten tabellarisch auf.' },
+                    { text: 'Importiere bitte die Excel Zeile mit dem Datum 30.09.2025 in unsere passende DB.' },
+                    { text: 'Importiere bitte die Excel Zeile mit dem Datum 30.09.2025 und 18.11.2025 in unsere passende DB.' },
+                    { text: 'Nur „Integration Suite“ importieren' },
+                    { text: 'Nur die ohne Duplikate importieren' },
+                    { text: 'Füge als Präsentator in "Integration Suite" {Name} hinzu' },
+                    { text: 'Füge als Präsentator in "Integration Suite" und "Business Event und openSource Generator" den passenden Präsentator hinnzu'},
+                    { text: 'Schaue in der Excel nach welche passen' },
+                    { text: 'Erstelle einen Termin zur Duplikatklärung (übermorgen 10–11 Uhr).' },
+                    { text: 'Formuliere Email Antwort was wir bisher alles gemacht haben.' },
+                    { text: 'Habe ich in meinem File System eine Teilnehmer Datei?' },
+                    { text: 'Zeige mir den Inhalt von Teilnehmer.txt an.' },
+                    { text: 'Ordne alle Personen aus „Teilnehmer.txt“ dem aktuellen neuem Event „Integration Suite“ zu und bereite Commit vor.' },
+                    { text: "Erzeuge eine Teilnehmeranalyse (Häufigkeit) und hebe die Top 3 hervor." }
                 ]
             });
 
@@ -195,9 +204,39 @@ sap.ui.define([
             }
 
             const subject = mailItem.subject || 'Ohne Betreff';
-            const userMessage = `Welche Aktionen empfiehlst du für die E-Mail "${subject}"?`;
+            const agentContext = typeof mailItem.agentContext === 'string'
+                ? { context: mailItem.agentContext }
+                : mailItem.agentContext;
+            const rawBodyText = agentContext?.bodyText;
+            let emailText = typeof rawBodyText === 'string' ? rawBodyText.trim() : '';
 
-            this.addMessage('user', userMessage);
+            if (!emailText) {
+                const rawBodyHtml = agentContext?.bodyHtml;
+                if (typeof rawBodyHtml === 'string' && rawBodyHtml.trim()) {
+                    emailText = rawBodyHtml
+                        .replace(/<br\s*\/?>(\n)?/gi, '\n')
+                        .replace(/<\/p>/gi, '\n\n')
+                        .replace(/<li>/gi, '- ')
+                        .replace(/<[^>]+>/g, '')
+                        .replace(/\n{3,}/g, '\n\n')
+                        .replace(/[ \t]+\n/g, '\n')
+                        .replace(/\n[ \t]+/g, '\n')
+                        .trim();
+                }
+            }
+
+            if (!emailText && typeof mailItem.summary === 'string') {
+                emailText = mailItem.summary;
+            }
+
+            const userMessageParts = [
+                `Welche Aktionen empfiehlst du für die E-Mail "${subject}"?`,
+                '',
+                'E-Mail-Text:',
+                emailText || 'Kein E-Mail-Text verfügbar.'
+            ];
+
+            this.addMessage('user', userMessageParts.join('\n'));
             this.chatModel.setProperty('/isTyping', true);
             this.setStatusMessage('Agent analysiert die E-Mail...', 0);
 
