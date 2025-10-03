@@ -652,8 +652,9 @@ ${safeContent}`;
       try {
         mcpClients = await initAllMCPClients({ capService: this, logger: console });
 
-        const [capTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
+        const [capTools, cdsModelTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
           loadMcpTools('cap', mcpClients.cap),
+          loadMcpTools('search_model', mcpClients.cdsModel),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
           loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
           loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel),
@@ -665,7 +666,7 @@ ${safeContent}`;
         const postgresTools = [];
 
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...capTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
+        const allTools = [...postgresTools, ...cdsModelTools, ...capTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
 
         // Lade Microsoft 365 Tools dynamisch aus dem Manifest
         if (mcpClients.m365) {
@@ -687,7 +688,7 @@ ${safeContent}`;
           console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
         }
 
-        console.log(`✅ Loaded ${capTools.length} CAP, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`);
+        console.log(`✅ Loaded ${capTools.length} CAP, ${cdsModelTools.length} cds-mcp, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
         const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -737,11 +738,17 @@ ${safeContent}`;
               - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
               - Highlight the most important information for the user by wrapping key phrases or sentences in **bold**.
 
+                  CAP MODEL CONTEXT:
+                  - Before answering any question about CDS models, entities, fields, services, or CAP APIs, you MUST call the cds-mcp tool 'search_model' for the exact entity/service (unless you already called it earlier in this conversation and nothing has changed). Do not rely on intuition or prior knowledge.
+                  - If 'search_model' returns no match, state that clearly and ask the user for clarification instead of guessing; only read *.cds files directly when the user explicitly requests it.
+                  - Summarize the relevant findings from 'search_model' in your reply (for example required fields, draft status, endpoints) so subsequent tool calls remain grounded in that metadata.
+
                   DATABASE ACCESS:
+                  - Before invoking any 'cap.*' tool (cqn.read, draft.new, draft.patch, etc.), ensure the relevant entity/service metadata from 'search_model' is already in context for this conversation; if not, call 'search_model' first and base your reasoning on its results.
                   - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example sap.stammtisch.Stammtische) and keep result sets small (limit ≤ 200).
                   - Use 'cap.sql.execute' when you need raw SQL. The tool is read-only by default; set allowWrite=true only after explicit user approval and double-check the statement before execution.
-                  - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. Die MCP merkt sich den zuletzt erzeugten Draft automatisch; Keys musst du nur nennen, wenn mehrere Drafts offen sind.
-                  - 'cap.draft.patch/save/cancel' akzeptieren komfortable Top-Level-Felder (z. B. direkt "thema", "datum"). Fehlt die Draft-ID, nutzt der MCP die zuletzt bekannte Draft-Instanz.
+                  - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. The MCP remembers the most recently created draft automatically; only provide keys when multiple drafts are open.
+                  - 'cap.draft.patch/save/cancel' accept convenient top-level fields (for example 'thema', 'datum'). If the draft ID is missing, the MCP reuses the last known draft instance.
                   - CAP entity names use dot notation, but physical tables are underscored (sap_stammtisch_stammtische, sap_stammtisch_praesentatoren, sap_stammtisch_teilnehmer). Inspect a single row with 'cap.cqn.read' before mutating data.
                   - Always tell the user which tool/entity you intend to modify before enabling allowWrite or saving a draft, and report affected rows or IDs afterward.
 

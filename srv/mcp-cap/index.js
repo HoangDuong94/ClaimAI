@@ -151,6 +151,28 @@ const toolDefinitions = [
       required: ['entity'],
       additionalProperties: true
     }
+  },
+  {
+    name: 'cap.draft.addChild',
+    description: 'Append entries to a composition element of a draft-enabled root entity.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        entity: { type: 'string', description: 'Draft-enabled root entity name.' },
+        child: { type: 'string', description: 'Name des Composition-Elements (z. B. "teilnehmer").' },
+        entries: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: true },
+          description: 'Liste der zu ergänzenden Kind-Einträge.'
+        },
+        entry: { type: 'object', additionalProperties: true, description: 'Alternative zu entries: einzelner Kind-Eintrag.' },
+        keys: { type: 'object', additionalProperties: true, description: 'Optional: Primärschlüssel (ID + DraftUUID).' },
+        ID: { type: 'string', description: 'Convenience: Draft-ID falls keys fehlt.' },
+        DraftAdministrativeData_DraftUUID: { type: 'string', description: 'Convenience: DraftUUID falls keys fehlt.' }
+      },
+      required: ['entity', 'child'],
+      additionalProperties: true
+    }
   }
 ];
 
@@ -213,6 +235,18 @@ export async function initCapMCPClient(options = {}) {
     }
   }
 
+  function hasProvidedDraftKeys(input = {}) {
+    if (!input || typeof input !== 'object') return false;
+    if (input.keys && Object.keys(input.keys).length) return true;
+    if (input.ID) return true;
+    if (input.DraftAdministrativeData_DraftUUID) return true;
+    return false;
+  }
+
+  function isMissingDraftError(error) {
+    return error?.message?.includes("Kein passender Draft gefunden");
+  }
+
   function resolveDraftKeys(entityRef, draftEntity, providedKeys = {}, options = {}) {
     const store = getDraftStore(entityRef.name);
 
@@ -227,10 +261,11 @@ export async function initCapMCPClient(options = {}) {
       if (keys.ID) {
         const cached = store.get(keys.ID);
         if (cached) {
-          return { ...cached.keys, ...keys, IsActiveEntity: false };
+          return { ...cached.keys, ...keys };
         }
         if (keys.IsActiveEntity !== undefined) {
-          return { ID: keys.ID, IsActiveEntity: Boolean(keys.IsActiveEntity) };
+          const { IsActiveEntity, ...rest } = keys;
+          return { ID: keys.ID, ...rest, IsActiveEntity: Boolean(IsActiveEntity) };
         }
         return { ID: keys.ID, IsActiveEntity: false };
       } else if (keys.DraftAdministrativeData_DraftUUID) {
@@ -241,7 +276,8 @@ export async function initCapMCPClient(options = {}) {
         }
       }
       if (keys.IsActiveEntity !== undefined) {
-        return { ...keys, IsActiveEntity: Boolean(keys.IsActiveEntity) };
+        const { IsActiveEntity, ...rest } = keys;
+        return { ...rest, IsActiveEntity: Boolean(IsActiveEntity) };
       }
     }
 
@@ -325,6 +361,83 @@ export async function initCapMCPClient(options = {}) {
     } finally {
       cds.context = previous;
     }
+  }
+
+  function sanitizeDraftKeys(entity, keyValues = {}, options = {}) {
+    if (!keyValues || typeof keyValues !== 'object') {
+      return {};
+    }
+    const { allowVirtual = [], dropKeys = [] } = options;
+    const elements = entity?.elements;
+    if (!elements) {
+      return { ...keyValues };
+    }
+    const cleaned = {};
+    for (const [key, value] of Object.entries(keyValues)) {
+      if (dropKeys.includes(key)) continue;
+      const element = elements[key];
+      if (element?.virtual && !allowVirtual.includes(key)) continue;
+      if (value === undefined) continue;
+      cleaned[key] = value;
+    }
+    return cleaned;
+  }
+
+  async function autoResolveDraftKeys(entityRef, draftEntity) {
+    const columns = [];
+
+    if (draftEntity.elements?.ID) {
+      columns.push({ ref: ['ID'] });
+    }
+    if (draftEntity.elements?.DraftAdministrativeData_DraftUUID) {
+      columns.push({ ref: ['DraftAdministrativeData_DraftUUID'] });
+    }
+
+    if (!columns.length) {
+      return null;
+    }
+
+    const query = cds.ql.SELECT.one.from(draftEntity).columns(...columns);
+
+    const orderCandidates = [
+      ['modifiedAt', 'desc'],
+      ['LastChangedAt', 'desc'],
+      ['createdAt', 'desc'],
+      ['CreationDateTime', 'desc']
+    ];
+
+    for (const [field, sort] of orderCandidates) {
+      if (draftEntity.elements?.[field]) {
+        query.orderBy({ ref: [field], sort });
+        break;
+      }
+    }
+
+    const latest = await withServiceContext(async () => service.run(query));
+    if (!latest) {
+      return null;
+    }
+
+    const autoKeys = {};
+    if (latest.ID !== undefined) {
+      autoKeys.ID = latest.ID;
+    }
+    if (latest.DraftAdministrativeData_DraftUUID !== undefined) {
+      autoKeys.DraftAdministrativeData_DraftUUID = latest.DraftAdministrativeData_DraftUUID;
+    }
+
+    if (!Object.keys(autoKeys).length) {
+      return null;
+    }
+
+    autoKeys.IsActiveEntity = false;
+
+    rememberDraft(entityRef, {
+      ID: autoKeys.ID,
+      DraftAdministrativeData_DraftUUID: autoKeys.DraftAdministrativeData_DraftUUID
+    });
+
+    return autoKeys;
   }
 
   function toResultPayload(result, metadata = {}) {
@@ -442,12 +555,25 @@ export async function initCapMCPClient(options = {}) {
 
     const { keys, data } = extractKeysAndData(entityRef, draftEntity, input);
 
+    const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
+
     if (!data || typeof data !== 'object' || !Object.keys(data).length) {
       throw new Error('Es wurden keine Felder zum Aktualisieren übergeben.');
     }
 
+    const payload = { ...data };
+    if (mutationKeys.DraftAdministrativeData_DraftUUID !== undefined && payload.DraftAdministrativeData_DraftUUID === undefined) {
+      payload.DraftAdministrativeData_DraftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
+    }
+    if (mutationKeys.IsActiveEntity !== undefined && payload.IsActiveEntity === undefined) {
+      payload.IsActiveEntity = mutationKeys.IsActiveEntity;
+    }
+    if (mutationKeys.ID !== undefined && payload.ID === undefined) {
+      payload.ID = mutationKeys.ID;
+    }
+
     const affected = await withServiceContext(
-      async () => service.update(draftEntity).set(data).where(keys),
+      async () => service.update(draftEntity).set(payload).where(mutationKeys),
       { event: 'UPDATE' }
     );
 
@@ -482,9 +608,10 @@ export async function initCapMCPClient(options = {}) {
     const draftEntity = ensureDraftEntity(entityRef, entity);
 
     const { keys } = extractKeysAndData(entityRef, draftEntity, input);
+    const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
 
-    const result = await withServiceContext(async () => service.save(draftEntity, keys), { event: 'SAVE' });
-    forgetDraft(entityRef, keys);
+    const result = await withServiceContext(async () => service.save(draftEntity, mutationKeys), { event: 'SAVE' });
+    forgetDraft(entityRef, mutationKeys);
     return toResultPayload(result, { entity: entityRef.name, action: 'SAVE' });
   }
 
@@ -494,9 +621,10 @@ export async function initCapMCPClient(options = {}) {
     const draftEntity = ensureDraftEntity(entityRef, entity);
 
     const { keys } = extractKeysAndData(entityRef, draftEntity, input);
+    const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { dropKeys: ['IsActiveEntity'] });
 
-    const result = await withServiceContext(async () => service.discard(draftEntity, keys), { event: 'CANCEL' });
-    forgetDraft(entityRef, keys);
+    const result = await withServiceContext(async () => service.discard(draftEntity, mutationKeys), { event: 'CANCEL' });
+    forgetDraft(entityRef, mutationKeys);
     return toResultPayload(result, { entity: entityRef.name, action: 'CANCEL' });
   }
 
@@ -505,7 +633,22 @@ export async function initCapMCPClient(options = {}) {
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
 
-    const { keys } = extractKeysAndData(entityRef, draftEntity, input);
+    let keys;
+    try {
+      ({ keys } = extractKeysAndData(entityRef, draftEntity, input));
+    } catch (error) {
+      if (!hasProvidedDraftKeys(input) && isMissingDraftError(error)) {
+        const autoKeys = await autoResolveDraftKeys(entityRef, draftEntity);
+        if (!autoKeys) {
+          throw error;
+        }
+        keys = autoKeys;
+      } else {
+        throw error;
+      }
+    }
+
+    const queryKeys = sanitizeDraftKeys(draftEntity, keys, { dropKeys: ['IsActiveEntity', 'HasActiveEntity', 'HasDraftEntity'] });
 
     const draftAdminAssoc = draftEntity?.elements?.DraftAdministrativeData;
     const adminTargetElements = draftAdminAssoc?._target?.elements || null;
@@ -542,7 +685,7 @@ export async function initCapMCPClient(options = {}) {
 
     const query = cds.ql.SELECT.one.from(draftEntity)
       .columns(...selectColumns)
-      .where(keys);
+      .where(queryKeys);
 
     const result = await withServiceContext(async () => service.run(query));
     if (!result) {
@@ -567,6 +710,145 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(adminData, { entity: entityRef.name, action: 'DRAFT_ADMIN' });
   }
 
+  async function handleDraftAddChild(input = {}) {
+    const { entity, child } = input;
+    if (!entity || typeof entity !== 'string') {
+      throw new Error('Bitte das Draft-Root "entity" angeben.');
+    }
+    if (!child || typeof child !== 'string') {
+      throw new Error('Bitte den Namen des Composition-Elements in "child" angeben.');
+    }
+
+    const entriesInput = Array.isArray(input.entries)
+      ? input.entries
+      : input.entry !== undefined
+        ? [input.entry]
+        : null;
+
+    if (!entriesInput || !entriesInput.length) {
+      throw new Error('Bitte mindestens einen Kind-Eintrag in "entries" oder "entry" übergeben.');
+    }
+
+    const entityRef = resolveEntity(entity);
+    const draftEntity = ensureDraftEntity(entityRef, entity);
+
+    const childElement = draftEntity.elements?.[child] || entityRef.elements?.[child];
+    if (!childElement) {
+      throw new Error(`Das Element "${child}" existiert auf "${entityRef.name}" nicht.`);
+    }
+    if (childElement.type !== 'cds.Composition') {
+      throw new Error(`Element "${child}" ist keine Composition und kann nicht mit cap.draft.addChild befüllt werden.`);
+    }
+
+    const childTarget = childElement._target;
+    if (!childTarget) {
+      throw new Error(`Composition "${child}" besitzt kein aufgelöstes Ziel.`);
+    }
+
+    const providedKeys = input.keys ? { ...input.keys } : {};
+    const convenienceKeys = {};
+    if (input.ID) convenienceKeys.ID = input.ID;
+    if (input.DraftAdministrativeData_DraftUUID) {
+      convenienceKeys.DraftAdministrativeData_DraftUUID = input.DraftAdministrativeData_DraftUUID;
+    }
+
+    let resolvedKeys;
+    try {
+      resolvedKeys = resolveDraftKeys(entityRef, draftEntity, providedKeys, convenienceKeys);
+    } catch (error) {
+      if (!hasProvidedDraftKeys(input) && isMissingDraftError(error)) {
+        const autoKeys = await autoResolveDraftKeys(entityRef, draftEntity);
+        if (!autoKeys) {
+          throw error;
+        }
+        resolvedKeys = autoKeys;
+      } else {
+        throw error;
+      }
+    }
+
+    const mutationKeys = sanitizeDraftKeys(draftEntity, resolvedKeys, {
+      allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID']
+    });
+
+    const childColumns = Object.keys(childTarget.elements || {}).map((col) => ({ ref: [col] }));
+    const expand = childColumns.length ? childColumns : [{ ref: ['*'] }];
+    const selectColumns = [{ ref: [child], expand }];
+
+    const existing = await withServiceContext(
+      async () => service.run(
+        cds.ql.SELECT.one.from(draftEntity)
+          .columns(...selectColumns)
+          .where(mutationKeys)
+      )
+    );
+
+    const currentEntriesRaw = Array.isArray(existing?.[child]) ? existing[child] : [];
+    const currentEntries = JSON.parse(JSON.stringify(currentEntriesRaw));
+
+    const preparedEntries = entriesInput.map((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        throw new Error(`Der Eintrag an Position ${index} ist kein Objekt.`);
+      }
+      const normalized = { ...entry };
+
+      if (normalized.ID === undefined && childTarget.elements?.ID?.type === 'cds.UUID') {
+        normalized.ID = cds.utils?.uuid ? cds.utils.uuid() : cds.utils.guid();
+      }
+      if (childTarget.elements?.IsActiveEntity && normalized.IsActiveEntity === undefined) {
+        normalized.IsActiveEntity = false;
+      }
+      if (childTarget.elements?.HasActiveEntity && normalized.HasActiveEntity === undefined) {
+        normalized.HasActiveEntity = false;
+      }
+      if (childTarget.elements?.HasDraftEntity && normalized.HasDraftEntity === undefined) {
+        normalized.HasDraftEntity = false;
+      }
+      if (
+        mutationKeys.DraftAdministrativeData_DraftUUID !== undefined &&
+        childTarget.elements?.DraftAdministrativeData_DraftUUID &&
+        normalized.DraftAdministrativeData_DraftUUID === undefined
+      ) {
+        normalized.DraftAdministrativeData_DraftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
+      }
+
+      return normalized;
+    });
+
+    const payload = {
+      [child]: currentEntries.concat(preparedEntries)
+    };
+
+    if (mutationKeys.ID !== undefined) {
+      payload.ID = mutationKeys.ID;
+    }
+    if (mutationKeys.IsActiveEntity !== undefined) {
+      payload.IsActiveEntity = mutationKeys.IsActiveEntity;
+    }
+    if (mutationKeys.DraftAdministrativeData_DraftUUID !== undefined) {
+      payload.DraftAdministrativeData_DraftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
+    }
+
+    const result = await withServiceContext(
+      async () => service.update(draftEntity).set(payload).where(mutationKeys),
+      { event: 'UPDATE' }
+    );
+
+    if (mutationKeys.ID !== undefined) {
+      const store = getDraftStore(entityRef.name);
+      const cached = store.get(mutationKeys.ID);
+      if (cached) {
+        cached.data = {
+          ...cached.data,
+          [child]: payload[child]
+        };
+        cached.timestamp = Date.now();
+      }
+    }
+
+    return toResultPayload(result, { entity: entityRef.name, action: 'ADD_CHILD', child });
+  }
+
   const handlers = {
     'cap.sql.execute': handleSqlExecute,
     'cap.cqn.read': handleCqnRead,
@@ -575,7 +857,8 @@ export async function initCapMCPClient(options = {}) {
     'cap.draft.patch': handleDraftPatch,
     'cap.draft.save': handleDraftSave,
     'cap.draft.cancel': handleDraftCancel,
-    'cap.draft.getAdminData': handleDraftGetAdminData
+    'cap.draft.getAdminData': handleDraftGetAdminData,
+    'cap.draft.addChild': handleDraftAddChild
   };
 
   async function listTools() {

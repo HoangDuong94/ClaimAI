@@ -19,6 +19,7 @@ let excelClient = null; // +++ NEU: Excel Client Variable
 let m365Client = null;
 let timeClient = null;
 let capClient = null;
+let cdsModelClient = null;
 
 function getPostgresUri() {
   const creds = dbConfig.credentials;
@@ -137,6 +138,21 @@ export async function initTimeMCPClient() {
   return timeClient;
 }
 
+export async function initCdsModelMCPClient() {
+  if (cdsModelClient) return cdsModelClient;
+
+  console.log('Initializing cds-mcp (model/documentation) client...');
+  const transport = new StdioClientTransport({
+    command: 'npx',
+    args: ['--yes', '--package', '@cap-js/mcp-server', 'cds-mcp']
+  });
+
+  cdsModelClient = new Client({ name: 'cds-mcp-client', version: '1.0.0' }, {});
+  await cdsModelClient.connect(transport);
+  console.log('✅ cds-mcp client initialized successfully.');
+  return cdsModelClient;
+}
+
 export async function initCapInProcessClient({ capService, logger } = {}) {
   if (capClient) return capClient;
   if (!capService) {
@@ -155,8 +171,9 @@ export async function initAllMCPClients(options = {}) {
   const { capService, logger } = options;
 
   // +++ ERWEITERT: Excel Client wird mit initialisiert +++
-  const [capInProcessClient, pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+  const [capInProcessClient, cdsModel, pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initCapInProcessClient({ capService, logger }),
+    initCdsModelMCPClient(),
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initFilesystemMCPClient(),
@@ -167,6 +184,7 @@ export async function initAllMCPClients(options = {}) {
 
   return {
     cap: capInProcessClient,
+    cdsModel,
     postgres: pgClient,
     braveSearch: braveClient,
     playwright: null,
@@ -200,6 +218,11 @@ export async function closeMCPClients() {
     console.log("Closing Excel MCP client connection");
     closePromises.push(excelClient.close());
     excelClient = null;
+  }
+  if (cdsModelClient) {
+    console.log('Closing cds-mcp client connection');
+    closePromises.push(cdsModelClient.close());
+    cdsModelClient = null;
   }
   if (m365Client) {
     console.log("Closing Microsoft 365 MCP client connection");
