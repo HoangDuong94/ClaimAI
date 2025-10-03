@@ -647,21 +647,25 @@ ${safeContent}`;
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with Database, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
+      console.log("Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
 
       try {
-        mcpClients = await initAllMCPClients();
+        mcpClients = await initAllMCPClients({ capService: this, logger: console });
 
-        const [postgresTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
-          loadMcpTools("query", mcpClients.postgres),
+        const [capTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
+          loadMcpTools('cap', mcpClients.cap),
           loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
           loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
           loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel),
           loadMcpTools("get_current_time,convert_time", mcpClients.time)
         ]);
 
+        // PostgreSQL tools are temporarily disabled while the CAP MCP migration is in progress.
+        // const postgresTools = await loadMcpTools("query", mcpClients.postgres);
+        const postgresTools = [];
+
         // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
+        const allTools = [...postgresTools, ...capTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
 
         // Lade Microsoft 365 Tools dynamisch aus dem Manifest
         if (mcpClients.m365) {
@@ -683,7 +687,7 @@ ${safeContent}`;
           console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
         }
 
-        console.log(`✅ Loaded ${postgresTools.length} PostgreSQL, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools`);
+        console.log(`✅ Loaded ${capTools.length} CAP, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`);
         console.log("Available tools:", allTools.map(tool => tool.name));
 
         const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -717,33 +721,38 @@ ${safeContent}`;
       console.log('🚀 Received prompt for Multi-Modal Agent:', userPrompt);
       const executor = await initializeAgent();
 
+      const capContext = {
+        user: req.user,
+        tenant: req.user?.tenant || req.tenant,
+        locale: req.locale
+      };
+
       try {
-        const systemMessage = {
-          role: "system",
-          content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
+        return await mcpClients.cap.runWithContext(capContext, async () => {
+          const systemMessage = {
+            role: "system",
+            content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
 
                    RESPONSE GUIDELINES:
               - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
               - Highlight the most important information for the user by wrapping key phrases or sentences in **bold**.
 
                   DATABASE ACCESS:
-                  - You can query a PostgreSQL database using the 'query' tool (SELECT only).
-                  - Use 'execute_dml_ddl_dcl_tcl' for INSERT/UPDATE/DELETE/DDL and 'execute_commit' / 'execute_rollback' for transactions.
-                  - IMPORTANT: PostgreSQL + CAP naming — never use dot-notation like sap.stammtisch.*.
-                    CAP flattens CDS names to underscore table names. Always discover with 'list_tables' and verify columns with 'describe_table' before writing.
-                  - Relevant tables: sap_stammtisch_stammtische (events), sap_stammtisch_praesentatoren (presenters), sap_stammtisch_teilnehmer (attendees).
-                  - Quote columns exactly as returned by 'describe_table' (e.g., "ID", "praesentator_ID").
-                  - If a command fails and you see "current transaction is aborted", immediately call 'execute_rollback' and then retry with corrected SQL.
+                  - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example sap.stammtisch.Stammtische) and keep result sets small (limit ≤ 200).
+                  - Use 'cap.sql.execute' when you need raw SQL. The tool is read-only by default; set allowWrite=true only after explicit user approval and double-check the statement before execution.
+                  - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. Die MCP merkt sich den zuletzt erzeugten Draft automatisch; Keys musst du nur nennen, wenn mehrere Drafts offen sind.
+                  - 'cap.draft.patch/save/cancel' akzeptieren komfortable Top-Level-Felder (z. B. direkt "thema", "datum"). Fehlt die Draft-ID, nutzt der MCP die zuletzt bekannte Draft-Instanz.
+                  - CAP entity names use dot notation, but physical tables are underscored (sap_stammtisch_stammtische, sap_stammtisch_praesentatoren, sap_stammtisch_teilnehmer). Inspect a single row with 'cap.cqn.read' before mutating data.
+                  - Always tell the user which tool/entity you intend to modify before enabling allowWrite or saving a draft, and report affected rows or IDs afterward.
 
                   STAMMTISCH IMPORT RULES (POC):
-                  - ID generation rule: Always generate UUIDs using gen_random_uuid() (PostgreSQL pgcrypto) for any missing "id" fields and for "praesentator_ID" when mapping presenters.
-                  - On explicit user approval to import a neues Thema, INSERT into table sap_stammtisch_stammtische using 'execute_dml_ddl_dcl_tcl' and then call 'execute_commit'.
-                  - Columns to consider (confirm via 'describe_table'): "ID", "thema", "datum", "ort", "notizen", "praesentator_ID".
-                  - ID: Prefer DB default. If needed, set "ID" = gen_random_uuid(); if the function is unavailable, omit "ID" so that the DB default generates it.
+                  - ID generation: Prefer letting CAP/DB defaults create UUIDs. If you must set IDs manually in SQL, call gen_random_uuid() within 'cap.sql.execute' (allowWrite=true) and document it.
+                  - On explicit user approval import new Themen via 'cap.draft.new' + 'cap.draft.save' or a single 'cap.sql.execute' (allowWrite=true). Follow up with a read-back so the user sees the persisted row.
+                  - Columns to consider (confirm via 'cap.cqn.read'): "ID", "thema", "datum", "ort", "notizen", "praesentator_ID".
                   - datum: Build a timestamp at 18:00 local (ISO string, e.g., '2025-09-30T18:00:00Z'). Ask the user if the date is unknown.
                   - ort: Default to 'Luzern' unless the user provides a different location.
-                  - Presenter mapping: For each value in the Excel column "Vorgetragen durch", set "praesentator_ID" to gen_random_uuid()
-                  - Duplicate prevention: Compare normalized Themen against BekannteThemenJSON (case-insensitive, trim). If a duplicate is found, do not insert without explicit user approval.
+                  - Presenter mapping: For each value in the Excel column "Vorgetragen durch", set "praesentator_ID" to a UUID (prefer DB default or gen_random_uuid()).
+                  - Duplicate prevention: Compare normalized Themen against BekannteThemenJSON (case-insensitive, trim). If a duplicate exists, pause and request explicit approval before inserting or saving a draft.
 
                   WEB SEARCH ACCESS:
                   - You can search the web using 'brave_web_search'. 
@@ -769,7 +778,7 @@ ${safeContent}`;
 
                   ANALYSIS & VISUALIZATION WORKFLOW:
                   - If the user asks for an "analysis", "report", or "visualization" of data, you MUST follow this specific workflow:
-                  1.  **Query Data:** First, use the 'query' tool to retrieve the necessary data from the PostgreSQL database. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which tables and columns are relevant for the analysis.
+                  1.  **Query Data:** First, use the 'cap.cqn.read' tool (or 'cap.sql.execute' with a read-only statement) to retrieve the necessary data from CAP. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which entities and columns are relevant for the analysis.
                   2.  **Generate HTML File:** After successfully retrieving the data, you will generate a single, self-contained HTML file to present the analysis and visualization.
                       -   **Structure:** Create a well-structured HTML5 document.
                       -   **Styling:** Include some basic CSS in a <style> tag in the <head> for a clean and professional look (e.g., set a modern font, center content, add padding).
@@ -786,49 +795,50 @@ ${safeContent}`;
                     `
                       };
 
-        const userMessage = {
-          role: "user",
-          content: userPrompt
-        };
-        
-        const stream = await executor.stream(
-          {
-            messages: [systemMessage, userMessage]
-          },
-          {
-            configurable: { thread_id: `session_test}` }
-          }
-        );
-
-        const finalResponseParts = [];
-        console.log("\n\n---- AGENT STREAM START ----\n");
-
-        for await (const chunk of stream) {
-          if (chunk.agent?.messages) {
-            const message = chunk.agent.messages[chunk.agent.messages.length - 1];
-            if (message && message.content) {
-              process.stdout.write(message.content);
-              finalResponseParts.push(message.content);
+          const userMessage = {
+            role: "user",
+            content: userPrompt
+          };
+          
+          const stream = await executor.stream(
+            {
+              messages: [systemMessage, userMessage]
+            },
+            {
+              configurable: { thread_id: `session_test}` }
             }
-            if (message.tool_calls && message.tool_calls.length > 0) {
-              const toolCall = message.tool_calls[0];
-              const toolCallStr = `\n\n<TOOL_CALL>\n  Tool: ${toolCall.name}\n  Args: ${JSON.stringify(toolCall.args)}\n</TOOL_CALL>\n\n`;
-              process.stdout.write(toolCallStr);
+          );
+
+          const finalResponseParts = [];
+          console.log("\n\n---- AGENT STREAM START ----\n");
+
+          for await (const chunk of stream) {
+            if (chunk.agent?.messages) {
+              const message = chunk.agent.messages[chunk.agent.messages.length - 1];
+              if (message && message.content) {
+                process.stdout.write(message.content);
+                finalResponseParts.push(message.content);
+              }
+              if (message.tool_calls && message.tool_calls.length > 0) {
+                const toolCall = message.tool_calls[0];
+                const toolCallStr = `\n\n<TOOL_CALL>\n  Tool: ${toolCall.name}\n  Args: ${JSON.stringify(toolCall.args)}\n</TOOL_CALL>\n\n`;
+                process.stdout.write(toolCallStr);
+              }
+            }
+
+            if (chunk.tools?.messages) {
+               const toolMessage = chunk.tools.messages[0];
+               const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
+               process.stdout.write(toolOutputStr);
             }
           }
+          console.log("\n---- AGENT STREAM END ----\n");
 
-          if (chunk.tools?.messages) {
-             const toolMessage = chunk.tools.messages[0];
-             const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
-             process.stdout.write(toolOutputStr);
-          }
-        }
-        console.log("\n---- AGENT STREAM END ----\n");
+          const rawResponse = finalResponseParts.join("");
+          const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
 
-        const rawResponse = finalResponseParts.join("");
-        const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
-
-        return { response: htmlResponse };
+          return { response: htmlResponse };
+        });
 
       } catch (error) {
         console.error('💥 Error during agent execution:', error);

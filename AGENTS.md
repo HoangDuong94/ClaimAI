@@ -34,5 +34,17 @@
 
 ## Security & Configuration Tips
 - Do not commit secrets. Use `.env` for local dev and environment variables to override `cds.requires` (Postgres, destinations, AI services). `.gitignore` already excludes common files.
-- Service runs at port `9999` (see `package.json`). Service root: `/service/stammtisch`; action `callLLM` in `srv/service.js` executes the multi‑tool agent.
+- Service runs at port `9999` (see `package.json`). Service root: `/service/stammtisch`; action `callLLM` in `srv/service.js` executes the multi-tool agent.
 - Supporting agent helpers live in `srv/lib/` and `srv/utils/`; avoid reintroducing generated artefacts into version control.
+
+## MCP Servers
+
+### cds-mcp (CAP context)
+- Added via `codex mcp add cds-mcp -- npx --yes --package @cap-js/mcp-server cds-mcp`; ensure the command resolves on your PATH.
+- `search_model` MUST be used for CDS definitions (entities, services, endpoints); only read `*.cds` manually if a lookup fails.
+- `search_docs` MUST precede any CAP model or API changes and `cds` CLI usage; never propose or apply changes without consulting it.
+
+### postgres (Database access)
+- Registered with `codex mcp add postgres -- npx --yes mcp-postgres-full-access postgresql://duh:test123@localhost:5432/stammtisch_ai_db`.
+- Connection string aligns with `cds.requires.db[development]` credentials; update if credentials/env differ.
+- Use the `query` tool for read/write SQL; prefer read-only queries unless a migration or data fix was requested.

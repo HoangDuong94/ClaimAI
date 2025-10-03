@@ -4,6 +4,7 @@ import cds from '@sap/cds';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { initM365InProcessClient as createInProcessM365Client } from '../m365-mcp/index.js';
+import { initCapMCPClient as createInProcessCapClient } from '../mcp-cap/index.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -17,6 +18,7 @@ let filesystemClient = null;
 let excelClient = null; // +++ NEU: Excel Client Variable
 let m365Client = null;
 let timeClient = null;
+let capClient = null;
 
 function getPostgresUri() {
   const creds = dbConfig.credentials;
@@ -135,12 +137,26 @@ export async function initTimeMCPClient() {
   return timeClient;
 }
 
+export async function initCapInProcessClient({ capService, logger } = {}) {
+  if (capClient) return capClient;
+  if (!capService) {
+    throw new Error('initCapInProcessClient requires the CAP service instance.');
+  }
+  console.log('Initializing CAP in-process MCP client...');
+  capClient = await createInProcessCapClient({ service: capService, logger });
+  console.log('✅ CAP MCP Client initialized successfully.');
+  return capClient;
+}
 
-export async function initAllMCPClients() {
+
+export async function initAllMCPClients(options = {}) {
   console.log("Initializing all MCP clients...");
-  
+
+  const { capService, logger } = options;
+
   // +++ ERWEITERT: Excel Client wird mit initialisiert +++
-  const [pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+  const [capInProcessClient, pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+    initCapInProcessClient({ capService, logger }),
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initFilesystemMCPClient(),
@@ -150,6 +166,7 @@ export async function initAllMCPClients() {
   ]);
 
   return {
+    cap: capInProcessClient,
     postgres: pgClient,
     braveSearch: braveClient,
     playwright: null,
@@ -193,6 +210,11 @@ export async function closeMCPClients() {
     console.log("Closing Time MCP client connection");
     closePromises.push(timeClient.close());
     timeClient = null;
+  }
+  if (capClient) {
+    console.log("Closing CAP MCP client connection");
+    closePromises.push(capClient.close());
+    capClient = null;
   }
 
   await Promise.all(closePromises);
