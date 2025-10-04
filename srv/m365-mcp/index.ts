@@ -1,13 +1,24 @@
-// @ts-nocheck
-// srv/m365-mcp/index.js
+// srv/m365-mcp/index.ts
 // Entry point for the Microsoft 365 in-process MCP client.
 
 import { createM365ToolManifest, toolDefinitions } from './mcp-tool-manifest.js';
-import { GraphClient } from './graph-client.js';
+import { GraphClient, type GraphClientOptions } from './graph-client.js';
 import { getToolHandler, listSupportedTools } from './tools/index.js';
 import { safeJson } from './helpers/logging.js';
 
-export async function initM365InProcessClient(options = {}) {
+type LoggerLike = Console | { error?: (...args: unknown[]) => void; log?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void };
+
+interface InitOptions extends GraphClientOptions {
+  bootstrapScopes?: string[];
+  logger?: LoggerLike;
+}
+
+interface ToolInvocation {
+  name: string;
+  arguments?: Record<string, unknown>;
+}
+
+export async function initM365InProcessClient(options: InitOptions = {}) {
   const {
     logger = console,
     bootstrapScopes = ['Mail.Read']
@@ -20,7 +31,7 @@ export async function initM365InProcessClient(options = {}) {
     return createM365ToolManifest();
   }
 
-  async function callTool({ name, arguments: args = {} }) {
+  async function callTool({ name, arguments: args = {} }: ToolInvocation) {
     if (!name) {
       throw new Error('Tool name is required');
     }
@@ -33,8 +44,9 @@ export async function initM365InProcessClient(options = {}) {
       const result = await handler({ input, graphClient, logger });
       return result;
     } catch (error) {
-      logger.error?.(`Error while executing Microsoft 365 tool ${name}:`, safeJson(error.message || error));
-      throw error;
+      const err = error as Error & { message?: string };
+      logger.error?.(`Error while executing Microsoft 365 tool ${name}:`, safeJson(err.message || err));
+      throw err;
     }
   }
 

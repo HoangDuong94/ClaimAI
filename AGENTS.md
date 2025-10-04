@@ -2,7 +2,8 @@
 
 ## Project Structure & Module Organization
 - `db/` — CDS domain models (`schema.cds`) and CSV seeds under `db/data/` for the `kfz.claims` namespace.
-- `srv/` — CAP services (`service.cds`, `service.js`), MCP helpers, and integration tooling.
+- `srv/` — CAP services (`service.cds`, `service.ts`), MCP helpers, LangGraph agent wiring, and TypeScript augmentations.
+- `srv/types/` — local declaration merges (for example CAP Request helpers) consumed by the TypeScript build.
 - `app/` — SAPUI5/Fiori frontend in `webapp/`, including integration tests under `webapp/test/`.
 - Root configs: `package.json`, `eslint.config.mjs`, `ui5.yaml`; environment overrides belong in local `.env` files.
 
@@ -12,6 +13,18 @@
 - `npm start` — serve only the CAP API (useful for integration tests or MCP tooling).
 - `npx cds deploy` — deploy the data model and seeds to Postgres (`claimai_db` on `localhost:5433`).
 - `cd app && npx ui5 test --all` — execute headless UI5 test suites before submitting changes.
+- `npm run ts:check` — strict TypeScript validation for the `srv/` layer (runs automatically in CI via `ci:verify`).
+
+## TypeScript Workflow
+- All server-side code now compiles through `tsconfig.json`; prefer authoring new logic in `.ts` files.
+- Use `npm run ts:watch` during local development; `npm run watch-hybrid` already chains the watcher with `cds watch`.
+- When adding CAP runtime APIs that lack typings, extend them in `srv/types/cds-augmentations.d.ts` rather than sprinkling `any`.
+
+## LangGraph / MCP Agent
+- `srv/service.ts` hosts the LangGraph React agent and SSE endpoints; it expects MCP clients from `srv/lib/mcp-client.ts`.
+- Initialize the full toolset with `npm run watch-hybrid` (starts the TS watcher + CAP server with the hybrid profile).
+- Microsoft 365 tooling requires the m365 CLI login; Excel attachments are downloaded to `tmp/attachments` and enriched automatically.
+- CAP MCP actions (`srv/mcp-cap/index.ts`) maintain draft caches per entity—prefer `cap.draft.*` flows over raw SQL writes.
 
 ## Coding Style & Naming Conventions
 - Node services use ES modules, 2-space indentation, and mandatory semicolons; run `npx eslint .` before committing.

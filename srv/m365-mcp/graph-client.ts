@@ -1,5 +1,4 @@
-// @ts-nocheck
-// srv/m365-mcp/graph-client.js
+// srv/m365-mcp/graph-client.ts
 // Thin wrapper around the Microsoft Graph API using the m365 CLI for authentication.
 
 import { execFile } from 'node:child_process';
@@ -8,15 +7,96 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { safeJson } from './helpers/logging.js';
 
 const execFileAsync = promisify(execFile);
 const GRAPH_RESOURCE = 'https://graph.microsoft.com';
 const GRAPH_BASE_URL = `${GRAPH_RESOURCE}/v1.0`;
 const DEFAULT_TOKEN_TTL_MS = 5 * 60 * 1000;
 
+interface LoggerLike {
+  log?: (...args: unknown[]) => void;
+  info?: (...args: unknown[]) => void;
+  warn?: (...args: unknown[]) => void;
+  error?: (...args: unknown[]) => void;
+  debug?: (...args: unknown[]) => void;
+}
+
+export interface GraphClientOptions {
+  authMethod?: string;
+  cliCommand?: string;
+  logger?: LoggerLike;
+  tokenTtlMs?: number;
+}
+
+interface TokenCacheEntry {
+  token: string;
+  expiresAt: number;
+}
+
+interface RequestOptions {
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  body?: unknown;
+  scopes?: string[];
+}
+
+interface LatestMessageInput {
+  folderId?: string;
+}
+
+interface ReplyToMessageInput {
+  messageId: string;
+  comment?: string;
+  body?: string;
+  contentType?: string;
+  replyAll?: boolean;
+}
+
+interface DownloadAttachmentInput {
+  messageId: string;
+  attachmentId: string;
+  targetPath: string;
+}
+
+interface ListMessagesInput {
+  folderId?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  maxResults?: number;
+  onlyUnread?: boolean;
+}
+
+interface CalendarEventsInput {
+  startDateTime: string;
+  endDateTime: string;
+}
+
+interface CreateCalendarEventInput {
+  subject: string;
+  body?: string;
+  contentType?: string;
+  startDateTime: string;
+  endDateTime: string;
+  timezone?: string;
+  attendees?: Array<string | Record<string, any>>;
+  teams?: boolean;
+  location?: unknown;
+  reminderMinutesBeforeStart?: number;
+  allowNewTimeProposals?: boolean;
+  isOnlineMeeting?: boolean;
+  onlineMeetingProvider?: string;
+}
+
 export class GraphClient {
-  constructor(options = {}) {
+  private readonly authMethod: string;
+  private readonly cliCommand: string;
+  private readonly logger: LoggerLike;
+  private readonly tokenTtlMs: number;
+  private readonly tokenCache: Map<string, TokenCacheEntry>;
+  private closed: boolean;
+  private scopesOptionSupported: boolean;
+
+  constructor(options: GraphClientOptions = {}) {
     const {
       authMethod = process.env.M365_AUTH_METHOD || 'cli',
       cliCommand = process.env.M365_CLI_COMMAND || 'm365',
@@ -28,23 +108,24 @@ export class GraphClient {
     this.cliCommand = cliCommand;
     this.logger = logger;
     this.tokenTtlMs = tokenTtlMs;
-    this.tokenCache = new Map();
+    this.tokenCache = new Map<string, TokenCacheEntry>();
     this.closed = false;
     this.scopesOptionSupported = true;
   }
 
-  async bootstrap(scopes = ['Mail.Read']) {
-    this.logger.log('Initializing Microsoft 365 in-process MCP client...');
+  async bootstrap(scopes: string[] = ['Mail.Read']): Promise<void> {
+    this.logger.log?.('Initializing Microsoft 365 in-process MCP client...');
     try {
       await this.getAccessToken(scopes);
-      this.logger.log('✅ Microsoft 365 MCP client initialized successfully.');
+      this.logger.log?.('✅ Microsoft 365 MCP client initialized successfully.');
     } catch (error) {
-      this.logger.error('❌ Failed to initialize Microsoft 365 MCP client:', error.message);
-      throw error;
+      const err = error as Error;
+      this.logger.error?.('❌ Failed to initialize Microsoft 365 MCP client:', err.message);
+      throw err;
     }
   }
 
-  async getAccessToken(scopes = []) {
+  async getAccessToken(scopes: string[] = []): Promise<string> {
     if (this.closed) {
       throw new Error('GraphClient is closed');
     }
@@ -65,12 +146,11 @@ export class GraphClient {
     }
 
     try {
-      const execOptions = {
+      const execOptions: Record<string, unknown> = {
         env: process.env,
         maxBuffer: 1024 * 1024
       };
 
-      // Windows: .cmd/.bat require a shell wrapper, otherwise spawn() raises EINVAL.
       if (process.platform === 'win32') {
         const lower = this.cliCommand.toLowerCase();
         if (lower.endsWith('.cmd') || lower.endsWith('.bat')) {
@@ -89,20 +169,21 @@ export class GraphClient {
       });
       return token;
     } catch (error) {
-      const errorMessage = String(error.stderr || error.message || error);
+      const err = error as NodeJS.ErrnoException & { stderr?: string };
+      const errorMessage = String(err?.stderr || err?.message || err);
       if (normalizedScopes.length && this.scopesOptionSupported && /Invalid option: 'scopes?'/.test(errorMessage)) {
         this.logger.warn?.('m365 CLI does not support the --scope option. Falling back to default Graph scopes.');
         this.scopesOptionSupported = false;
         return this.getAccessToken([]);
       }
-      if (error.code === 'ENOENT') {
+      if (err?.code === 'ENOENT') {
         throw new Error(`Could not find the m365 CLI (${this.cliCommand}). Install it via "npm i -g @pnp/cli-microsoft365".`);
       }
-      throw new Error(`Failed to acquire Microsoft Graph token via m365 CLI: ${error.message}`);
+      throw new Error(`Failed to acquire Microsoft Graph token via m365 CLI: ${err?.message}`);
     }
   }
 
-  async request(method, relativePath, { query = {}, headers = {}, body, scopes = [] } = {}) {
+  async request<T = any>(method: string, relativePath: string, { query = {}, headers = {}, body, scopes = [] }: RequestOptions = {}): Promise<T> {
     if (this.closed) {
       throw new Error('GraphClient is closed');
     }
@@ -111,41 +192,42 @@ export class GraphClient {
     Object.entries(query)
       .filter(([, value]) => value !== undefined && value !== null && value !== '')
       .forEach(([key, value]) => {
-        url.searchParams.append(key, value);
+        url.searchParams.append(key, String(value));
       });
 
     const accessToken = await this.getAccessToken(scopes);
-    const baseHeaders = {
+    const baseHeaders: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json'
     };
 
-    const options = {
+    const requestHeaders: Record<string, string> = { ...baseHeaders, ...headers };
+    const requestInit: RequestInit = {
       method,
-      headers: { ...baseHeaders, ...headers }
+      headers: requestHeaders
     };
 
     if (body !== undefined) {
-      options.body = typeof body === 'string' ? body : JSON.stringify(body);
-      options.headers['Content-Type'] = 'application/json';
+      requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
+      requestHeaders['Content-Type'] = 'application/json';
     }
 
     // this.logger.debug?.(`Graph request ${method} ${url} with body ${safeJson(body)}`);
 
-    const response = await fetch(url, options);
+    const response = await fetch(url, requestInit);
     if (!response.ok) {
       const errorBody = await response.text();
       throw new Error(`Graph request failed (${response.status} ${response.statusText}): ${errorBody}`);
     }
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
-      return await response.json();
+      return (await response.json()) as T;
     }
-    return Buffer.from(await response.arrayBuffer());
+    return Buffer.from(await response.arrayBuffer()) as T;
   }
 
-  async getLatestMessage({ folderId = 'inbox' } = {}) {
-    const data = await this.request(
+  async getLatestMessage({ folderId = 'inbox' }: LatestMessageInput = {}) {
+    const data = await this.request<any>(
       'GET',
       `/me/mailFolders/${encodeURIComponent(folderId)}/messages`,
       {
@@ -166,7 +248,7 @@ export class GraphClient {
       id: message.id,
       subject: message.subject,
       from: message.from?.emailAddress || null,
-      toRecipients: (message.toRecipients || []).map((entry) => entry.emailAddress),
+      toRecipients: (message.toRecipients || []).map((entry: any) => entry.emailAddress),
       receivedDateTime: message.receivedDateTime,
       isRead: Boolean(message.isRead),
       webLink: message.webLink,
@@ -179,7 +261,7 @@ export class GraphClient {
           }
         : null,
       attachments: Array.isArray(message.attachments)
-        ? message.attachments.map((attachment) => ({
+        ? message.attachments.map((attachment: any) => ({
             id: attachment.id,
             name: attachment.name,
             contentType: attachment.contentType,
@@ -190,19 +272,13 @@ export class GraphClient {
     };
   }
 
-  async replyToMessage({
-    messageId,
-    comment = '',
-    body,
-    contentType = 'Text',
-    replyAll = false
-  } = {}) {
+  async replyToMessage({ messageId, comment = '', body, contentType = 'Text', replyAll = false }: ReplyToMessageInput) {
     if (!messageId) {
       throw new Error('messageId is required to reply to a mail.');
     }
 
     const normalizedType = (contentType || 'Text').toUpperCase() === 'HTML' ? 'HTML' : 'Text';
-    const payload = {
+    const payload: Record<string, unknown> = {
       comment: comment ?? ''
     };
 
@@ -230,7 +306,7 @@ export class GraphClient {
     };
   }
 
-  async downloadAttachment({ messageId, attachmentId, targetPath }) {
+  async downloadAttachment({ messageId, attachmentId, targetPath }: DownloadAttachmentInput) {
     if (!messageId || !attachmentId || !targetPath) {
       throw new Error('messageId, attachmentId and targetPath are required for attachment download.');
     }
@@ -238,14 +314,12 @@ export class GraphClient {
     let resolvedTargetPath = targetPath;
     const baseDirectory = process.env.M365_ATTACHMENT_BASE_PATH;
     if (!path.isAbsolute(resolvedTargetPath)) {
-      if (baseDirectory) {
-        resolvedTargetPath = path.resolve(baseDirectory, resolvedTargetPath);
-      } else {
-        resolvedTargetPath = path.resolve(resolvedTargetPath);
-      }
+      resolvedTargetPath = baseDirectory
+        ? path.resolve(baseDirectory, resolvedTargetPath)
+        : path.resolve(resolvedTargetPath);
     }
 
-    const attachmentBinary = await this.request(
+    const attachmentBinary = await this.request<Buffer>(
       'GET',
       `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/$value`,
       {
@@ -275,12 +349,13 @@ export class GraphClient {
     };
   }
 
-  async listMessages({ folderId = 'inbox', startDateTime, endDateTime, maxResults = 20, onlyUnread = false } = {}) {
-    const safeTop = Number.isInteger(maxResults)
-      ? Math.min(Math.max(maxResults, 1), 200)
+  async listMessages({ folderId = 'inbox', startDateTime, endDateTime, maxResults = 20, onlyUnread = false }: ListMessagesInput = {}) {
+    const numericMax = typeof maxResults === 'number' ? maxResults : undefined;
+    const safeTop = Number.isInteger(numericMax ?? NaN)
+      ? Math.min(Math.max(numericMax as number, 1), 200)
       : 20;
 
-    const filterParts = [];
+    const filterParts: string[] = [];
     if (startDateTime) {
       filterParts.push(`receivedDateTime ge ${startDateTime}`);
     }
@@ -291,7 +366,7 @@ export class GraphClient {
       filterParts.push('isRead eq false');
     }
 
-    const query = {
+    const query: Record<string, string> = {
       '$orderby': 'receivedDateTime desc',
       '$top': String(safeTop),
       '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
@@ -302,7 +377,7 @@ export class GraphClient {
       query['$filter'] = filterParts.join(' and ');
     }
 
-    const data = await this.request(
+    const data = await this.request<any>(
       'GET',
       `/me/mailFolders/${encodeURIComponent(folderId)}/messages`,
       {
@@ -311,18 +386,18 @@ export class GraphClient {
       }
     );
 
-    return (data.value || []).map((message) => ({
+    return (data.value || []).map((message: any) => ({
       id: message.id,
       subject: message.subject,
       from: message.from?.emailAddress || null,
-      toRecipients: (message.toRecipients || []).map((entry) => entry.emailAddress),
+      toRecipients: (message.toRecipients || []).map((entry: any) => entry.emailAddress),
       receivedDateTime: message.receivedDateTime,
       isRead: Boolean(message.isRead),
       webLink: message.webLink,
       hasAttachments: Boolean(message.hasAttachments),
       bodyPreview: message.bodyPreview || null,
       attachments: Array.isArray(message.attachments)
-        ? message.attachments.map((attachment) => ({
+        ? message.attachments.map((attachment: any) => ({
             id: attachment.id,
             name: attachment.name,
             contentType: attachment.contentType,
@@ -333,11 +408,11 @@ export class GraphClient {
     }));
   }
 
-  async listUnreadMessages({ folderId = 'inbox', maxResults = 20 } = {}) {
+  async listUnreadMessages({ folderId = 'inbox', maxResults = 20 }: { folderId?: string; maxResults?: number } = {}) {
     return this.listMessages({ folderId, maxResults, onlyUnread: true });
   }
 
-  async markMessageRead(messageId, isRead = true) {
+  async markMessageRead(messageId: string, isRead = true) {
     if (!messageId) throw new Error('messageId is required');
     const body = { isRead: Boolean(isRead) };
     await this.request(
@@ -348,12 +423,12 @@ export class GraphClient {
     return { id: messageId, isRead: Boolean(isRead) };
   }
 
-  async listCalendarEvents({ startDateTime, endDateTime }) {
+  async listCalendarEvents({ startDateTime, endDateTime }: CalendarEventsInput) {
     if (!startDateTime || !endDateTime) {
       throw new Error('startDateTime and endDateTime are required to list events.');
     }
 
-    const data = await this.request(
+    const data = await this.request<any>(
       'GET',
       '/me/calendarView',
       {
@@ -366,7 +441,7 @@ export class GraphClient {
       }
     );
 
-    return (data.value || []).map((event) => ({
+    return (data.value || []).map((event: any) => ({
       id: event.id,
       subject: event.subject,
       start: event.start,
@@ -374,13 +449,6 @@ export class GraphClient {
       location: event.location,
       organizer: event.organizer
     }));
-  }
-
-  async close() {
-    this.closed = true;
-    this.tokenCache.clear();
-    // Give pending CLI processes a moment to settle; mainly relevant for unit tests.
-    await delay(10);
   }
 
   async createCalendarEvent({
@@ -397,7 +465,7 @@ export class GraphClient {
     allowNewTimeProposals,
     isOnlineMeeting,
     onlineMeetingProvider
-  } = {}) {
+  }: CreateCalendarEventInput): Promise<any> {
     if (!subject) {
       throw new Error('subject is required to create an event.');
     }
@@ -408,7 +476,7 @@ export class GraphClient {
     const normalizedContentType = (contentType || 'Text').toUpperCase() === 'HTML' ? 'HTML' : 'Text';
     const attendeeArray = Array.isArray(attendees) ? attendees : [];
 
-    const eventPayload = {
+    const eventPayload: Record<string, any> = {
       subject,
       start: {
         dateTime: startDateTime,
@@ -429,14 +497,15 @@ export class GraphClient {
               type: 'required'
             };
           }
-          const address = entry.address || entry.email || entry.mail || entry.emailAddress;
+          const record = entry as Record<string, any>;
+          const address = record.address || record.email || record.mail || record.emailAddress;
           if (!address) return null;
           return {
             emailAddress: {
               address,
-              name: entry.name || entry.displayName || undefined
+              name: record.name || record.displayName || undefined
             },
-            type: entry.type || 'required'
+            type: record.type || 'required'
           };
         })
         .filter(Boolean)
@@ -476,11 +545,18 @@ export class GraphClient {
       eventPayload.onlineMeetingProvider = 'teamsForBusiness';
     }
 
-    const response = await this.request('POST', '/me/events', {
+    const response = await this.request<any>('POST', '/me/events', {
       body: eventPayload,
       scopes: ['Calendars.ReadWrite']
     });
 
     return response;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.tokenCache.clear();
+    // Give pending CLI processes a moment to settle; mainly relevant for unit tests.
+    await delay(10);
   }
 }

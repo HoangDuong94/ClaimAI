@@ -1,17 +1,49 @@
-// @ts-nocheck
-// srv/m365-mcp/tools/mail.js
+// srv/m365-mcp/tools/mail.ts
 // Tool handlers for Microsoft 365 mail interactions.
 
 import { safeJson } from '../helpers/logging.js';
+import type { GraphClient } from '../graph-client.js';
 
-function getInfoLogger(logger) {
+type LoggerLike = Console | { info?: (...args: unknown[]) => void; log?: (...args: unknown[]) => void } | undefined;
+
+interface MailToolContext<TInput> {
+  input: TInput;
+  graphClient: GraphClient;
+  logger?: LoggerLike;
+}
+
+interface LatestMessageInput {
+  folderId?: string;
+}
+
+interface AttachmentDownloadInput {
+  messageId: string;
+  attachmentId: string;
+  targetPath: string;
+}
+
+interface MessagesListInput extends LatestMessageInput {
+  startDateTime?: string;
+  endDateTime?: string;
+  maxResults?: number;
+}
+
+interface MessageReplyInput {
+  messageId: string;
+  comment?: string;
+  body?: string;
+  contentType?: string;
+  replyAll?: boolean;
+}
+
+function getInfoLogger(logger: LoggerLike): (...args: unknown[]) => void {
   if (!logger) return () => {};
   if (typeof logger.info === 'function') return logger.info.bind(logger);
   if (typeof logger.log === 'function') return logger.log.bind(logger);
   return () => {};
 }
 
-export async function handleMailLatestMessage({ input, graphClient, logger }) {
+export async function handleMailLatestMessage({ input, graphClient, logger }: MailToolContext<LatestMessageInput>) {
   const info = getInfoLogger(logger);
   info('M365 mail.latestMessage.get invoked with input:', safeJson(input));
   const folderId = input.folderId || 'inbox';
@@ -28,7 +60,7 @@ export async function handleMailLatestMessage({ input, graphClient, logger }) {
   };
 }
 
-export async function handleMailAttachmentDownload({ input, graphClient, logger }) {
+export async function handleMailAttachmentDownload({ input, graphClient, logger }: MailToolContext<AttachmentDownloadInput>) {
   const info = getInfoLogger(logger);
   info('M365 mail.attachment.download invoked with input:', safeJson({
     ...input,
@@ -46,7 +78,7 @@ export async function handleMailAttachmentDownload({ input, graphClient, logger 
   };
 }
 
-export async function handleMailMessagesList({ input, graphClient, logger }) {
+export async function handleMailMessagesList({ input, graphClient, logger }: MailToolContext<MessagesListInput>) {
   const info = getInfoLogger(logger);
   info('M365 mail.messages.list invoked with input:', safeJson(input));
 
@@ -64,7 +96,7 @@ export async function handleMailMessagesList({ input, graphClient, logger }) {
   };
 }
 
-export async function handleMailMessageReply({ input, graphClient, logger }) {
+export async function handleMailMessageReply({ input, graphClient, logger }: MailToolContext<MessageReplyInput>) {
   const info = getInfoLogger(logger);
   const masked = {
     ...input,

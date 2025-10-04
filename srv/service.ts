@@ -1,14 +1,15 @@
-// @ts-nocheck
 // srv/ClaimsService.ts
 
 import cds from '@sap/cds';
 import express from 'express';
+import type { Request, Response } from 'express';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
 import { MemorySaver } from "@langchain/langgraph-checkpoint";
 import { DynamicStructuredTool } from "@langchain/core/tools";
-import { z } from "zod";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import * as z from "zod";
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -17,17 +18,78 @@ import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
 import MarkdownConverter from './utils/markdown-converter.js';
 
+type MCPClients = Awaited<ReturnType<typeof initAllMCPClients>>;
+type AgentExecutor = ReturnType<typeof createReactAgent>;
+type AttachmentDirPromise = Promise<unknown> | null;
+
+type SsePayload = { type: string; [key: string]: unknown };
+
+type ClaimsRequest = Request & {
+  user?: { id?: string; name?: string; tenant?: string } | null;
+  tenant?: string;
+  locale?: string;
+};
+
+interface GraphParticipant {
+  name?: string | null;
+  email?: string | null;
+  formatted?: string;
+}
+
+interface GraphAttachment {
+  id?: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+  contentBytes?: string;
+  [key: string]: unknown;
+}
+
+interface GraphMessage {
+  id: string;
+  subject?: string;
+  from?: Record<string, unknown>;
+  toRecipients?: Array<Record<string, unknown>>;
+  ccRecipients?: Array<Record<string, unknown>>;
+  bccRecipients?: Array<Record<string, unknown>>;
+  receivedDateTime?: string;
+  sentDateTime?: string;
+  isRead?: boolean;
+  webLink?: string;
+  importance?: string;
+  inferenceClassification?: string;
+  bodyPreview?: string;
+  body?: { contentType?: string; content?: string } | null;
+  hasAttachments?: boolean;
+  attachments?: GraphAttachment[];
+  [key: string]: unknown;
+}
+
+interface SummaryRecord {
+  summary: string;
+  category: string;
+  agentContext: Record<string, unknown> | null;
+}
+
+interface NotificationSession {
+  clients: Set<Response>;
+  buffer: GraphMessage[];
+  knownIds: Set<string>;
+  summaries: Map<string, SummaryRecord>;
+  timer: NodeJS.Timeout | null;
+}
+
 export default class ClaimsService extends cds.ApplicationService {
   async init() {
     await super.init();
-    let agentExecutor = null;
-    let mcpClients = null;
-    const app = cds.app;
+    let agentExecutor: AgentExecutor | null = null;
+    let mcpClients: MCPClients | null = null;
+    const app = cds.app as express.Application;
 
     // Lightweight in-memory notification hub (per-user)
-    const notificationSessions = new Map(); // userId -> { clients:Set<Response>, buffer:[], knownIds:Set<string>, timer:NodeJS.Timer|null }
+    const notificationSessions = new Map<string, NotificationSession>();
 
-    const getUserId = (req) => {
+    const getUserId = (req: ClaimsRequest): string => {
       try {
         return (req.user && (req.user.id || req.user.name)) || 'local';
       } catch {
@@ -35,11 +97,11 @@ export default class ClaimsService extends cds.ApplicationService {
       }
     };
 
-    const sseSend = (res, payload) => {
+    const sseSend = (res: Response, payload: SsePayload): void => {
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
 
-    const broadcastToUser = (userId, payload) => {
+    const broadcastToUser = (userId: string, payload: SsePayload): void => {
       const session = notificationSessions.get(userId);
       if (!session) return;
       for (const client of session.clients) {
@@ -47,17 +109,17 @@ export default class ClaimsService extends cds.ApplicationService {
       }
     };
 
-    const ensureSession = (userId) => {
+    const ensureSession = (userId: string): NotificationSession => {
       if (!notificationSessions.has(userId)) {
         notificationSessions.set(userId, {
-          clients: new Set(),
+          clients: new Set<Response>(),
           buffer: [],
-          knownIds: new Set(),
-          summaries: new Map(),
+          knownIds: new Set<string>(),
+          summaries: new Map<string, SummaryRecord>(),
           timer: null
         });
       }
-      return notificationSessions.get(userId);
+      return notificationSessions.get(userId)!;
     };
 
     const summarizer = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -78,34 +140,42 @@ export default class ClaimsService extends cds.ApplicationService {
       'application/vnd.ms-excel.sheet'
     ];
 
-    let attachmentDirReadyPromise = null;
+    let attachmentDirReadyPromise: AttachmentDirPromise = null;
 
-    const stripHtml = (html = '') => html
+    const stripHtml = (html = ''): string => html
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
       .replace(/<[^>]+>/g, ' ');
 
-    const normalizeWhitespace = (text = '') => text.replace(/\s+/g, ' ').trim();
+    const normalizeWhitespace = (text = ''): string => text.replace(/\s+/g, ' ').trim();
 
-    const truncate = (text = '', maxLength = SUMMARY_MAX_OUTPUT_CHARS) => {
+    const truncate = (text = '', maxLength = SUMMARY_MAX_OUTPUT_CHARS): string => {
       if (text.length <= maxLength) return text;
       return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
     };
 
-    const ensureAttachmentDir = async () => {
+    const ensureAttachmentDir = async (): Promise<void> => {
       if (!attachmentDirReadyPromise) {
         attachmentDirReadyPromise = mkdir(ATTACHMENTS_DIR, { recursive: true }).catch(() => {});
       }
       await attachmentDirReadyPromise;
     };
 
-    const sanitizeFileName = (name = '') => {
+    const sanitizeFileName = (name = ''): string => {
       const safe = name.replace(/[^a-z0-9_.-]+/gi, '_').replace(/_+/g, '_').trim();
       if (safe) return safe;
       return `attachment_${Date.now()}`;
     };
 
-    const isExcelAttachment = (attachment) => {
+    const getErrorMessage = (err: unknown): string => {
+      if (err && typeof err === 'object' && 'message' in err) {
+        const message = (err as { message?: unknown }).message;
+        return typeof message === 'string' ? message : String(message);
+      }
+      return String(err);
+    };
+
+    const isExcelAttachment = (attachment: GraphAttachment | null | undefined): boolean => {
       if (!attachment) return false;
       const name = (attachment.name || '').toLowerCase();
       const ext = path.extname(name);
@@ -114,8 +184,8 @@ export default class ClaimsService extends cds.ApplicationService {
       return EXCEL_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
     };
 
-    const parseMcpContent = (payload) => {
-      if (!payload) return null;
+    const parseMcpContent = (payload: unknown): unknown => {
+      if (payload === null || payload === undefined) return null;
       if (typeof payload === 'string') {
         try {
           return JSON.parse(payload);
@@ -131,68 +201,83 @@ export default class ClaimsService extends cds.ApplicationService {
         return parsed;
       }
       if (typeof payload === 'object') {
-        if (Array.isArray(payload.content)) {
-          const parts = payload.content
+        const record = payload as Record<string, unknown>;
+        if (Array.isArray(record.content)) {
+          const parts = record.content
             .map((part) => {
               if (!part) return null;
               if (typeof part === 'string') return parseMcpContent(part);
-              if (typeof part.text === 'string') return parseMcpContent(part.text);
-              if (part.json !== undefined) return part.json;
-              if (part.data !== undefined) return part.data;
+              if (typeof (part as Record<string, unknown>).text === 'string') {
+                return parseMcpContent((part as Record<string, unknown>).text);
+              }
+              const partRecord = part as Record<string, unknown>;
+              if (partRecord.json !== undefined) return partRecord.json;
+              if (partRecord.data !== undefined) return partRecord.data;
               return null;
             })
             .filter((entry) => entry !== null && entry !== undefined);
           if (parts.length === 1) return parts[0];
           return parts;
         }
-        return payload;
+        return record;
       }
       return payload;
     };
 
-    const callExcelTool = async (toolName, args) => {
+    const callExcelTool = async (toolName: string, args: Record<string, unknown>): Promise<unknown> => {
       if (!mcpClients?.excel) return null;
       try {
         const result = await mcpClients.excel.callTool({ name: toolName, arguments: args });
         return parseMcpContent(result) ?? null;
       } catch (error) {
-        console.warn(`Excel tool ${toolName} failed:`, error?.message || error);
+        console.warn(`Excel tool ${toolName} failed:`, getErrorMessage(error));
         return null;
       }
     };
 
-    const extractSheetNames = (describeResult) => {
+    const extractSheetNames = (describeResult: unknown): string[] => {
       if (!describeResult) return [];
       if (Array.isArray(describeResult)) {
         return describeResult
           .map((entry) => {
             if (!entry) return null;
             if (typeof entry === 'string') return entry;
-            if (entry.name) return entry.name;
-            if (entry.sheetName) return entry.sheetName;
+            const record = entry as Record<string, unknown>;
+            if (typeof record.name === 'string') return record.name;
+            if (typeof record.sheetName === 'string') return record.sheetName;
             return null;
           })
-          .filter(Boolean);
+          .filter((value): value is string => typeof value === 'string' && value.length > 0);
       }
-      if (Array.isArray(describeResult.sheets)) {
-        return describeResult.sheets
-          .map((sheet) => (sheet?.name || sheet?.sheetName || (typeof sheet === 'string' ? sheet : null)))
-          .filter(Boolean);
+      const record = describeResult as Record<string, unknown>;
+      const sheets = record.sheets;
+      if (Array.isArray(sheets)) {
+        return sheets
+          .map((sheet) => {
+            if (!sheet) return null;
+            if (typeof sheet === 'string') return sheet;
+            const record = sheet as Record<string, unknown>;
+            if (typeof record.name === 'string') return record.name;
+            if (typeof record.sheetName === 'string') return record.sheetName;
+            return null;
+          })
+          .filter((value): value is string => typeof value === 'string' && value.length > 0);
       }
-      if (Array.isArray(describeResult.sheetNames)) {
-        return describeResult.sheetNames.filter(Boolean);
+      const sheetNames = record.sheetNames;
+      if (Array.isArray(sheetNames)) {
+        return sheetNames.filter((name): name is string => typeof name === 'string' && Boolean(name));
       }
-      if (typeof describeResult.sheetName === 'string') {
-        return [describeResult.sheetName];
+      if (typeof record.sheetName === 'string') {
+        return [record.sheetName];
       }
       return [];
     };
 
-    const loadExcelAttachmentContext = async (filePath) => {
+    const loadExcelAttachmentContext = async (filePath: string): Promise<{ describe: unknown; sheets: unknown[] }> => {
       const describeResult = await callExcelTool('excel_describe_sheets', { fileAbsolutePath: filePath });
       const sheetNames = extractSheetNames(describeResult);
 
-      const sheets = [];
+      const sheets: unknown[] = [];
       for (const sheetName of sheetNames) {
         try {
           const sheetData = await callExcelTool('excel_read_sheet', {
@@ -201,25 +286,22 @@ export default class ClaimsService extends cds.ApplicationService {
           });
           sheets.push({ sheetName, data: sheetData });
         } catch (error) {
-          console.warn('Failed to read Excel sheet', sheetName, error?.message || error);
-          sheets.push({ sheetName, error: String(error?.message || error) });
+          console.warn('Failed to read Excel sheet', sheetName, getErrorMessage(error));
+          sheets.push({ sheetName, error: getErrorMessage(error) });
         }
       }
 
-      return {
-        describe: describeResult,
-        sheets
-      };
+      return { describe: describeResult, sheets };
     };
 
-    const ensureExcelAttachmentDetails = async (message, summaryEntry) => {
+    const ensureExcelAttachmentDetails = async (message: GraphMessage, summaryEntry: SummaryRecord | null | undefined): Promise<void> => {
       if (!summaryEntry?.agentContext) return;
-      const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+      const attachments = Array.isArray(message?.attachments) ? (message.attachments as GraphAttachment[]) : [];
       if (!attachments.length) return;
 
       await ensureAttachmentDir();
 
-      const enriched = [];
+      const enriched: Array<Record<string, unknown>> = [];
       for (const attachment of attachments) {
         const baseInfo = {
           id: attachment.id || null,
@@ -229,7 +311,7 @@ export default class ClaimsService extends cds.ApplicationService {
           isInline: Boolean(attachment.isInline)
         };
 
-        if (!isExcelAttachment(attachment) || attachment.isInline) {
+        if (!isExcelAttachment(attachment) || (attachment as any).isInline) {
           enriched.push(baseInfo);
           continue;
         }
@@ -258,22 +340,22 @@ export default class ClaimsService extends cds.ApplicationService {
             excel
           });
         } catch (error) {
-          console.warn('Failed to process Excel attachment:', attachment.name, error?.message || error);
-          enriched.push({ ...baseInfo, path: targetPath, error: String(error?.message || error) });
+          console.warn('Failed to process Excel attachment:', attachment.name, getErrorMessage(error));
+          enriched.push({ ...baseInfo, path: targetPath, error: getErrorMessage(error) });
         }
       }
 
-      summaryEntry.agentContext.attachments = enriched;
+      (summaryEntry.agentContext as Record<string, unknown>).attachments = enriched;
     };
 
-    const escapeHtml = (text = '') => text
+    const escapeHtml = (text = ''): string => text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
-    const sanitizeEmailHtml = (html = '') => {
+    const sanitizeEmailHtml = (html = ''): string => {
       if (!html) return '';
       let sanitized = html;
       sanitized = sanitized.replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -291,7 +373,7 @@ export default class ClaimsService extends cds.ApplicationService {
       return sanitized.trim();
     };
 
-    const getSanitizedBodyHtml = (message) => {
+    const getSanitizedBodyHtml = (message: GraphMessage): string | null => {
       if (!message?.body?.content) return null;
       const { content, contentType } = message.body;
       if (!content) return null;
@@ -302,7 +384,7 @@ export default class ClaimsService extends cds.ApplicationService {
       return `<pre>${escapeHtml(plain)}</pre>`;
     };
 
-    const extractMessageContent = (message) => {
+    const extractMessageContent = (message: GraphMessage | null | undefined): string => {
       if (!message) return '';
       const { body } = message;
       if (body?.content) {
@@ -315,29 +397,33 @@ export default class ClaimsService extends cds.ApplicationService {
       return '';
     };
 
-    const extractModelOutput = (result) => {
+    const extractModelOutput = (result: unknown): string => {
       if (!result) return '';
       if (typeof result === 'string') return result;
-      if (typeof result.content === 'string') return result.content;
-      if (Array.isArray(result.content)) {
-        return result.content
+      const record = result as Record<string, unknown>;
+      const content = record.content;
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        return content
           .map((part) => {
             if (typeof part === 'string') return part;
-            if (part?.text) return part.text;
+            const partRecord = part as Record<string, unknown>;
+            if (typeof partRecord?.text === 'string') return partRecord.text as string;
             return '';
           })
           .filter(Boolean)
           .join(' ');
       }
-      if (result.text) return result.text;
+      if (typeof record.text === 'string') return record.text as string;
       return '';
     };
 
-    const extractMailParticipant = (entry) => {
+    const extractMailParticipant = (entry: unknown): GraphParticipant | null => {
       if (!entry) return null;
-      const emailAddress = entry.emailAddress || entry;
-      const address = emailAddress?.address || emailAddress?.emailAddress || emailAddress?.value || entry.address || null;
-      const name = emailAddress?.name || emailAddress?.displayName || entry.name || entry.displayName || null;
+      const entryRecord = entry as Record<string, unknown>;
+      const emailAddress = (entryRecord.emailAddress || entryRecord) as Record<string, unknown>;
+      const address = (emailAddress.address || emailAddress.emailAddress || emailAddress.value || entryRecord.address || null) as string | null;
+      const name = (emailAddress.name || emailAddress.displayName || entryRecord.name || entryRecord.displayName || null) as string | null;
       const formatted = name && address ? `${name} <${address}>` : (name || address || null);
       if (!formatted) return null;
       return {
@@ -347,30 +433,30 @@ export default class ClaimsService extends cds.ApplicationService {
       };
     };
 
-    const formatMailAddress = (entry) => {
+    const formatMailAddress = (entry: unknown): string | null => {
       const participant = extractMailParticipant(entry);
       return participant?.formatted || null;
     };
 
-    const mapRecipients = (list = []) => {
+    const mapRecipients = (list: unknown): string[] => {
       if (!Array.isArray(list)) return [];
       return list
         .map(formatMailAddress)
-        .filter(Boolean);
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
     };
 
-    const mapRecipientDetails = (list = []) => {
+    const mapRecipientDetails = (list: unknown): Array<{ name: string | null; email: string | null }> => {
       if (!Array.isArray(list)) return [];
       return list
         .map(extractMailParticipant)
-        .filter(Boolean)
+        .filter((participant): participant is GraphParticipant => Boolean(participant))
         .map((participant) => ({
           name: participant.name || null,
           email: participant.email || null
         }));
     };
 
-    const buildAgentContext = (message, summary, category) => {
+    const buildAgentContext = (message: GraphMessage, summary: string, category: string): Record<string, unknown> => {
       const content = extractMessageContent(message) || '';
       const bodyPreview = normalizeWhitespace(message.bodyPreview || '').slice(0, SUMMARY_MAX_OUTPUT_CHARS);
       const sender = extractMailParticipant(message.from);
@@ -378,6 +464,7 @@ export default class ClaimsService extends cds.ApplicationService {
       const toDetails = mapRecipientDetails(message.toRecipients);
       const ccDetails = mapRecipientDetails(message.ccRecipients);
       const bodyHtml = getSanitizedBodyHtml(message);
+      const senderEmail = sender?.email ?? null;
       return {
         id: message.id,
         subject: message.subject || '',
@@ -406,24 +493,30 @@ export default class ClaimsService extends cds.ApplicationService {
         importance: message.importance || null,
         inferenceClassification: message.inferenceClassification || null,
         replyGuidelines: {
-          defaultEmailRecipients: sender?.email ? [sender.email] : [],
-          defaultCalendarAttendees: sender?.email ? [sender.email] : [],
+          defaultEmailRecipients: senderEmail ? [senderEmail] : [],
+          defaultCalendarAttendees: senderEmail ? [senderEmail] : [],
           instructions: 'Bei Antworten oder Kalendereinladungen den ursprünglichen Absender automatisch als Empfänger hinzufügen, es sei denn, der Nutzer nennt ausdrücklich weitere Teilnehmer.'
         },
         attachments: []
       };
     };
 
-    const finalizeSummaryResult = (message, summaryText, categoryText) => {
+    const finalizeSummaryResult = (
+      message: GraphMessage,
+      summaryText: string | null | undefined,
+      categoryText: string | null | undefined
+    ): SummaryRecord => {
       const fallback = message.bodyPreview?.trim() || SUMMARY_FALLBACK;
       const normalizedSummary = normalizeWhitespace(summaryText || fallback);
       const truncated = truncate(normalizedSummary || fallback, SUMMARY_MAX_OUTPUT_CHARS);
-      const normalizedCategory = SUMMARY_CATEGORIES.includes(categoryText) ? categoryText : DEFAULT_CATEGORY;
+      const normalizedCategory = typeof categoryText === 'string' && SUMMARY_CATEGORIES.includes(categoryText)
+        ? categoryText
+        : DEFAULT_CATEGORY;
       const agentContext = buildAgentContext(message, truncated || fallback, normalizedCategory);
       return { summary: truncated || fallback, category: normalizedCategory, agentContext };
     };
 
-    const generateSummaryForMessage = async (message) => {
+    const generateSummaryForMessage = async (message: GraphMessage): Promise<SummaryRecord> => {
       const content = extractMessageContent(message);
       const safeContent = content ? content.slice(0, SUMMARY_MAX_INPUT_CHARS) : '';
       const subject = message.subject || '';
@@ -476,32 +569,33 @@ ${safeContent}`;
 
         return finalizeSummaryResult(message, rawContent, DEFAULT_CATEGORY);
       } catch (error) {
-        console.warn('Failed to generate mail summary:', error?.message || error);
+        console.warn('Failed to generate mail summary:', getErrorMessage(error));
         return finalizeSummaryResult(message, message.bodyPreview, DEFAULT_CATEGORY);
       }
     };
 
-    const ensureSummaryForMessage = async (session, message) => {
+    const ensureSummaryForMessage = async (session: NotificationSession, message: GraphMessage): Promise<SummaryRecord> => {
       if (!message?.id) return finalizeSummaryResult(message, null, DEFAULT_CATEGORY);
-      if (session.summaries.has(message.id)) {
-        return session.summaries.get(message.id);
+      const cached = session.summaries.get(message.id);
+      if (cached) {
+        return cached;
       }
       const summary = await generateSummaryForMessage(message);
       try {
         await ensureExcelAttachmentDetails(message, summary);
       } catch (error) {
-        console.warn('ensureExcelAttachmentDetails failed:', error?.message || error);
+        console.warn('ensureExcelAttachmentDetails failed:', getErrorMessage(error));
       }
       session.summaries.set(message.id, summary);
       return summary;
     };
 
-    const ensureSummariesForMessages = async (session, messages = []) => {
+    const ensureSummariesForMessages = async (session: NotificationSession, messages: GraphMessage[] = []): Promise<void> => {
       for (const message of messages) {
         try {
           await ensureSummaryForMessage(session, message);
         } catch (error) {
-          console.warn('ensureSummaryForMessage failed:', error?.message || error);
+          console.warn('ensureSummaryForMessage failed:', getErrorMessage(error));
         }
       }
     };
@@ -513,23 +607,23 @@ ${safeContent}`;
     const POLL_INTERVAL_MS = 10_000;
     const MAX_INIT_UNREAD = 10;
 
-    const startPollerIfNeeded = async (userId) => {
+    const startPollerIfNeeded = async (userId: string): Promise<void> => {
       const session = ensureSession(userId);
       if (session.timer) return;
 
       // Initial fetch
       try {
-        const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+        const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD }) as GraphMessage[];
         session.buffer = initial;
         session.knownIds = new Set(initial.map(m => m.id));
         await ensureSummariesForMessages(session, session.buffer);
       } catch (e) {
-        console.warn('Initial unread fetch failed:', e?.message || e);
+        console.warn('Initial unread fetch failed:', getErrorMessage(e));
       }
 
       session.timer = setInterval(async () => {
         try {
-          const unread = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+          const unread = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD }) as GraphMessage[];
           const currentIds = new Set(unread.map(m => m.id));
 
           // New arrivals
@@ -554,12 +648,12 @@ ${safeContent}`;
             }
           }
         } catch (e) {
-          console.warn('Polling unread messages failed:', e?.message || e);
+          console.warn('Polling unread messages failed:', getErrorMessage(e));
         }
       }, POLL_INTERVAL_MS);
     };
 
-    const stopPollerIfOrphaned = (userId) => {
+    const stopPollerIfOrphaned = (userId: string): void => {
       const session = notificationSessions.get(userId);
       if (!session) return;
       if (session.clients.size === 0 && session.timer) {
@@ -568,7 +662,7 @@ ${safeContent}`;
       }
     };
 
-    const sanitizeMessage = (msg, session) => {
+    const sanitizeMessage = (msg: GraphMessage, session: NotificationSession): Record<string, unknown> => {
       const cacheEntry = session?.summaries?.get(msg.id) || null;
       return {
         id: msg.id,
@@ -585,7 +679,7 @@ ${safeContent}`;
     };
 
     // SSE stream endpoint
-    app.get('/service/claims/notifications/stream', async (req, res) => {
+    app.get('/service/claims/notifications/stream', async (req: ClaimsRequest, res: Response) => {
       const userId = getUserId(req);
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -600,7 +694,7 @@ ${safeContent}`;
       try {
         // Ensure we have fresh buffer for this connect
         if (!session.buffer.length) {
-          const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD });
+          const initial = await graph.listUnreadMessages({ maxResults: MAX_INIT_UNREAD }) as GraphMessage[];
           session.buffer = initial;
           session.knownIds = new Set(initial.map(m => m.id));
           await ensureSummariesForMessages(session, session.buffer);
@@ -609,7 +703,7 @@ ${safeContent}`;
         }
         sseSend(res, { type: 'init', items: session.buffer.map((msg) => sanitizeMessage(msg, session)) });
       } catch (e) {
-        sseSend(res, { type: 'error', message: String(e?.message || e) });
+        sseSend(res, { type: 'error', message: getErrorMessage(e) });
       }
 
       // Start poller if needed
@@ -625,7 +719,7 @@ ${safeContent}`;
     });
 
     // Mark-as-read endpoint (backend-only, no MCP tool)
-    app.post('/service/claims/notifications/markRead', express.json(), async (req, res) => {
+    app.post('/service/claims/notifications/markRead', express.json(), async (req: ClaimsRequest, res: Response) => {
       try {
         const userId = getUserId(req);
         const { id } = req.body || {};
@@ -640,39 +734,40 @@ ${safeContent}`;
         return res.json({ status: 'ok', id });
       } catch (e) {
         console.error('markRead failed:', e);
-        return res.status(500).json({ error: String(e?.message || e) });
+        return res.status(500).json({ error: getErrorMessage(e) });
       }
     });
 
-    const initializeAgent = async () => {
+    const initializeAgent = async (): Promise<AgentExecutor> => {
       if (agentExecutor) return agentExecutor;
 
       // +++ ERWEITERT: Log-Nachricht angepasst +++
       console.log("Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
 
       try {
-        mcpClients = await initAllMCPClients({ capService: this, logger: console });
+        const clients = await initAllMCPClients({ capService: this, logger: console });
+        mcpClients = clients;
 
         const [capTools, cdsModelTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
-          loadMcpTools('cap', mcpClients.cap),
-          loadMcpTools('search_model', mcpClients.cdsModel),
-          loadMcpTools("brave_web_search,brave_local_search", mcpClients.braveSearch),
-          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", mcpClients.filesystem),
-          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", mcpClients.excel),
-          loadMcpTools("get_current_time,convert_time", mcpClients.time)
-        ]);
+          loadMcpTools('cap', clients.cap),
+          loadMcpTools('search_model', clients.cdsModel),
+          loadMcpTools("brave_web_search,brave_local_search", clients.braveSearch),
+          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", clients.filesystem),
+          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", clients.excel),
+          loadMcpTools("get_current_time,convert_time", clients.time)
+        ]) as StructuredToolInterface[][];
 
         // PostgreSQL tools are temporarily disabled while the CAP MCP migration is in progress.
         // const postgresTools = await loadMcpTools("query", mcpClients.postgres);
-        const postgresTools = [];
+        const postgresTools: StructuredToolInterface[] = [];
 
         // Kombiniere alle Tools
         const allTools = [...postgresTools, ...cdsModelTools, ...capTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
 
         // Lade Microsoft 365 Tools dynamisch aus dem Manifest
-        if (mcpClients.m365) {
+        if (clients.m365) {
           console.log("Loading Microsoft 365 tools...");
-          const manifest = await mcpClients.m365.listTools();
+          const manifest = await clients.m365.listTools();
           const m365Tools = manifest.tools.map((toolDef) => {
             const schema = jsonSchemaToZod(toolDef.inputSchema, z);
             return new DynamicStructuredTool({
@@ -680,7 +775,7 @@ ${safeContent}`;
               description: toolDef.description,
               schema,
               func: async (input) => {
-                const result = await mcpClients.m365.callTool({ name: toolDef.name, arguments: input });
+                const result = await clients.m365!.callTool({ name: toolDef.name, arguments: input });
                 return typeof result === 'string' ? result : JSON.stringify(result);
               }
             });
@@ -730,7 +825,12 @@ ${safeContent}`;
       };
 
       try {
-        return await mcpClients.cap.runWithContext(capContext, async () => {
+        const clients = mcpClients;
+        if (!clients) {
+          throw new Error('MCP clients are not initialized.');
+        }
+
+        return await clients.cap.runWithContext(capContext, async () => {
           const systemMessage = {
             role: "system",
             content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
@@ -834,7 +934,7 @@ ${safeContent}`;
               }
             }
 
-            if (chunk.tools?.messages) {
+          if (chunk.tools?.messages) {
                const toolMessage = chunk.tools.messages[0];
                const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
                process.stdout.write(toolOutputStr);
@@ -850,7 +950,7 @@ ${safeContent}`;
 
       } catch (error) {
         console.error('💥 Error during agent execution:', error);
-        req.error(500, `Failed to process query: ${error.message}`);
+        req.error(500, `Failed to process query: ${getErrorMessage(error)}`);
       }
     });
 

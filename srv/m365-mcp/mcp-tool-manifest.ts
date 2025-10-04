@@ -1,14 +1,26 @@
-// @ts-nocheck
-// srv/m365-mcp/mcp-tool-manifest.js
+// srv/m365-mcp/mcp-tool-manifest.ts
 // Describes the tool surface exposed by the Microsoft 365 in-process MCP client.
+
+import type { JsonSchema } from './mcp-jsonschema.js';
 
 const manifestVersion = '0.1.0';
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+type ToolMetadata = {
+  scopes?: string[];
+};
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  metadata?: ToolMetadata;
 }
 
-export const toolDefinitions = [
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export const toolDefinitions: ToolDefinition[] = [
   {
     name: 'mail.latestMessage.get',
     description: 'Liest deterministisch die neueste Nachricht aus einem Mailordner und liefert Metadaten.',

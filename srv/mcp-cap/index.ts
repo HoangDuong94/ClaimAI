@@ -1,17 +1,74 @@
-// @ts-nocheck
 import cds from '@sap/cds';
+import type { EventContext, Service, User } from '@sap/cds';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { JsonSchema } from '../m365-mcp/mcp-jsonschema.js';
+
+type AnyRecord = Record<string, any>;
+
+type LoggerLike = Console | { debug?: (...args: unknown[]) => void; log?: (...args: unknown[]) => void };
+
+interface CapInitOptions {
+  service: Service;
+  logger?: LoggerLike;
+}
+
+interface ResolveDraftOptions {
+  allowVirtual?: string[];
+}
+
+interface ServiceEntity {
+  name: string;
+  elements?: Record<string, EntityElement>;
+  drafts?: ServiceEntity;
+}
+
+interface EntityElement {
+  type?: string;
+  virtual?: boolean;
+  _target?: ServiceEntity;
+}
+
+interface DraftKey {
+  ID?: string | number;
+  DraftAdministrativeData_DraftUUID?: string;
+  IsActiveEntity?: boolean;
+  [key: string]: unknown;
+}
+
+interface DraftCacheEntry {
+  keys: DraftKey;
+  data: AnyRecord;
+  timestamp: number;
+}
+
+interface DraftStore extends Map<string, DraftCacheEntry> {
+  lastKey?: string;
+}
+
+interface ContextOverrides {
+  event?: string;
+  user?: User;
+  tenant?: string;
+  locale?: string;
+  data?: AnyRecord;
+  query?: AnyRecord;
+  headers?: Record<string, string>;
+}
+
+type ServiceRequest = InstanceType<typeof cds.Request>;
+
+type RequestContextState = ContextOverrides & { request?: ServiceRequest };
 
 const MAX_ROWS = 200;
 
-const DEFAULT_DRAFT_DATA = {
+const DEFAULT_DRAFT_DATA: AnyRecord = {
   ort: 'Luzern',
   datum: null
 };
 
 // Lightweight in-memory cache that remembers the most recent drafts per entity.
-const draftContext = new Map();
-const requestContextStorage = new AsyncLocalStorage();
+const draftContext = new Map<string, DraftStore>();
+const requestContextStorage = new AsyncLocalStorage<RequestContextState>();
 
 const DEFAULT_DRAFT_ADMIN_COLUMNS = [
   'DraftUUID',
@@ -22,7 +79,7 @@ const DEFAULT_DRAFT_ADMIN_COLUMNS = [
   'LastChangedAt'
 ];
 
-const toolDefinitions = [
+const toolDefinitions: Array<{ name: string; description: string; inputSchema: JsonSchema; metadata?: AnyRecord }> = [
   {
     name: 'cap.sql.execute',
     description: 'Execute a SQL statement through the CAP database connection. Defaults to read-only unless allowWrite is true.',
@@ -177,7 +234,7 @@ const toolDefinitions = [
   }
 ];
 
-export async function initCapMCPClient(options = {}) {
+export async function initCapMCPClient(options: CapInitOptions) {
   const { service, logger = console } = options;
   if (!service) {
     throw new Error('CAP MCP client requires a service instance. Pass { service } when initializing.');
@@ -187,48 +244,54 @@ export async function initCapMCPClient(options = {}) {
   log.debug?.('Initializing CAP MCP in-process client...');
 
   const db = await cds.connect.to('db');
-  const privilegedUser = cds.User?.Privileged
-    ? new cds.User.Privileged('mcp-cap')
-    : { id: 'mcp-cap', roles: ['mcp.cap'], attr: {} };
+  const privilegedUser: User = cds.User?.Privileged
+    ? new (cds.User.Privileged as unknown as new (...args: any[]) => User)('mcp-cap')
+    : ({ id: 'mcp-cap', roles: ['mcp.cap'], attr: {} } as User);
 
-  function resolveEntity(entityName) {
-    if (!entityName || typeof entityName !== 'string') {
+  function resolveEntity(entityName: string): ServiceEntity {
+    if (!entityName) {
       throw new Error('Entity name must be a non-empty string');
     }
-    const entities = service.entities || {};
+    const entities = (service.entities ?? {}) as Record<string, ServiceEntity>;
     const direct = entities[entityName];
-    if (direct) return direct;
-    const shortName = entityName.includes('.') ? entityName.split('.').pop() : null;
-    if (shortName && entities[shortName]) return entities[shortName];
+    if (direct) {
+      return direct;
+    }
+    const shortName = entityName.includes('.') ? entityName.split('.').pop() : undefined;
+    if (shortName && entities[shortName]) {
+      return entities[shortName];
+    }
     const available = Object.keys(entities).join(', ') || '<none>';
     throw new Error(`Unknown entity "${entityName}". Available entities: ${available}`);
   }
 
-  function getDraftStore(entityName) {
+  function getDraftStore(entityName: string): DraftStore {
     const key = entityName;
     if (!draftContext.has(key)) {
-      draftContext.set(key, new Map());
+      draftContext.set(key, new Map() as DraftStore);
     }
-    return draftContext.get(key);
+    return draftContext.get(key)!;
   }
 
-  function rememberDraft(entityRef, draftInstance) {
+  function rememberDraft(entityRef: ServiceEntity, draftInstance: AnyRecord) {
     const draftUUID = draftInstance?.DraftAdministrativeData_DraftUUID || draftInstance?.draftAdministrativeData_DraftUUID;
     const id = draftInstance?.ID;
-    if (!draftUUID || !id) return;
+    if (!draftUUID || id === undefined || id === null) return;
     const store = getDraftStore(entityRef.name);
-    const keys = { ID: id, DraftAdministrativeData_DraftUUID: draftUUID, IsActiveEntity: false };
-    store.set(id, { keys, data: draftInstance, timestamp: Date.now() });
-    store.lastKey = id;
+    const key = String(id);
+    const keys: DraftKey = { ID: id, DraftAdministrativeData_DraftUUID: draftUUID, IsActiveEntity: false };
+    store.set(key, { keys, data: draftInstance, timestamp: Date.now() });
+    store.lastKey = key;
   }
 
-  function forgetDraft(entityRef, keys) {
+  function forgetDraft(entityRef: ServiceEntity, keys: AnyRecord) {
     const store = getDraftStore(entityRef.name);
     const id = keys?.ID;
-    if (id && store.has(id)) {
-      store.delete(id);
+    const key = id === undefined || id === null ? undefined : String(id);
+    if (key && store.has(key)) {
+      store.delete(key);
     }
-    if (store.lastKey === id) {
+    if (store.lastKey === key) {
       store.lastKey = undefined;
     }
     if (store.size === 0) {
@@ -236,7 +299,7 @@ export async function initCapMCPClient(options = {}) {
     }
   }
 
-  function hasProvidedDraftKeys(input = {}) {
+  function hasProvidedDraftKeys(input: AnyRecord = {}) {
     if (!input || typeof input !== 'object') return false;
     if (input.keys && Object.keys(input.keys).length) return true;
     if (input.ID) return true;
@@ -244,11 +307,11 @@ export async function initCapMCPClient(options = {}) {
     return false;
   }
 
-  function isMissingDraftError(error) {
-    return error?.message?.includes("Kein passender Draft gefunden");
+  function isMissingDraftError(error: unknown) {
+    return (error as { message?: string })?.message?.includes('Kein passender Draft gefunden');
   }
 
-  function resolveDraftKeys(entityRef, draftEntity, providedKeys = {}, options = {}) {
+  function resolveDraftKeys(entityRef: ServiceEntity, draftEntity: ServiceEntity, providedKeys: AnyRecord = {}, options: AnyRecord = {}) {
     const store = getDraftStore(entityRef.name);
 
     if (providedKeys && Object.keys(providedKeys).length) {
@@ -260,7 +323,7 @@ export async function initCapMCPClient(options = {}) {
         return keys;
       }
       if (keys.ID) {
-        const cached = store.get(keys.ID);
+        const cached = store.get(String(keys.ID));
         if (cached) {
           return { ...cached.keys, ...keys };
         }
@@ -292,7 +355,7 @@ export async function initCapMCPClient(options = {}) {
     }
 
     if (ID) {
-      const cached = store.get(ID);
+      const cached = store.get(String(ID));
       if (cached) {
         return cached.keys;
       }
@@ -307,11 +370,11 @@ export async function initCapMCPClient(options = {}) {
     throw new Error(`Kein passender Draft gefunden. Bitte zuerst 'cap.draft.new' ausführen oder Keys (ID + DraftUUID) angeben.`);
   }
 
-  function extractKeysAndData(entityRef, draftEntity, input = {}) {
+  function extractKeysAndData(entityRef: any, draftEntity: any, input: AnyRecord = {}) {
     const { keys: rawKeys, data: rawData, ...rest } = input;
     if (rest.entity !== undefined) delete rest.entity;
     const recognizedKeys = rawKeys ? { ...rawKeys } : {};
-    const convenienceKeys = {};
+    const convenienceKeys: AnyRecord = {};
 
     if (rest.ID !== undefined) {
       convenienceKeys.ID = rest.ID;
@@ -335,7 +398,7 @@ export async function initCapMCPClient(options = {}) {
     return { keys: resolvedKeys, data };
   }
 
-  function ensureDraftEntity(entity, originalName) {
+  function ensureDraftEntity(entity: any, originalName?: string) {
     if (!entity?.drafts) {
       const name = originalName || entity?.name || '<unknown>';
       throw new Error(`Entity "${name}" is not draft-enabled.`);
@@ -343,28 +406,30 @@ export async function initCapMCPClient(options = {}) {
     return entity.drafts;
   }
 
-  async function withServiceContext(fn, overrides = {}) {
-    const previous = cds.context;
-    const ambient = requestContextStorage.getStore() || {};
-    const effectiveUser = overrides.user || ambient.user || previous?.user || privilegedUser;
-    const effectiveTenant = overrides.tenant || ambient.tenant || previous?.tenant || effectiveUser?.tenant;
-    const effectiveLocale = overrides.locale || ambient.locale || previous?.locale;
+  async function withServiceContext<T>(fn: (req: ServiceRequest) => Promise<T> | T, overrides: ContextOverrides = {}): Promise<T> {
+    const previous = cds.context as EventContext | undefined;
+    const ambient = requestContextStorage.getStore() ?? {};
+    const effectiveUser = overrides.user ?? ambient.user ?? previous?.user ?? privilegedUser;
+    const effectiveTenant = overrides.tenant ?? ambient.tenant ?? previous?.tenant ?? (effectiveUser as User & { tenant?: string })?.tenant;
+    const effectiveLocale = overrides.locale ?? ambient.locale ?? previous?.locale;
 
-    const context = new cds.Request({
-      event: overrides.event || 'READ',
+    const request = new cds.Request();
+    Object.assign(request, {
+      event: overrides.event ?? 'READ',
       user: effectiveUser,
       tenant: effectiveTenant,
       locale: effectiveLocale
     });
+
     try {
-      cds.context = context;
-      return await fn(context);
+      cds.context = request;
+      return await fn(request);
     } finally {
       cds.context = previous;
     }
   }
 
-  function sanitizeDraftKeys(entity, keyValues = {}, options = {}) {
+  function sanitizeDraftKeys(entity: any, keyValues: AnyRecord = {}, options: ResolveDraftOptions & { dropKeys?: string[] } = {}) {
     if (!keyValues || typeof keyValues !== 'object') {
       return {};
     }
@@ -373,7 +438,7 @@ export async function initCapMCPClient(options = {}) {
     if (!elements) {
       return { ...keyValues };
     }
-    const cleaned = {};
+    const cleaned: AnyRecord = {};
     for (const [key, value] of Object.entries(keyValues)) {
       if (dropKeys.includes(key)) continue;
       const element = elements[key];
@@ -384,8 +449,8 @@ export async function initCapMCPClient(options = {}) {
     return cleaned;
   }
 
-  async function autoResolveDraftKeys(entityRef, draftEntity) {
-    const columns = [];
+  async function autoResolveDraftKeys(entityRef: any, draftEntity: any): Promise<AnyRecord | null> {
+    const columns: AnyRecord[] = [];
 
     if (draftEntity.elements?.ID) {
       columns.push({ ref: ['ID'] });
@@ -409,7 +474,7 @@ export async function initCapMCPClient(options = {}) {
 
     for (const [field, sort] of orderCandidates) {
       if (draftEntity.elements?.[field]) {
-        query.orderBy({ ref: [field], sort });
+        query.orderBy(field, sort as 'asc' | 'desc');
         break;
       }
     }
@@ -419,7 +484,7 @@ export async function initCapMCPClient(options = {}) {
       return null;
     }
 
-    const autoKeys = {};
+    const autoKeys: DraftKey = {};
     if (latest.ID !== undefined) {
       autoKeys.ID = latest.ID;
     }
@@ -441,7 +506,7 @@ export async function initCapMCPClient(options = {}) {
     return autoKeys;
   }
 
-  function toResultPayload(result, metadata = {}) {
+  function toResultPayload(result: any, metadata: AnyRecord = {}) {
     if (Array.isArray(result)) {
       return { rows: result, rowCount: result.length, metadata };
     }
@@ -454,7 +519,7 @@ export async function initCapMCPClient(options = {}) {
     return { result, metadata };
   }
 
-  async function handleSqlExecute(input = {}) {
+  async function handleSqlExecute(input: AnyRecord = {}) {
     const { sql, params, allowWrite = false } = input;
     if (typeof sql !== 'string' || !sql.trim()) {
       throw new Error('The "sql" property must be a non-empty string.');
@@ -472,7 +537,7 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(result, { command: firstWord || 'RAW' });
   }
 
-  async function handleCqnRead(input = {}) {
+  async function handleCqnRead(input: AnyRecord = {}) {
     const { entity, columns, where, limit, offset, draft = 'merged' } = input;
     const entityRef = resolveEntity(entity);
     const { SELECT } = cds.ql;
@@ -506,23 +571,23 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(result, { entity: entityRef.name, draft });
   }
 
-  async function handleDraftNew(input = {}) {
+  async function handleDraftNew(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
     // Apply domain defaults only for elements that actually exist
-    const basePayload = {};
+    const basePayload: AnyRecord = {};
     if (draftEntity?.elements) {
       for (const [k, v] of Object.entries(DEFAULT_DRAFT_DATA)) {
         if (k in draftEntity.elements) basePayload[k] = v;
       }
     }
-    const rawData = input.data && typeof input.data === 'object' ? { ...input.data } : {};
-    const extraFields = { ...input };
+    const rawData: AnyRecord = input.data && typeof input.data === 'object' ? { ...input.data } : {};
+    const extraFields: AnyRecord = { ...input };
     delete extraFields.entity;
     delete extraFields.data;
     const payload = { ...basePayload, ...extraFields, ...rawData };
-    const result = await withServiceContext(async () => service.new(draftEntity, payload), { event: 'NEW' });
+    const result = await withServiceContext(async () => (service as any).new(draftEntity, payload), { event: 'NEW' });
 
     const instance = Array.isArray(result) ? result[0] : result;
     rememberDraft(entityRef, instance);
@@ -530,7 +595,7 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(result, { entity: entityRef.name, action: 'NEW' });
   }
 
-  async function handleDraftEdit(input = {}) {
+  async function handleDraftEdit(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
 
@@ -543,13 +608,13 @@ export async function initCapMCPClient(options = {}) {
       keys = { ID: id };
     }
 
-    const result = await withServiceContext(async () => service.edit(entityRef, keys), { event: 'EDIT' });
+    const result = await withServiceContext(async () => (service as any).edit(entityRef, keys), { event: 'EDIT' });
     const instance = Array.isArray(result) ? result[0] : result;
     rememberDraft(entityRef, instance);
     return toResultPayload(result, { entity: entityRef.name, action: 'EDIT' });
   }
 
-  async function handleDraftPatch(input = {}) {
+  async function handleDraftPatch(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
@@ -574,7 +639,7 @@ export async function initCapMCPClient(options = {}) {
     }
 
     const affected = await withServiceContext(
-      async () => service.update(draftEntity).set(payload).where(mutationKeys),
+      async () => (service as any).update(draftEntity).set(payload).where(mutationKeys),
       { event: 'UPDATE' }
     );
 
@@ -603,7 +668,7 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(changed, { entity: entityRef.name, action: 'PATCH' });
   }
 
-  async function handleDraftSave(input = {}) {
+  async function handleDraftSave(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
@@ -611,12 +676,12 @@ export async function initCapMCPClient(options = {}) {
     const { keys } = extractKeysAndData(entityRef, draftEntity, input);
     const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
 
-    const result = await withServiceContext(async () => service.save(draftEntity, mutationKeys), { event: 'SAVE' });
+    const result = await withServiceContext(async () => (service as any).save(draftEntity, mutationKeys), { event: 'SAVE' });
     forgetDraft(entityRef, mutationKeys);
     return toResultPayload(result, { entity: entityRef.name, action: 'SAVE' });
   }
 
-  async function handleDraftCancel(input = {}) {
+  async function handleDraftCancel(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
@@ -624,12 +689,12 @@ export async function initCapMCPClient(options = {}) {
     const { keys } = extractKeysAndData(entityRef, draftEntity, input);
     const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { dropKeys: ['IsActiveEntity'] });
 
-    const result = await withServiceContext(async () => service.discard(draftEntity, mutationKeys), { event: 'CANCEL' });
+    const result = await withServiceContext(async () => (service as any).discard(draftEntity, mutationKeys), { event: 'CANCEL' });
     forgetDraft(entityRef, mutationKeys);
     return toResultPayload(result, { entity: entityRef.name, action: 'CANCEL' });
   }
 
-  async function handleDraftGetAdminData(input = {}) {
+  async function handleDraftGetAdminData(input: AnyRecord = {}) {
     const { entity, columns } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
@@ -676,7 +741,7 @@ export async function initCapMCPClient(options = {}) {
       ? [{ ref: ['*'] }]
       : expandColumns.map((col) => ({ ref: [col] }));
 
-    const selectColumns = [
+    const selectColumns: AnyRecord[] = [
       { ref: ['DraftAdministrativeData'], expand }
     ];
 
@@ -711,7 +776,7 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(adminData, { entity: entityRef.name, action: 'DRAFT_ADMIN' });
   }
 
-  async function handleDraftAddChild(input = {}) {
+  async function handleDraftAddChild(input: AnyRecord = {}) {
     const { entity, child } = input;
     if (!entity || typeof entity !== 'string') {
       throw new Error('Bitte das Draft-Root "entity" angeben.');
@@ -746,8 +811,8 @@ export async function initCapMCPClient(options = {}) {
       throw new Error(`Composition "${child}" besitzt kein aufgelöstes Ziel.`);
     }
 
-    const providedKeys = input.keys ? { ...input.keys } : {};
-    const convenienceKeys = {};
+    const providedKeys: DraftKey = input.keys ? { ...input.keys } : {};
+    const convenienceKeys: DraftKey = {};
     if (input.ID) convenienceKeys.ID = input.ID;
     if (input.DraftAdministrativeData_DraftUUID) {
       convenienceKeys.DraftAdministrativeData_DraftUUID = input.DraftAdministrativeData_DraftUUID;
@@ -794,7 +859,8 @@ export async function initCapMCPClient(options = {}) {
       const normalized = { ...entry };
 
       if (normalized.ID === undefined && childTarget.elements?.ID?.type === 'cds.UUID') {
-        normalized.ID = cds.utils?.uuid ? cds.utils.uuid() : cds.utils.guid();
+        const utils = cds.utils as any;
+        normalized.ID = utils?.uuid ? utils.uuid() : utils.guid();
       }
       if (childTarget.elements?.IsActiveEntity && normalized.IsActiveEntity === undefined) {
         normalized.IsActiveEntity = false;
@@ -831,7 +897,7 @@ export async function initCapMCPClient(options = {}) {
     }
 
     const result = await withServiceContext(
-      async () => service.update(draftEntity).set(payload).where(mutationKeys),
+      async () => (service as any).update(draftEntity).set(payload).where(mutationKeys),
       { event: 'UPDATE' }
     );
 
@@ -850,7 +916,7 @@ export async function initCapMCPClient(options = {}) {
     return toResultPayload(result, { entity: entityRef.name, action: 'ADD_CHILD', child });
   }
 
-  const handlers = {
+  const handlers: Record<string, (input: AnyRecord) => Promise<any> | any> = {
     'cap.sql.execute': handleSqlExecute,
     'cap.cqn.read': handleCqnRead,
     'cap.draft.new': handleDraftNew,
@@ -863,10 +929,13 @@ export async function initCapMCPClient(options = {}) {
   };
 
   async function listTools() {
-    return { tools: toolDefinitions }; 
+    return { tools: toolDefinitions };
   }
 
-  async function callTool({ name, arguments: args = {} } = {}, options = {}) {
+  async function callTool(
+    { name, arguments: args = {} }: { name?: string; arguments?: AnyRecord } = {},
+    options: AnyRecord = {}
+  ) {
     if (!name) {
       throw new Error('Tool name is required');
     }
@@ -905,7 +974,7 @@ export async function initCapMCPClient(options = {}) {
     log.debug?.('Closing CAP MCP in-process client');
   }
 
-  function runWithContext(context, fn) {
+  function runWithContext(context: AnyRecord, fn: (...args: unknown[]) => unknown) {
     if (typeof fn !== 'function') {
       throw new Error('runWithContext expects a callback function');
     }

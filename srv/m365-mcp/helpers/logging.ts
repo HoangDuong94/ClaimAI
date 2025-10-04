@@ -1,8 +1,7 @@
-// @ts-nocheck
-// srv/m365-mcp/helpers/logging.js
+// srv/m365-mcp/helpers/logging.ts
 // Provides defensive JSON serialization for logging without crashing on circular structures.
 
-export function safeJson(value, max = 4000) {
+export function safeJson(value: unknown, max = 4000): string {
   try {
     const serialized = typeof value === 'string' ? value : JSON.stringify(value);
     const output = typeof serialized === 'string' ? serialized : String(serialized);

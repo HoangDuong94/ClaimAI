@@ -1,135 +1,212 @@
-// @ts-nocheck
-// srv/lib/mcp-client.js
+// srv/lib/mcp-client.ts
 
 import cds from '@sap/cds';
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { initM365InProcessClient as createInProcessM365Client } from '../m365-mcp/index.js';
 import { initCapMCPClient as createInProcessCapClient } from '../mcp-cap/index.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+interface CapClientInitOptions {
+  capService: any;
+  logger?: Console;
+}
 
-const dbConfig = cds.env.requires.db;
-let postgresClient = null;
-let braveSearchClient = null;
-let playwrightClient = null;
-let filesystemClient = null;
-let excelClient = null; // +++ NEU: Excel Client Variable
-let m365Client = null;
-let timeClient = null;
-let capClient = null;
-let cdsModelClient = null;
+interface InitAllClientOptions {
+  capService?: any;
+  logger?: Console;
+}
 
-function getPostgresUri() {
-  const creds = dbConfig.credentials;
+interface InitAllClientsResult {
+  cap: any;
+  cdsModel: Client;
+  postgres: Client;
+  braveSearch: Client;
+  playwright: null;
+  filesystem: Client;
+  excel: Client;
+  m365: Awaited<ReturnType<typeof createInProcessM365Client>>;
+  time: Client;
+}
+
+interface DbCredentials {
+  user: string;
+  password: string;
+  host: string;
+  port: number | string;
+  database: string;
+}
+
+interface RequiresDbConfig {
+  credentials?: Partial<DbCredentials> | null;
+}
+
+function normalizeDbCredentials(candidate: Partial<DbCredentials> | null | undefined): DbCredentials | null {
+  if (!candidate) return null;
+  const { user, password, host, database } = candidate;
+  const port = candidate.port ?? 5433;
+  if (!user || !password || !host || !database) {
+    return null;
+  }
+  return {
+    user,
+    password,
+    host,
+    port,
+    database
+  };
+}
+
+function resolveDbCredentials(): DbCredentials {
+  const requiresDb = cds.env?.requires?.db as RequiresDbConfig | undefined;
+  const credentialsFromConfig = normalizeDbCredentials(requiresDb?.credentials ?? null);
+  if (credentialsFromConfig) {
+    return credentialsFromConfig;
+  }
+
+  const envCredentials = normalizeDbCredentials({
+    user: process.env.POSTGRES_USER ?? process.env.CLAIMAI_POSTGRES_USER ?? undefined,
+    password: process.env.POSTGRES_PASSWORD ?? process.env.CLAIMAI_POSTGRES_PASSWORD ?? undefined,
+    host: process.env.POSTGRES_HOST ?? process.env.CLAIMAI_POSTGRES_HOST ?? 'localhost',
+    port: process.env.POSTGRES_PORT ?? process.env.CLAIMAI_POSTGRES_PORT ?? 5433,
+    database: process.env.POSTGRES_DB ?? process.env.CLAIMAI_POSTGRES_DB ?? undefined
+  });
+
+  if (envCredentials) {
+    return envCredentials;
+  }
+
+  throw new Error('Unable to resolve PostgreSQL credentials from cds.env or process.env.');
+}
+
+function sanitizeEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      sanitized[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (typeof value === 'string') {
+      sanitized[key] = value;
+    } else if (value === undefined) {
+      delete sanitized[key];
+    }
+  }
+  return sanitized;
+}
+
+const dbCredentials = resolveDbCredentials();
+
+let postgresClient: Client | null = null;
+let braveSearchClient: Client | null = null;
+let playwrightClient: null = null;
+let filesystemClient: Client | null = null;
+let excelClient: Client | null = null;
+let m365Client: Awaited<ReturnType<typeof createInProcessM365Client>> | null = null;
+let timeClient: Client | null = null;
+let capClient: any | null = null;
+let cdsModelClient: Client | null = null;
+
+function getPostgresUri(): string {
+  const creds = dbCredentials;
   return `postgresql://${creds.user}:${creds.password}@${creds.host}:${creds.port}/${creds.database}`;
 }
 
-export async function initPostgresMCPClient() {
+export async function initPostgresMCPClient(): Promise<Client> {
   if (postgresClient) return postgresClient;
-  console.log(`Initializing PostgreSQL MCP client...`);
+  console.log('Initializing PostgreSQL MCP client...');
   const postgresUri = getPostgresUri();
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["-y", "mcp-postgres-full-access", postgresUri],
+    command: 'npx',
+    args: ['-y', 'mcp-postgres-full-access', postgresUri]
   });
-  postgresClient = new Client({ name: "postgres-client", version: "1.0.0" }, {});
+  postgresClient = new Client({ name: 'postgres-client', version: '1.0.0' }, {});
   await postgresClient.connect(transport);
-  console.log("✅ PostgreSQL MCP Client initialized successfully.");
+  console.log('✅ PostgreSQL MCP Client initialized successfully.');
   return postgresClient;
 }
 
-export async function initBraveSearchMCPClient() {
+export async function initBraveSearchMCPClient(): Promise<Client> {
   if (braveSearchClient) return braveSearchClient;
-  const braveApiKey = process.env.BRAVE_API_KEY || cds.env.BRAVE_API_KEY;
-  if (!braveApiKey) throw new Error("BRAVE_API_KEY is required but not provided");
-  console.log(`Initializing Brave Search MCP client...`);
+  const braveApiKey = process.env.BRAVE_API_KEY || (cds.env as any).BRAVE_API_KEY;
+  if (!braveApiKey) throw new Error('BRAVE_API_KEY is required but not provided');
+  console.log('Initializing Brave Search MCP client...');
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-brave-search"],
-    env: { ...process.env, BRAVE_API_KEY: braveApiKey }
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-brave-search'],
+    env: sanitizeEnv({ BRAVE_API_KEY: braveApiKey })
   });
-  braveSearchClient = new Client({ name: "brave-search-client", version: "1.0.0" }, {});
+  braveSearchClient = new Client({ name: 'brave-search-client', version: '1.0.0' }, {});
   await braveSearchClient.connect(transport);
-  console.log("✅ Brave Search MCP Client initialized successfully.");
+  console.log('✅ Brave Search MCP Client initialized successfully.');
   return braveSearchClient;
 }
 
-export async function initPlaywrightMCPClient() {
+export async function initPlaywrightMCPClient(): Promise<null> {
   console.log('⏸️ Playwright MCP client initialization is temporarily disabled.');
   return null;
 }
 
-export async function initFilesystemMCPClient() {
+export async function initFilesystemMCPClient(): Promise<Client> {
   if (filesystemClient) return filesystemClient;
-  console.log(`Initializing Filesystem MCP client...`);
+  console.log('Initializing Filesystem MCP client...');
   const allowedDirectory = process.env.M365_ATTACHMENT_BASE_PATH || process.cwd();
   console.log(`Filesystem access is sandboxed to: ${allowedDirectory}`);
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", allowedDirectory]
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem', allowedDirectory]
   });
-  filesystemClient = new Client({ name: "filesystem-client", version: "1.0.0" }, {});
+  filesystemClient = new Client({ name: 'filesystem-client', version: '1.0.0' }, {});
   await filesystemClient.connect(transport);
-  console.log("✅ Filesystem MCP Client initialized successfully.");
+  console.log('✅ Filesystem MCP Client initialized successfully.');
   return filesystemClient;
 }
 
-// +++ NEUE FUNKTION: Excel MCP Client initialisieren +++
-export async function initExcelMCPClient() {
+export async function initExcelMCPClient(): Promise<Client> {
   if (excelClient) return excelClient;
 
-  console.log(`Initializing Excel MCP client...`);
-
-  // Konfiguration basierend auf der README des Excel MCP Servers.
-  // Diese Konfiguration ist für Windows. Für andere Plattformen (macOS/Linux)
-  // wäre der Befehl: { command: "npx", args: ["--yes", "@negokaz/excel-mcp-server"] }
+  console.log('Initializing Excel MCP client...');
   const transport = new StdioClientTransport({
-    command: "cmd",
-    args: ["/c", "npx", "--yes", "@negokaz/excel-mcp-server"],
-    env: {
-      ...process.env,
-      EXCEL_MCP_PAGING_CELLS_LIMIT: "4000" // Wie im Beispiel der README
-    }
+    command: process.platform === 'win32' ? 'cmd' : 'npx',
+    args: process.platform === 'win32'
+      ? ['/c', 'npx', '--yes', '@negokaz/excel-mcp-server']
+      : ['--yes', '@negokaz/excel-mcp-server'],
+    env: sanitizeEnv({ EXCEL_MCP_PAGING_CELLS_LIMIT: '4000' })
   });
 
-  excelClient = new Client({ name: "excel-client", version: "1.0.0" }, {});
+  excelClient = new Client({ name: 'excel-client', version: '1.0.0' }, {});
   await excelClient.connect(transport);
-  console.log("✅ Excel MCP Client initialized successfully.");
+  console.log('✅ Excel MCP Client initialized successfully.');
   return excelClient;
 }
 
-
-export async function initM365Client() {
+export async function initM365Client(): Promise<Awaited<ReturnType<typeof createInProcessM365Client>>> {
   if (m365Client) return m365Client;
-
   m365Client = await createInProcessM365Client({ logger: console });
   return m365Client;
 }
 
-
-export async function initTimeMCPClient() {
+export async function initTimeMCPClient(): Promise<Client> {
   if (timeClient) return timeClient;
 
   const command = process.env.TIME_MCP_COMMAND || 'python';
-  let args;
+  let args: string[];
   try {
-    args = process.env.TIME_MCP_ARGS ? JSON.parse(process.env.TIME_MCP_ARGS) : ['-m', 'mcp_server_time'];
+    const parsed = process.env.TIME_MCP_ARGS ? JSON.parse(process.env.TIME_MCP_ARGS) : ['-m', 'mcp_server_time'];
+    if (!Array.isArray(parsed)) {
+      throw new Error('TIME_MCP_ARGS must be a JSON array string when provided.');
+    }
+    args = parsed;
   } catch (error) {
-    throw new Error(`Failed to parse TIME_MCP_ARGS. Provide a JSON array string, e.g. ["-m","mcp_server_time"]. Original error: ${error.message}`);
-  }
-
-  if (!Array.isArray(args)) {
-    throw new Error('TIME_MCP_ARGS must be a JSON array string when provided.');
+    const err = error as Error;
+    throw new Error(`Failed to parse TIME_MCP_ARGS. Provide a JSON array string, e.g. ["-m","mcp_server_time"]. Original error: ${err.message}`);
   }
 
   console.log('Initializing Time MCP client...');
   const transport = new StdioClientTransport({
     command,
     args,
-    env: process.env
+    env: sanitizeEnv()
   });
 
   timeClient = new Client({ name: 'time-client', version: '1.0.0' }, {});
@@ -139,7 +216,7 @@ export async function initTimeMCPClient() {
   return timeClient;
 }
 
-export async function initCdsModelMCPClient() {
+export async function initCdsModelMCPClient(): Promise<Client> {
   if (cdsModelClient) return cdsModelClient;
 
   console.log('Initializing cds-mcp (model/documentation) client...');
@@ -154,7 +231,7 @@ export async function initCdsModelMCPClient() {
   return cdsModelClient;
 }
 
-export async function initCapInProcessClient({ capService, logger } = {}) {
+export async function initCapInProcessClient({ capService, logger }: CapClientInitOptions): Promise<any> {
   if (capClient) return capClient;
   if (!capService) {
     throw new Error('initCapInProcessClient requires the CAP service instance.');
@@ -165,20 +242,17 @@ export async function initCapInProcessClient({ capService, logger } = {}) {
   return capClient;
 }
 
-
-export async function initAllMCPClients(options = {}) {
-  console.log("Initializing all MCP clients...");
+export async function initAllMCPClients(options: InitAllClientOptions = {}): Promise<InitAllClientsResult> {
+  console.log('Initializing all MCP clients...');
 
   const { capService, logger } = options;
-
-  // +++ ERWEITERT: Excel Client wird mit initialisiert +++
   const [capInProcessClient, cdsModel, pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initCapInProcessClient({ capService, logger }),
     initCdsModelMCPClient(),
     initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initFilesystemMCPClient(),
-    initExcelMCPClient(), // Neuer Client
+    initExcelMCPClient(),
     initM365Client(),
     initTimeMCPClient()
   ]);
@@ -188,35 +262,34 @@ export async function initAllMCPClients(options = {}) {
     cdsModel,
     postgres: pgClient,
     braveSearch: braveClient,
-    playwright: null,
+    playwright: playwrightClient,
     filesystem: fsClient,
-    excel: xlsxClient, // Neuer Client im Rückgabeobjekt
+    excel: xlsxClient,
     m365: microsoft365Client,
     time: timeMcpClient
   };
 }
 
-export async function closeMCPClients() {
-  const closePromises = [];
-  
+export async function closeMCPClients(): Promise<void> {
+  const closePromises: Array<Promise<unknown>> = [];
+
   if (postgresClient) {
-    console.log("Closing PostgreSQL MCP client connection");
+    console.log('Closing PostgreSQL MCP client connection');
     closePromises.push(postgresClient.close());
     postgresClient = null;
   }
   if (braveSearchClient) {
-    console.log("Closing Brave Search MCP client connection");
+    console.log('Closing Brave Search MCP client connection');
     closePromises.push(braveSearchClient.close());
     braveSearchClient = null;
   }
   if (filesystemClient) {
-    console.log("Closing Filesystem MCP client connection");
+    console.log('Closing Filesystem MCP client connection');
     closePromises.push(filesystemClient.close());
     filesystemClient = null;
   }
-  // +++ ERWEITERT: Excel Client wird geschlossen +++
   if (excelClient) {
-    console.log("Closing Excel MCP client connection");
+    console.log('Closing Excel MCP client connection');
     closePromises.push(excelClient.close());
     excelClient = null;
   }
@@ -226,25 +299,24 @@ export async function closeMCPClients() {
     cdsModelClient = null;
   }
   if (m365Client) {
-    console.log("Closing Microsoft 365 MCP client connection");
+    console.log('Closing Microsoft 365 MCP client connection');
     closePromises.push(m365Client.close());
     m365Client = null;
   }
   if (timeClient) {
-    console.log("Closing Time MCP client connection");
+    console.log('Closing Time MCP client connection');
     closePromises.push(timeClient.close());
     timeClient = null;
   }
   if (capClient) {
-    console.log("Closing CAP MCP client connection");
+    console.log('Closing CAP MCP client connection');
     closePromises.push(capClient.close());
     capClient = null;
   }
 
   await Promise.all(closePromises);
-  console.log("✅ All MCP clients closed");
+  console.log('✅ All MCP clients closed');
 }
 
-// Backward compatibility
 export const initMCPClient = initPostgresMCPClient;
 export const closeMCPClient = closeMCPClients;

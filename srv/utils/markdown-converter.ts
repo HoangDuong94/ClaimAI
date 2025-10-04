@@ -1,5 +1,4 @@
-// @ts-nocheck
-// srv/utils/markdown-converter.js
+// srv/utils/markdown-converter.ts
 /**
  * Einfacher Markdown-zu-HTML Konverter für AI-Antworten
  * Speziell optimiert für SAP UI5 FormattedText Component
@@ -12,7 +11,7 @@ class MarkdownConverter {
    * @param {string} markdown - Markdown Text
    * @returns {string} HTML String
    */
-  static convertToHTML(markdown) {
+  static convertToHTML(markdown: string): string {
     if (!markdown || typeof markdown !== 'string') {
       return '';
     }
@@ -52,9 +51,9 @@ class MarkdownConverter {
   /**
    * Konvertiert Code-Blöcke
    */
-  static convertCodeBlocks(text) {
+  static convertCodeBlocks(text: string): string {
     // ```language \n code \n ```
-    return text.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, language, code) => {
+    return text.replace(/```(\w*)\n([\s\S]*?)\n```/g, (_match: string, language: string, code: string) => {
       const cleanCode = this.escapeHTML(code.trim());
       return `<div class="ai-code-block">
         <div class="ai-code-header">${language || 'Code'}</div>
@@ -66,14 +65,14 @@ class MarkdownConverter {
   /**
    * Konvertiert Inline-Code
    */
-  static convertInlineCode(text) {
+  static convertInlineCode(text: string): string {
     return text.replace(/`([^`]+)`/g, '<code class="ai-inline-code">$1</code>');
   }
 
   /**
    * Konvertiert Headers
    */
-  static convertHeaders(text) {
+  static convertHeaders(text: string): string {
     // ### Header 3
     text = text.replace(/^### (.+)$/gm, '<h3 class="ai-header-3">$1</h3>');
     // ## Header 2  
@@ -87,7 +86,7 @@ class MarkdownConverter {
   /**
    * Konvertiert Bold und Italic
    */
-  static convertTextFormatting(text) {
+  static convertTextFormatting(text: string): string {
     // **Bold**
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="ai-bold">$1</strong>');
     // *Italic*
@@ -99,22 +98,18 @@ class MarkdownConverter {
   /**
    * Konvertiert Listen
    */
-  static convertLists(text) {
+  static convertLists(text: string): string {
     // Unordered Lists
     text = text.replace(/^- (.+)$/gm, '<li class="ai-list-item">$1</li>');
     
     // Wrap consecutive list items in <ul>
-    text = text.replace(/(<li class="ai-list-item">.*<\/li>\s*)+/gs, (match) => {
-      return `<ul class="ai-unordered-list">${match}</ul>`;
-    });
+    text = text.replace(/(<li class="ai-list-item">.*<\/li>\s*)+/gs, (match: string) => `<ul class="ai-unordered-list">${match}</ul>`);
 
     // Numbered Lists (vereinfacht)
     text = text.replace(/^\d+\. (.+)$/gm, '<li class="ai-numbered-item">$1</li>');
     
     // Wrap consecutive numbered items in <ol>
-    text = text.replace(/(<li class="ai-numbered-item">.*<\/li>\s*)+/gs, (match) => {
-      return `<ol class="ai-ordered-list">${match}</ol>`;
-    });
+    text = text.replace(/(<li class="ai-numbered-item">.*<\/li>\s*)+/gs, (match: string) => `<ol class="ai-ordered-list">${match}</ol>`);
 
     return text;
   }
@@ -122,7 +117,7 @@ class MarkdownConverter {
   /**
    * Konvertiert Links
    */
-  static convertLinks(text) {
+  static convertLinks(text: string): string {
     // [Text](URL)
     return text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="#" class="ai-link" data-url="$2" title="$2">$1</a>');
   }
@@ -130,7 +125,7 @@ class MarkdownConverter {
   /**
    * Behält Emojis bei
    */
-  static preserveEmojis(text) {
+  static preserveEmojis(text: string): string {
     // Emojis sind bereits Unicode, keine Konvertierung nötig
     return text;
   }
@@ -138,7 +133,7 @@ class MarkdownConverter {
   /**
    * Konvertiert Zeilenumbrüche
    */
-  static convertLineBreaks(text) {
+  static convertLineBreaks(text: string): string {
     // Doppelte Zeilenumbrüche zu Paragraphen
     text = text.replace(/\n\n+/g, '</p><p class="ai-paragraph">');
     
@@ -156,7 +151,7 @@ class MarkdownConverter {
   /**
    * SAP UI5 spezifische Optimierungen
    */
-  static optimizeForSAPUI5(text) {
+  static optimizeForSAPUI5(text: string): string {
     // Bereinige leere Paragraphen
     text = text.replace(/<p class="ai-paragraph"><\/p>/g, '');
     
@@ -169,26 +164,26 @@ class MarkdownConverter {
   /**
    * HTML Escaping für Sicherheit
    */
-  static escapeHTML(text) {
-    const map = {
+  static escapeHTML(text: string): string {
+    const map: Record<string, string> = {
       '&': '&amp;',
       '<': '&lt;',
       '>': '&gt;',
       '"': '&quot;',
       "'": '&#39;'
     };
-    return text.replace(/[&<>"']/g, (m) => map[m]);
+    return text.replace(/[&<>"']/g, (m: string) => map[m]);
   }
 
   /**
    * Schließt offene Tags (vereinfacht)
    */
-  static closeOpenTags(html) {
+  static closeOpenTags(html: string): string {
     // Einfache Implementation - für Produktionsumgebung sollte ein richtiger HTML-Parser verwendet werden
-    const openTags = [];
+    const openTags: string[] = [];
     const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)[^>]*>/g;
     
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = tagRegex.exec(html)) !== null) {
       if (match[0].startsWith('</')) {
         // Closing tag
@@ -214,7 +209,7 @@ class MarkdownConverter {
   /**
    * Spezielle Konvertierung für SAP-spezifische Inhalte
    */
-  static convertSAPContent(text) {
+  static convertSAPContent(text: string): string {
     // SAP UI5 Komponenten-Namen hervorheben
     text = text.replace(/\b(List Report|Object Page|Draft|Value Help|Smart Filter Bar)\b/g, 
       '<span class="ai-sap-term">$1</span>');
@@ -229,7 +224,7 @@ class MarkdownConverter {
   /**
    * Hauptmethode für die Konvertierung mit SAP-spezifischen Verbesserungen
    */
-  static convertForClaims(markdown) {
+  static convertForClaims(markdown: string): string {
     let html = this.convertToHTML(markdown);
     html = this.convertSAPContent(html);
     return html;
