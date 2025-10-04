@@ -6,41 +6,41 @@ using { kfz.claims as model } from '../db/schema';
  * =======================================================*/
 annotate service.Claims with @(
     UI.HeaderInfo : {
-        TypeName       : 'Schadenfall',
-        TypeNamePlural : 'Schadenfälle',
+        TypeName       : '{i18n>claims.entity.single}',
+        TypeNamePlural : '{i18n>claims.entity.plural}',
         Title          : { Value : claim_number },
         Description    : { Value : status }
     },
 
     UI.LineItem : [
-        { Value : claim_number, Label : 'Schaden-Nr.' },
-        { Value : status },
-        { Value : received_at },
-        { Value : claimant_name },
-        { Value : incident_date },
-        { Value : incident_location },
-        { Value : estimated_cost, ![@UI.Importance] : #High },
-        { Value : severity_score, Label : 'Schweregrad' },
-        { Value : fraud_score, Label : 'Betrugsindikator' }
+        { Value : claim_number, Label : '{i18n>claims.field.claimNumber}' },
+        { Value : status, Label : '{i18n>claims.field.status}' },
+        { Value : received_at, Label : '{i18n>claims.field.receivedAt}' },
+        { Value : claimant_name, Label : '{i18n>claims.field.claimantName}' },
+        { Value : incident_date, Label : '{i18n>claims.field.incidentDate}' },
+        { Value : incident_location, Label : '{i18n>claims.field.incidentLocation}' },
+        { Value : estimated_cost, Label : '{i18n>claims.field.estimatedCost}', ![@UI.Importance] : #High },
+        { Value : severity_score, Label : '{i18n>claims.field.severityScore}' },
+        { Value : fraud_score, Label : '{i18n>claims.field.fraudScore}' }
     ],
 
     UI.Facets : [
         {
             $Type : 'UI.ReferenceFacet',
             ID    : 'ClaimGeneralInfo',
-            Label : 'Schadeninformationen',
+            Label : '{i18n>claims.facet.generalInfo}',
             Target: '@UI.FieldGroup#ClaimSummary'
         },
         {
             $Type : 'UI.ReferenceFacet',
             ID    : 'ClaimDocumentsFacet',
-            Label : 'Dokumente',
+            Label : '{i18n>claims.facet.documents}',
             Target: 'documents/@UI.LineItem'
         },
         {
             $Type : 'UI.ReferenceFacet',
             ID    : 'NotesFacet',
-            Label : 'Notizen',
+            Label : '{i18n>claims.facet.notes}',
             Target: '@UI.FieldGroup#ClaimNotes'
         }
     ],
@@ -48,28 +48,28 @@ annotate service.Claims with @(
     UI.FieldGroup #ClaimSummary : {
         $Type : 'UI.FieldGroupType',
         Data  : [
-            { Value : claim_number },
-            { Value : status },
-            { Value : received_at },
-            { Value : incident_date },
-            { Value : incident_location },
-            { Value : policy_number },
-            { Value : vehicle_license },
-            { Value : vehicle_vin },
-            { Value : claimant_name },
-            { Value : claimant_email },
-            { Value : claimant_phone },
-            { Value : estimated_cost },
-            { Value : severity_score },
-            { Value : fraud_score }
+            { Value : claim_number, Label : '{i18n>claims.field.claimNumber}' },
+            { Value : status, Label : '{i18n>claims.field.status}' },
+            { Value : received_at, Label : '{i18n>claims.field.receivedAt}' },
+            { Value : incident_date, Label : '{i18n>claims.field.incidentDate}' },
+            { Value : incident_location, Label : '{i18n>claims.field.incidentLocation}' },
+            { Value : policy_number, Label : '{i18n>claims.field.policyNumber}' },
+            { Value : vehicle_license, Label : '{i18n>claims.field.vehicleLicense}' },
+            { Value : vehicle_vin, Label : '{i18n>claims.field.vehicleVin}' },
+            { Value : claimant_name, Label : '{i18n>claims.field.claimantName}' },
+            { Value : claimant_email, Label : '{i18n>claims.field.claimantEmail}' },
+            { Value : claimant_phone, Label : '{i18n>claims.field.claimantPhone}' },
+            { Value : estimated_cost, Label : '{i18n>claims.field.estimatedCost}' },
+            { Value : severity_score, Label : '{i18n>claims.field.severityScore}' },
+            { Value : fraud_score, Label : '{i18n>claims.field.fraudScore}' }
         ]
     },
 
     UI.FieldGroup #ClaimNotes : {
         $Type : 'UI.FieldGroupType',
         Data  : [
-            { Value : description_short, ![@UI.MultiLineText] : true },
-            { Value : notes, ![@UI.MultiLineText] : true }
+            { Value : description_short, Label : '{i18n>claims.field.description}', ![@UI.MultiLineText] : true },
+            { Value : notes, Label : '{i18n>claims.field.notes}', ![@UI.MultiLineText] : true }
         ]
     }
 );
@@ -79,20 +79,45 @@ annotate service.Claims with @(
  * =======================================================*/
 annotate service.ClaimDocuments with @(
     UI.LineItem : [
-        { Value : filename },
-        { Value : doc_type },
-        { Value : parsed_meta },
-        { Value : extracted_text }
+        { Value : filename, Label : '{i18n>claimDocuments.field.filename}' },
+        { Value : doc_type, Label : '{i18n>claimDocuments.field.docType}' },
+        { Value : parsed_meta, Label : '{i18n>claimDocuments.field.parsedMeta}' },
+        { Value : extracted_text, Label : '{i18n>claimDocuments.field.extractedText}' }
     ],
     UI.HeaderInfo : {
-        TypeName       : 'Dokument',
-        TypeNamePlural : 'Dokumente',
+        TypeName       : '{i18n>claimDocuments.entity.single}',
+        TypeNamePlural : '{i18n>claimDocuments.entity.plural}',
         Title          : { Value : filename },
         Description    : { Value : doc_type }
     }
 );
 
+annotate model.Claims with {
+    claim_number      @Common.Label : '{i18n>claims.field.claimNumber}';
+    status            @Common.Label : '{i18n>claims.field.status}'
+                     @UI.TextArrangement : #TextOnly;
+    received_at       @Common.Label : '{i18n>claims.field.receivedAt}';
+    incident_date     @Common.Label : '{i18n>claims.field.incidentDate}';
+    incident_location @Common.Label : '{i18n>claims.field.incidentLocation}';
+    policy_number     @Common.Label : '{i18n>claims.field.policyNumber}';
+    vehicle_license   @Common.Label : '{i18n>claims.field.vehicleLicense}';
+    vehicle_vin       @Common.Label : '{i18n>claims.field.vehicleVin}';
+    claimant_name     @Common.Label : '{i18n>claims.field.claimantName}';
+    claimant_email    @Common.Label : '{i18n>claims.field.claimantEmail}';
+    claimant_phone    @Common.Label : '{i18n>claims.field.claimantPhone}';
+    estimated_cost    @Common.Label : '{i18n>claims.field.estimatedCost}';
+    severity_score    @Common.Label : '{i18n>claims.field.severityScore}';
+    fraud_score       @Common.Label : '{i18n>claims.field.fraudScore}';
+    description_short @Common.Label : '{i18n>claims.field.description}';
+    notes             @Common.Label : '{i18n>claims.field.notes}';
+    status_text       @UI.Hidden : true;
+};
+
 annotate model.ClaimDocuments with {
-    parsed_meta      @UI.MultiLineText : true;
-    extracted_text   @UI.MultiLineText : true;
+    filename       @Common.Label : '{i18n>claimDocuments.field.filename}';
+    doc_type       @Common.Label : '{i18n>claimDocuments.field.docType}';
+    parsed_meta    @Common.Label : '{i18n>claimDocuments.field.parsedMeta}'
+                   @UI.MultiLineText : true;
+    extracted_text @Common.Label : '{i18n>claimDocuments.field.extractedText}'
+                   @UI.MultiLineText : true;
 };

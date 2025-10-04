@@ -57,7 +57,7 @@ sap.ui.define([
                 showSuggestions: false,
                 suggestions: [
                     { text: 'Fasse den Schadenfall CLM-CH-LU-2025-001 mit Status, Kosten und Scores zusammen.' },
-                    { text: 'Liste alle offenen Claims (Status eingegangen) mit geschätzten Kosten absteigend.' },
+                    { text: 'Liste alle offenen Claims (Status Eingegangen) mit geschätzten Kosten absteigend.' },
                     { text: 'Prüfe, ob es bereits einen Claim mit der Nummer CLM-CH-LU-2025-002 gibt.' },
                     { text: 'Analysiere die Fraud Scores und markiere Auffälligkeiten über 40.' },
                     { text: 'Welche Dokumente liegen zum Claim CLM-CH-LU-2025-003 vor?' },

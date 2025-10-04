@@ -1,50 +1,35 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `db/` CDS domain models (`schema.cds`) and CSV seed data under `db/data/`.
-- `srv/` CAP service layer: `service.cds` + `service.js`, shared MCP client helpers in `srv/lib/`, markdown utilities in `srv/utils/`.
-- `app/` SAPUI5 frontend (`webapp/` sources, tests under `webapp/test/`).
-- `docs/` project documentation; generated build artifacts stay out of VCS.
-- Root `package.json` configures CAP, Postgres, and dev scripts.
+- `db/` contains the CDS domain model (`schema.cds`) and CSV seeds under `db/data/` for the `kfz.claims` namespace.
+- `srv/` hosts the CAP service (`service.cds`, `service.js`) plus MCP utilities in `srv/mcp-*` and shared helpers in `srv/utils/`.
+- `app/` holds the SAPUI5/Fiori frontend (`webapp/`) and OPA/QUnit tests in `webapp/test/`.
+- Root configuration lives in `package.json`, `eslint.config.mjs`, and `.env` overrides (not committed).
 
 ## Build, Test, and Development Commands
-- Install deps (root): `npm install` (and `cd app && npm install` for UI tooling).
-- Run CAP in watch mode with UI: `npm run watch-app` (opens `app/webapp/index.html`).
-- Run CAP service only: `npm start` (serves on `http://localhost:9999`).
-- Initialize database: `npx cds deploy --to postgres` (configure Postgres first).
-- UI5 build: `cd app && npx ui5 build --all` (outputs `dist/`).
-- UI tests (browser): `cd app && npx ui5 serve -o test/testsuite.qunit.html`.
-- UI tests (headless): `cd app && npx ui5 test --all`.
+- `npm install && cd app && npm install` – install backend and UI dependencies.
+- `npm run watch-app` – start CAP on `http://localhost:9999` and auto-open the UI shell.
+- `npm start` – serve only the CAP API for integration testing or MCP use.
+- `npx cds deploy --to postgres` – deploy the model and load seeds into the `claimai_db` Postgres instance (default host `localhost:5433`).
+- `cd app && npx ui5 test --all` – run headless UI5 tests; use before PR submission.
 
 ## Coding Style & Naming Conventions
-- Language: Node.js ES Modules (import/export). Use 2‑space indent and semicolons.
-- Filenames under `srv/` favour lowercase or kebab‑case (e.g., `markdown-converter.js`).
-- CDS: namespaces lower‑case dot notation; entities in PascalCase.
-- UI5: components/controllers PascalCase; i18n keys lower.dot.case.
-- Linting: ESLint with CAP’s recommended config (`eslint.config.mjs`). Prefer `npx eslint .` if installed.
+- Node.js code uses ES modules, 2-space indent, and mandatory semicolons.
+- CDS artifacts employ lowercase namespaces (`kfz.claims`) and PascalCase entities (`Claims`, `ClaimDocuments`).
+- UI components, controllers, and tests follow PascalCase; i18n keys stay in lower.dot.case.
+- Run `npx eslint .` to enforce formatting; UI5 XML views should remain well-formed and lint-clean.
 
 ## Testing Guidelines
-- UI: QUnit/OPA tests live in `app/webapp/test/` (e.g., `test/integration/FirstJourney.js`, `pages/*`). Name files `*.qunit.js` for suites.
-- Backend: no unit tests yet; add Mocha/Jest under `test/` or `srv/test/` following ESM.
-- PRs should keep tests green (`ui5 test`) and include new/updated tests for changed behavior.
+- Backend relies on integration tests via CAP; add Mocha/Jest under `srv/test/` when business logic grows.
+- UI automation lives in `app/webapp/test/` using OPA and QUnit; mirror production scenarios and name suites `*.qunit.js`.
+- Seed data must stay in sync with CDS enums (claim status, document type) so test fixtures resolve.
 
 ## Commit & Pull Request Guidelines
-- Commits: concise, imperative. Prefer Conventional Commits: `feat(srv): add callLLM stream handling`.
-- PRs: include a clear description, linked issues, steps to validate, and screenshots/GIFs for UI changes. Note DB/schema changes and required migrations.
+- Prefer Conventional Commits (`feat(db): add claim severity scoring`) with scoped, imperative messages.
+- PRs should outline motivation, summarize functional impact, list validation steps (`cds deploy`, `ui5 test`), and attach screenshots/GIFs for UI changes.
+- Flag database or schema amendments, including Postgres migrations, to alert reviewers about re-deploy requirements.
 
 ## Security & Configuration Tips
-- Do not commit secrets. Use `.env` for local dev and environment variables to override `cds.requires` (Postgres, destinations, AI services). `.gitignore` already excludes common files.
-- Service runs at port `9999` (see `package.json`). Service root: `/service/claims`; action `callLLM` in `srv/service.js` executes the multi-tool agent.
-- Supporting agent helpers live in `srv/lib/` and `srv/utils/`; avoid reintroducing generated artefacts into version control.
-
-## MCP Servers
-
-### cds-mcp (CAP context)
-- Added via `codex mcp add cds-mcp -- npx --yes --package @cap-js/mcp-server cds-mcp`; ensure the command resolves on your PATH.
-- `search_model` MUST be used for CDS definitions (entities, services, endpoints); only read `*.cds` manually if a lookup fails.
-- `search_docs` MUST precede any CAP model or API changes and `cds` CLI usage; never propose or apply changes without consulting it.
-
-### postgres (Database access)
-- Registered with `codex mcp add postgres -- npx --yes mcp-postgres-full-access postgresql://claimai:claimai@localhost:5433/claimai_db`.
-- Connection string aligns with `cds.requires.db[development]` credentials; update if credentials/env differ.
-- Use the `query` tool for read/write SQL; prefer read-only queries unless a migration or data fix was requested.
+- Keep credentials out of source control; rely on `.env` for overrides and rotate Postgres passwords when sharing environments.
+- The MCP postgres server expects `postgresql://claimai:claimai@localhost:5433/claimai_db`; update tooling if ports or credentials change.
+- When extending agent capabilities, document new tools and guardrails in `srv/mcp-*` to maintain safe automation.

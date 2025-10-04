@@ -1,16 +1,26 @@
 namespace kfz.claims;
 
-using { cuid, managed } from '@sap/cds/common';
+using { cuid, managed, sap.common.CodeList } from '@sap/cds/common';
 
 type Money : Decimal(13,2);
-type ClaimStatus : String enum { eingegangen; in_pruefung; freigegeben; abgelehnt; }
+type ClaimStatus : String enum {
+  eingegangen = 'Eingegangen';
+  in_pruefung = 'In Prüfung';
+  freigegeben = 'Freigegeben';
+  abgelehnt = 'Abgelehnt';
+}
 type DocumentType : String enum { foto; kalkulation; polizeibericht; sonstiges; }
+
+entity ClaimStatusTexts : CodeList {
+  key code : ClaimStatus;
+}
 
 entity Claims : cuid, managed {
   key ID                 : UUID @(Core.Computed: true);
   claim_number           : String(40);
   received_at            : DateTime;
   status                 : ClaimStatus;
+  status_text            : Association to ClaimStatusTexts on status_text.code = status;
   claimant_name          : String(100);
   claimant_email         : String(120);
   claimant_phone         : String(40);

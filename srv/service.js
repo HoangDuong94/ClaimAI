@@ -756,7 +756,7 @@ ${safeContent}`;
                   - ID generation: Prefer letting CAP/DB defaults create UUIDs. If you must set IDs manually in SQL, call gen_random_uuid() within 'cap.sql.execute' (allowWrite=true) and document it.
                   - All write operations require explicit user approval. Use draft-enabled flows ('cap.draft.new' → 'cap.draft.save') when capturing claim edits.
                   - Key claim attributes to surface (confirm via 'cap.cqn.read'): "claim_number", "status", "incident_date", "estimated_cost", "severity_score", "fraud_score".
-                  - Validate enum fields before persisting: status ∈ {eingegangen, in_pruefung, freigegeben, abgelehnt}.
+                  - Validate enum fields before persisting: status ∈ {Eingegangen, In Prüfung, Freigegeben, Abgelehnt}.
                   - Monetary values in 'estimated_cost' are CHF decimals (13,2). Normalize to two decimal places before saving.
                   - Severity and fraud scores are integers 0–100; clamp user inputs to this range.
                   - ClaimDocuments must reference an existing Claim via 'claim_ID'. Store structured metadata in 'parsed_meta' (JSON) and human-readable context in 'extracted_text'.
