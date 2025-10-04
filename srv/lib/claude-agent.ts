@@ -1,9 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  HookCallbackMatcher,
+  HookEvent,
   Options,
+  PostToolUseHookInput,
+  PreToolUseHookInput,
   SDKAssistantMessage,
   SDKMessage,
-  SDKResultMessage
+  SDKResultMessage,
+  SDKSystemMessage
 } from '@anthropic-ai/claude-agent-sdk';
 
 type ConsoleLike = Pick<Console, 'debug' | 'info' | 'warn' | 'error' | 'log'>;
@@ -17,6 +22,12 @@ interface RunClaudeAgentParams {
   systemPrompt: string;
   options?: Partial<Options>;
   logger?: ConsoleLike;
+  resumeSessionId?: string;
+}
+
+interface ClaudeAgentResult {
+  result: string;
+  sessionId?: string;
 }
 
 const isAssistantMessage = (message: SDKMessage): message is SDKAssistantMessage =>
@@ -65,8 +76,174 @@ const extractTextBlocks = (assistantMessage: SDKAssistantMessage): string => {
     .trim();
 };
 
-export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<string> {
-  const { prompt, systemPrompt, logger, options } = params;
+const truncateForLog = (value: unknown, maxLength = 500): string => {
+  let str = '';
+  if (typeof value === 'string') {
+    str = value;
+  } else if (value !== undefined) {
+    try {
+      str = JSON.stringify(value, null, 2) || '';
+    } catch {
+      str = String(value);
+    }
+  }
+  if (!str) return '';
+  if (str.length <= maxLength) return str;
+  return `${str.slice(0, maxLength)}…`;
+};
+
+const createLoggingHooks = (
+  logger: ConsoleLike | undefined,
+  toolTimers: Map<string, { tool: string; startedAt: number }>
+): Options['hooks'] | undefined => {
+  if (!logger) return undefined;
+
+  const pre: HookCallbackMatcher = {
+    hooks: [
+      async (input, toolUseId) => {
+        try {
+          const preInput = input as PreToolUseHookInput;
+          const toolName = preInput.tool_name;
+          const toolInput = preInput.tool_input;
+          if (toolUseId) {
+            toolTimers.set(toolUseId, { tool: toolName, startedAt: Date.now() });
+          }
+          logger.debug?.('[ClaudeAgent] Tool invocation requested', {
+            tool: toolName,
+            toolUseId,
+            input: truncateForLog(toolInput)
+          });
+        } catch (error) {
+          logger.warn?.('[ClaudeAgent] Failed to log PreToolUse hook', { error });
+        }
+        return { continue: true };
+      }
+    ]
+  };
+
+  const post: HookCallbackMatcher = {
+    hooks: [
+      async (input, toolUseId) => {
+        try {
+          const postInput = input as PostToolUseHookInput;
+          const toolName = postInput.tool_name;
+          const toolInput = postInput.tool_input;
+          const toolResponse = postInput.tool_response;
+          const timing = toolUseId ? toolTimers.get(toolUseId) : undefined;
+          const durationMs = timing ? Date.now() - timing.startedAt : undefined;
+          if (toolUseId && timing) {
+            toolTimers.delete(toolUseId);
+          }
+          logger.debug?.('[ClaudeAgent] Tool invocation completed', {
+            tool: toolName,
+            toolUseId,
+            durationMs,
+            input: truncateForLog(toolInput),
+            output: truncateForLog(toolResponse)
+          });
+        } catch (error) {
+          logger.warn?.('[ClaudeAgent] Failed to log PostToolUse hook', { error });
+        }
+        return { continue: true };
+      }
+    ]
+  };
+
+  return {
+    PreToolUse: [pre],
+    PostToolUse: [post]
+  };
+};
+
+const mergeHooks = (
+  base: Options['hooks'] | undefined,
+  extra: Options['hooks'] | undefined
+): Options['hooks'] | undefined => {
+  if (!base) return extra;
+  if (!extra) return base;
+
+  const merged: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {};
+  const assign = (source: Options['hooks'] | undefined) => {
+    if (!source) return;
+    for (const [event, matchers] of Object.entries(source)) {
+      if (!matchers?.length) continue;
+      const hookEvent = event as HookEvent;
+      const list = merged[hookEvent] ?? [];
+      list.push(...matchers);
+      merged[hookEvent] = list;
+    }
+  };
+
+  assign(base);
+  assign(extra);
+  return merged;
+};
+
+const logSdkMessage = (message: SDKMessage, logger?: ConsoleLike): void => {
+  if (!logger) return;
+
+  const basePayload: Record<string, unknown> = {
+    type: message.type,
+    sessionId: (message as { session_id?: string }).session_id,
+    uuid: (message as { uuid?: string }).uuid
+  };
+
+  if (message.type === 'assistant') {
+    const assistantMessage = message as SDKAssistantMessage;
+    const preview = extractTextBlocks(assistantMessage);
+    logger.debug?.('[ClaudeAgent] Assistant message', {
+      ...basePayload,
+      parentToolUseId: assistantMessage.parent_tool_use_id,
+      preview: preview ? truncateForLog(preview, 300) : undefined,
+      usage: assistantMessage.message?.usage
+    });
+    return;
+  }
+
+  if (message.type === 'user') {
+    logger.debug?.('[ClaudeAgent] User message received', basePayload);
+    return;
+  }
+
+  if (message.type === 'result') {
+    const resultMessage = message as SDKResultMessage;
+    logger.debug?.('[ClaudeAgent] Result message', {
+      ...basePayload,
+      subtype: resultMessage.subtype,
+      isError: resultMessage.is_error,
+      durationMs: resultMessage.duration_ms,
+      apiDurationMs: resultMessage.duration_api_ms,
+      totalCostUsd: resultMessage.total_cost_usd,
+      usage: resultMessage.usage,
+      result: truncateForLog(getResultString(resultMessage), 300) || undefined
+    });
+    return;
+  }
+
+  if (message.type === 'stream_event') {
+    logger.debug?.('[ClaudeAgent] Stream event', {
+      ...basePayload,
+      eventType: (message as { event?: { type?: string } }).event?.type
+    });
+    return;
+  }
+
+  if (message.type === 'system') {
+    const systemMessage = message as SDKSystemMessage;
+
+    logger.debug?.('[ClaudeAgent] System message', {
+      ...basePayload,
+      tools: systemMessage.tools,
+      mcpServers: systemMessage.mcp_servers
+    });
+    return;
+  }
+
+  logger.debug?.('[ClaudeAgent] Message', basePayload);
+};
+
+export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<ClaudeAgentResult> {
+  const { prompt, systemPrompt, logger, options, resumeSessionId } = params;
 
   if (!prompt.trim()) {
     throw new Error('Claude Agent prompt must not be empty.');
@@ -75,6 +252,8 @@ export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<stri
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY is not configured. Set it to call the Claude Agent SDK.');
   }
+
+  const toolTimers = new Map<string, { tool: string; startedAt: number }>();
 
   const mergedOptions: Options = {
     cwd: process.cwd(),
@@ -89,6 +268,14 @@ export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<stri
     ...options
   };
 
+  if (!mergedOptions.permissionMode) {
+    mergedOptions.permissionMode = 'bypassPermissions';
+  }
+
+  if (resumeSessionId && !mergedOptions.resume) {
+    mergedOptions.resume = resumeSessionId;
+  }
+
   if (!mergedOptions.settingSources || mergedOptions.settingSources.length === 0) {
     mergedOptions.settingSources = ['project'];
   }
@@ -101,6 +288,9 @@ export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<stri
     };
   }
 
+  const loggingHooks = createLoggingHooks(logger, toolTimers);
+  mergedOptions.hooks = mergeHooks(loggingHooks, options?.hooks);
+
   logger?.debug?.('[ClaudeAgent] Invoking claude-agent-sdk', {
     model: mergedOptions.model,
     cwd: mergedOptions.cwd,
@@ -110,8 +300,16 @@ export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<stri
   const session = query({ prompt, options: mergedOptions });
   let finalResult = '';
   let lastAssistantText = '';
+  let resolvedSessionId: string | undefined;
 
   for await (const message of session) {
+    logSdkMessage(message, logger);
+
+    if (message.type === 'system') {
+      const systemMessage = message as SDKSystemMessage;
+      resolvedSessionId = systemMessage.session_id ?? resolvedSessionId;
+    }
+
     if (isAssistantMessage(message)) {
       lastAssistantText = extractTextBlocks(message) || lastAssistantText;
       continue;
@@ -142,5 +340,5 @@ export async function runClaudeAgent(params: RunClaudeAgentParams): Promise<stri
   }
 
   logger?.debug?.('[ClaudeAgent] Completed invocation');
-  return finalResult;
+  return { result: finalResult, sessionId: resolvedSessionId ?? resumeSessionId };
 }

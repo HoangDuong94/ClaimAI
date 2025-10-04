@@ -1,6 +1,9 @@
 import cds from '@sap/cds';
 import type { EventContext, Service, User } from '@sap/cds';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchema } from '../m365-mcp/mcp-jsonschema.js';
 
 type AnyRecord = Record<string, any>;
@@ -78,6 +81,46 @@ const DEFAULT_DRAFT_ADMIN_COLUMNS = [
   'CreatedAt',
   'LastChangedAt'
 ];
+
+const formatError = (error: unknown): string => {
+  if (error instanceof Error && typeof error.message === 'string') {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+function normalizePatchData(data: unknown): AnyRecord | null {
+  if (data === null || data === undefined) {
+    return null;
+  }
+
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as AnyRecord;
+      }
+      throw new Error('Der Payload muss ein JSON-Objekt repräsentieren.');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Daten-Payload konnte nicht geparst werden: ${reason}`);
+    }
+  }
+
+  if (typeof data === 'object' && !Array.isArray(data)) {
+    return data as AnyRecord;
+  }
+
+  throw new Error('cap.draft.patch erwartet ein Objekt als data-Payload.');
+}
 
 const toolDefinitions: Array<{ name: string; description: string; inputSchema: JsonSchema; metadata?: AnyRecord }> = [
   {
@@ -389,9 +432,12 @@ export async function initCapMCPClient(options: CapInitOptions) {
       ? recognizedKeys
       : convenienceKeys;
 
-    const data = rawData && Object.keys(rawData).length
-      ? rawData
-      : Object.keys(rest).length ? rest : null;
+    let data: any;
+    if (rawData !== undefined) {
+      data = rawData; // may be object or JSON string; normalize later
+    } else {
+      data = Object.keys(rest).length ? rest : null;
+    }
 
     const resolvedKeys = resolveDraftKeys(entityRef, draftEntity, keys, convenienceKeys);
 
@@ -429,20 +475,32 @@ export async function initCapMCPClient(options: CapInitOptions) {
     }
   }
 
-  function sanitizeDraftKeys(entity: any, keyValues: AnyRecord = {}, options: ResolveDraftOptions & { dropKeys?: string[] } = {}) {
+  function sanitizeDraftKeys(
+    entity: any,
+    keyValues: AnyRecord = {},
+    options: ResolveDraftOptions & { dropKeys?: string[] } = {}
+  ) {
     if (!keyValues || typeof keyValues !== 'object') {
       return {};
     }
     const { allowVirtual = [], dropKeys = [] } = options;
-    const elements = entity?.elements;
-    if (!elements) {
-      return { ...keyValues };
+    const elements = entity?.elements || {};
+
+    // Keep only primary-key elements plus explicitly allowed virtuals
+    const primaryKeys = new Set<string>();
+    for (const [name, element] of Object.entries(elements)) {
+      // CAP marks key columns with element.key === true on projections/drafts
+      if ((element as any)?.key === true) primaryKeys.add(name);
     }
+
     const cleaned: AnyRecord = {};
     for (const [key, value] of Object.entries(keyValues)) {
       if (dropKeys.includes(key)) continue;
-      const element = elements[key];
-      if (element?.virtual && !allowVirtual.includes(key)) continue;
+      const element = (elements as any)[key];
+      const isVirtual = Boolean(element?.virtual);
+      const isAllowedVirtual = allowVirtual.includes(key);
+      const isPrimaryKey = primaryKeys.has(key);
+      if (!isPrimaryKey && !(isVirtual && isAllowedVirtual)) continue;
       if (value === undefined) continue;
       cleaned[key] = value;
     }
@@ -474,7 +532,8 @@ export async function initCapMCPClient(options: CapInitOptions) {
 
     for (const [field, sort] of orderCandidates) {
       if (draftEntity.elements?.[field]) {
-        query.orderBy(field, sort as 'asc' | 'desc');
+        // Use string form "field desc" to avoid interpreting 'desc' as a column name
+        query.orderBy(`${field} ${sort}`);
         break;
       }
     }
@@ -598,6 +657,7 @@ export async function initCapMCPClient(options: CapInitOptions) {
   async function handleDraftEdit(input: AnyRecord = {}) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
+    const draftEntity = ensureDraftEntity(entityRef, entity);
 
     let keys = input.keys;
     if (!keys || !Object.keys(keys).length) {
@@ -611,6 +671,33 @@ export async function initCapMCPClient(options: CapInitOptions) {
     const result = await withServiceContext(async () => (service as any).edit(entityRef, keys), { event: 'EDIT' });
     const instance = Array.isArray(result) ? result[0] : result;
     rememberDraft(entityRef, instance);
+
+    // Ensure DraftUUID is cached even if not present on the edit result payload
+    try {
+      const id = instance?.ID ?? (Array.isArray(result) ? result?.[0]?.ID : undefined);
+      const hasUUID = Boolean(
+        instance?.DraftAdministrativeData_DraftUUID || instance?.draftAdministrativeData_DraftUUID
+      );
+      if (id !== undefined && id !== null && !hasUUID) {
+        const query = cds.ql.SELECT.one
+          .from(draftEntity)
+          .columns({ ref: ['ID'] }, { ref: ['DraftAdministrativeData_DraftUUID'] })
+          .where({ ID: id, IsActiveEntity: false });
+        const meta = await withServiceContext(async () => service.run(query));
+        if (meta?.DraftAdministrativeData_DraftUUID) {
+          console.log('[cap.draft.edit] fetched DraftUUID for cache', {
+            ID: id,
+            DraftAdministrativeData_DraftUUID: meta.DraftAdministrativeData_DraftUUID
+          });
+          rememberDraft(entityRef, {
+            ID: id,
+            DraftAdministrativeData_DraftUUID: meta.DraftAdministrativeData_DraftUUID
+          });
+        }
+      }
+    } catch (e) {
+      console.log('[cap.draft.edit] failed to fetch DraftUUID for cache', formatError(e));
+    }
     return toResultPayload(result, { entity: entityRef.name, action: 'EDIT' });
   }
 
@@ -621,13 +708,37 @@ export async function initCapMCPClient(options: CapInitOptions) {
 
     const { keys, data } = extractKeysAndData(entityRef, draftEntity, input);
 
-    const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
+    let mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
 
-    if (!data || typeof data !== 'object' || !Object.keys(data).length) {
+    const normalizedData = normalizePatchData(data);
+
+    // Fallback: auto-resolve DraftUUID if missing
+    if (mutationKeys.DraftAdministrativeData_DraftUUID === undefined) {
+      try {
+        const autoKeys = await autoResolveDraftKeys(entityRef, draftEntity);
+        if (autoKeys?.DraftAdministrativeData_DraftUUID) {
+          // Prefer provided ID if present, but fill missing fields from autoKeys
+          mutationKeys = {
+            ...autoKeys,
+            ...mutationKeys,
+            IsActiveEntity: false
+          };
+          console.log('[cap.draft.patch] autoResolved mutation keys', mutationKeys);
+        }
+      } catch (e) {
+        // keep going; UPDATE may still succeed if single draft by ID exists
+        console.log('[cap.draft.patch] autoResolveDraftKeys failed', formatError(e));
+      }
+    }
+
+    console.log('[cap.draft.patch] mutationKeys', mutationKeys);
+    console.log('[cap.draft.patch] normalizedData', normalizedData);
+
+    if (!normalizedData || !Object.keys(normalizedData).length) {
       throw new Error('Es wurden keine Felder zum Aktualisieren übergeben.');
     }
 
-    const payload = { ...data };
+    const payload = { ...normalizedData };
     if (mutationKeys.DraftAdministrativeData_DraftUUID !== undefined && payload.DraftAdministrativeData_DraftUUID === undefined) {
       payload.DraftAdministrativeData_DraftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
     }
@@ -638,10 +749,20 @@ export async function initCapMCPClient(options: CapInitOptions) {
       payload.ID = mutationKeys.ID;
     }
 
-    const affected = await withServiceContext(
-      async () => (service as any).update(draftEntity).set(payload).where(mutationKeys),
-      { event: 'UPDATE' }
-    );
+    let affected;
+    try {
+      affected = await withServiceContext(
+        async () => (service as any).update(draftEntity).set(payload).where(mutationKeys),
+        { event: 'UPDATE' }
+      );
+    } catch (error) {
+      console.log('[cap.draft.patch] update failed', {
+        error: formatError(error),
+        payload,
+        mutationKeys
+      });
+      throw error;
+    }
 
     if (!affected) {
       throw new Error('Kein Draft wurde aktualisiert. Bitte prüfe die ID oder erstelle einen neuen Draft.');
@@ -652,7 +773,7 @@ export async function initCapMCPClient(options: CapInitOptions) {
       const store = getDraftStore(entityRef.name);
       const cached = store.get(ID);
       if (cached) {
-        cached.data = { ...cached.data, ...data };
+        cached.data = { ...cached.data, ...normalizedData };
         cached.timestamp = Date.now();
       }
     }
@@ -674,7 +795,24 @@ export async function initCapMCPClient(options: CapInitOptions) {
     const draftEntity = ensureDraftEntity(entityRef, entity);
 
     const { keys } = extractKeysAndData(entityRef, draftEntity, input);
-    const mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
+    let mutationKeys = sanitizeDraftKeys(draftEntity, keys, { allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID'] });
+
+    // Fallback: ensure DraftUUID present for save
+    if (mutationKeys.DraftAdministrativeData_DraftUUID === undefined) {
+      try {
+        const autoKeys = await autoResolveDraftKeys(entityRef, draftEntity);
+        if (autoKeys?.DraftAdministrativeData_DraftUUID) {
+          mutationKeys = {
+            ...autoKeys,
+            ...mutationKeys,
+            IsActiveEntity: false
+          };
+          console.log('[cap.draft.save] autoResolved mutation keys', mutationKeys);
+        }
+      } catch (e) {
+        console.log('[cap.draft.save] autoResolveDraftKeys failed', formatError(e));
+      }
+    }
 
     const result = await withServiceContext(async () => (service as any).save(draftEntity, mutationKeys), { event: 'SAVE' });
     forgetDraft(entityRef, mutationKeys);
@@ -928,9 +1066,141 @@ export async function initCapMCPClient(options: CapInitOptions) {
     'cap.draft.addChild': handleDraftAddChild
   };
 
+  const invokeHandler = async (toolName: string, input: AnyRecord): Promise<CallToolResult> => {
+    const handler = handlers[toolName];
+    if (!handler) {
+      throw new Error(`Unknown CAP MCP tool "${toolName}".`);
+    }
+    const result = await handler(input);
+    return toCallToolResult(result);
+  };
+
+  const recordAny = z.record(z.any());
+  const optionalRecordAny = recordAny.optional();
+  const optionalArrayOfRecords = z.array(recordAny).optional();
+
+  const sdkServer = createSdkMcpServer({
+    name: 'cap',
+    version: '1.0.0',
+    tools: [
+      tool(
+        'cap.sql.execute',
+        'Execute a SQL statement through the CAP database connection. Defaults to read-only unless allowWrite is true.',
+        {
+          sql: z.string(),
+          params: z.union([z.array(z.any()), recordAny]).optional(),
+          allowWrite: z.boolean().optional()
+        },
+        async (args) => invokeHandler('cap.sql.execute', args)
+      ),
+      tool(
+        'cap.cqn.read',
+        'Run a CAP SELECT query using CQN primitives and return the resulting rows.',
+        {
+          entity: z.string(),
+          columns: z.array(z.string()).optional(),
+          where: optionalRecordAny,
+          limit: z.number().int().min(1).optional(),
+          offset: z.number().int().min(0).optional(),
+          draft: z.enum(['merged', 'active', 'draft']).optional()
+        },
+        async (args) => invokeHandler('cap.cqn.read', args)
+      ),
+      tool(
+        'cap.draft.new',
+        'Create a new draft instance for a draft-enabled entity.',
+        {
+          entity: z.string(),
+          data: optionalRecordAny
+        },
+        async (args) => invokeHandler('cap.draft.new', args)
+      ),
+      tool(
+        'cap.draft.edit',
+        'Put an active instance into draft edit mode.',
+        {
+          entity: z.string(),
+          keys: optionalRecordAny,
+          ID: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.draft.edit', args)
+      ),
+      tool(
+        'cap.draft.patch',
+        'Apply partial updates to an existing draft instance.',
+        {
+          entity: z.string(),
+          keys: optionalRecordAny,
+          // Accept data as object or JSON string so our handler can normalize
+          data: z.union([recordAny, z.string()]).optional(),
+          // Convenience fields
+          ID: z.string().optional(),
+          DraftAdministrativeData_DraftUUID: z.string().optional(),
+          // Allow common top-level patch fields (preserved through validation)
+          status: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.draft.patch', args)
+      ),
+      tool(
+        'cap.draft.save',
+        'Activate a draft and persist it as the active instance.',
+        {
+          entity: z.string(),
+          keys: optionalRecordAny,
+          ID: z.string().optional(),
+          DraftAdministrativeData_DraftUUID: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.draft.save', args)
+      ),
+      tool(
+        'cap.draft.cancel',
+        'Discard an existing draft instance.',
+        {
+          entity: z.string(),
+          keys: optionalRecordAny,
+          ID: z.string().optional(),
+          DraftAdministrativeData_DraftUUID: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.draft.cancel', args)
+      ),
+      tool(
+        'cap.draft.getAdminData',
+        'Read DraftAdministrativeData metadata for a draft-enabled entity.',
+        {
+          entity: z.string(),
+          keys: optionalRecordAny,
+          columns: z.array(z.string()).optional()
+        },
+        async (args) => invokeHandler('cap.draft.getAdminData', args)
+      ),
+      tool(
+        'cap.draft.addChild',
+        'Append entries to a draft composition element.',
+        {
+          entity: z.string(),
+          child: z.string(),
+          entries: optionalArrayOfRecords,
+          entry: recordAny.optional(),
+          keys: optionalRecordAny,
+          ID: z.string().optional(),
+          DraftAdministrativeData_DraftUUID: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.draft.addChild', args)
+      )
+    ]
+  });
+
   async function listTools() {
     return { tools: toolDefinitions };
   }
+
+  const toCallToolResult = (result: unknown): CallToolResult => {
+    const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    return {
+      content: [{ type: 'text', text }],
+      isError: false
+    };
+  };
 
   async function callTool(
     { name, arguments: args = {} }: { name?: string; arguments?: AnyRecord } = {},
@@ -950,20 +1220,12 @@ export async function initCapMCPClient(options: CapInitOptions) {
 
     if (requestContextStorage.getStore()) {
       const result = await invoke();
-      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      return {
-        content: [{ type: 'text', text }],
-        isError: false
-      };
+      return toCallToolResult(result);
     }
 
     const context = options.context || {};
     const result = await requestContextStorage.run(context, invoke);
-    const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    return {
-      content: [{ type: 'text', text }],
-      isError: false
-    };
+    return toCallToolResult(result);
   }
 
   async function readResource() {
@@ -987,6 +1249,7 @@ export async function initCapMCPClient(options: CapInitOptions) {
     readResource,
     close,
     toolDefinitions,
-    runWithContext
+    runWithContext,
+    sdkServer
   };
 }
