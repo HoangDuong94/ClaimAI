@@ -74,6 +74,27 @@ annotate service.Claims with @(
     }
 );
 
+annotate service.Claims with {
+    status      @Common.Text : status_text.name
+                @UI.TextArrangement : #TextOnly
+                @Common.ValueList : {
+                    CollectionPath : 'ClaimStatusTexts',
+                    SearchSupported : true,
+                    Parameters : [
+                        {
+                            $Type              : 'Common.ValueListParameterInOut',
+                            LocalDataProperty  : status,
+                            ValueListProperty  : 'code'
+                        },
+                        {
+                            $Type             : 'Common.ValueListParameterDisplayOnly',
+                            ValueListProperty : 'name'
+                        }
+                    ]
+                };
+    status_text @UI.Hidden : true;
+};
+
 /* =========================================================
  * ClaimDocuments (Sub Entity)
  * =======================================================*/

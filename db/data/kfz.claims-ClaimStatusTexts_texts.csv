@@ -1,0 +1,9 @@
+locale;code;name;descr
+en;Eingegangen;Received;Claim has been received
+en;In Prüfung;In Review;Claim is under review
+en;Freigegeben;Approved;Claim approved for payout
+en;Abgelehnt;Rejected;Claim was rejected
+de;Eingegangen;Eingegangen;Schadenmeldung wurde erfasst
+de;In Prüfung;In Prüfung;Schaden wird derzeit geprüft
+de;Freigegeben;Freigegeben;Schaden wurde freigegeben
+de;Abgelehnt;Abgelehnt;Schaden wurde abgelehnt

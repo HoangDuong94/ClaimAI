@@ -14,5 +14,7 @@ service ClaimsService @(path: '/service/claims') {
         claim : redirected to Claims
     };
 
+    entity ClaimStatusTexts as projection on ClaimsModel.ClaimStatusTexts;
+
     action callLLM (prompt: String) returns { response: String };
 }
