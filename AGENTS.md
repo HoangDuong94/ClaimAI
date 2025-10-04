@@ -45,6 +45,6 @@
 - `search_docs` MUST precede any CAP model or API changes and `cds` CLI usage; never propose or apply changes without consulting it.
 
 ### postgres (Database access)
-- Registered with `codex mcp add postgres -- npx --yes mcp-postgres-full-access postgresql://duh:test123@localhost:5432/stammtisch_ai_db`.
+- Registered with `codex mcp add postgres -- npx --yes mcp-postgres-full-access postgresql://claimai:claimai@localhost:5433/claimai_db`.
 - Connection string aligns with `cds.requires.db[development]` credentials; update if credentials/env differ.
 - Use the `query` tool for read/write SQL; prefer read-only queries unless a migration or data fix was requested.
