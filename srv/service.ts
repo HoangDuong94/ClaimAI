@@ -14,6 +14,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
+import { runClaudeAgent } from './lib/claude-agent.js';
 import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
 import MarkdownConverter from './utils/markdown-converter.js';
@@ -24,11 +25,13 @@ type AttachmentDirPromise = Promise<unknown> | null;
 
 type SsePayload = { type: string; [key: string]: unknown };
 
-type ClaimsRequest = Request & {
+interface CapRequestContext {
   user?: { id?: string; name?: string; tenant?: string } | null;
   tenant?: string;
   locale?: string;
-};
+}
+
+type ClaimsRequest = Request & CapRequestContext;
 
 interface GraphParticipant {
   name?: string | null;
@@ -79,6 +82,85 @@ interface NotificationSession {
   timer: NodeJS.Timeout | null;
 }
 
+type AgentBackend = 'langgraph' | 'claude';
+
+const resolveAgentBackend = (): AgentBackend => {
+  const raw = (process.env.CLAIMAI_AGENT_BACKEND || '').trim().toLowerCase();
+  if (['claude', 'claude-agent', 'claude_agent', 'anthropic', 'anthropic-claude'].includes(raw)) {
+    return 'claude';
+  }
+  return 'langgraph';
+};
+
+const MULTI_MODAL_SYSTEM_PROMPT = `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
+
+                   RESPONSE GUIDELINES:
+              - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
+              - Highlight the most important information for the user by wrapping key phrases or sentences in **bold**.
+
+                  CAP MODEL CONTEXT:
+                  - Before answering any question about CDS models, entities, fields, services, or CAP APIs, you MUST call the cds-mcp tool 'search_model' for the exact entity/service (unless you already called it earlier in this conversation and nothing has changed). Do not rely on intuition or prior knowledge.
+                  - If 'search_model' returns no match, state that clearly and ask the user for clarification instead of guessing; only read *.cds files directly when the user explicitly requests it.
+                  - Summarize the relevant findings from 'search_model' in your reply (for example required fields, draft status, endpoints) so subsequent tool calls remain grounded in that metadata.
+
+                  DATABASE ACCESS:
+                  - Before invoking any 'cap.*' tool (cqn.read, draft.new, draft.patch, etc.), ensure the relevant entity/service metadata from 'search_model' is already in context for this conversation; if not, call 'search_model' first and base your reasoning on its results.
+                  - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example kfz.claims.Claims) and keep result sets small (limit ≤ 200).
+                  - Use 'cap.sql.execute' when you need raw SQL. The tool is read-only by default; set allowWrite=true only after explicit user approval and double-check the statement before execution.
+                  - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. The MCP remembers the most recently created draft automatically; only provide keys when multiple drafts are open.
+                  - 'cap.draft.patch/save/cancel' accept convenient top-level fields (for example 'claim_number', 'status', 'estimated_cost'). If the draft ID is missing, the MCP reuses the last known draft instance.
+                  - CAP entity names use dot notation, but physical tables are underscored (kfz_claims_claims, kfz_claims_claimdocuments). Inspect a single row with 'cap.cqn.read' before mutating data.
+                  - Always tell the user which tool/entity you intend to modify before enabling allowWrite or saving a draft, and report affected rows or IDs afterward.
+
+                  CLAIMS HANDLING GUIDELINES (POC):
+                  - ID generation: Prefer letting CAP/DB defaults create UUIDs. If you must set IDs manually in SQL, call gen_random_uuid() within 'cap.sql.execute' (allowWrite=true) and document it.
+                  - All write operations require explicit user approval. Use draft-enabled flows ('cap.draft.new' → 'cap.draft.save') when capturing claim edits.
+                  - Key claim attributes to surface (confirm via 'cap.cqn.read'): "claim_number", "status", "incident_date", "estimated_cost", "severity_score", "fraud_score".
+                  - Validate enum fields before persisting: status ∈ {Eingegangen, In Prüfung, Freigegeben, Abgelehnt}.
+                  - Monetary values in 'estimated_cost' are CHF decimals (13,2). Normalize to two decimal places before saving.
+                  - Severity and fraud scores are integers 0–100; clamp user inputs to this range.
+                  - ClaimDocuments must reference an existing Claim via 'claim_ID'. Store structured metadata in 'parsed_meta' (JSON) and human-readable context in 'extracted_text'.
+
+                  WEB SEARCH ACCESS:
+                  - You can search the web using 'brave_web_search'. 
+
+                  FILESYSTEM ACCESS:
+                  - You can read, write, and manage files and directories in the project.
+                  - SECURITY: You can ONLY operate within the allowed project directory.
+                  - Use 'list_directory' with '.' or a subdirectory to see available files first.
+                  - For 'edit_file', ALWAYS use 'dryRun: true' first to preview changes.
+
+                  MICROSOFT 365 ACCESS:
+                  - Use mail tools for reading, replying, or downloading attachments.
+                  - Use calendar tools only if the user explicitly asks to schedule or modify a meeting; do not create events when the user only requests text drafts.
+                  - Before scheduling events with relative dates ("morgen", "übermorgen", "in X Tagen"), call the 'get_current_time' tool with timezone 'Europe/Berlin', compute the exact target date/time, confirm it with the user if unclear, and then create the event.
+
+                  EXCEL ACCESS:
+                  - You can read from and write to MS Excel files (.xlsx, .xlsm, etc.).
+                  - Available tools: excel_describe_sheets, excel_read_sheet, excel_write_to_sheet, excel_create_table, excel_copy_sheet, excel_screen_capture (Windows only).
+                  - ALWAYS start by using 'excel_describe_sheets' to understand the file's structure (sheet names).
+                  - For all Excel tools, you MUST provide the 'fileAbsolutePath' to the target Excel file.
+                  - When reading large sheets, the tool uses pagination. Pay attention to the 'knownPagingRanges' argument to read subsequent parts.
+                  - When writing with 'excel_write_to_sheet', you can create a new sheet by setting 'newSheet: true'. Be careful as writing can modify files permanently.
+
+                  ANALYSIS & VISUALIZATION WORKFLOW:
+                  - If the user asks for an "analysis", "report", or "visualization" of data, you MUST follow this specific workflow:
+                  1.  **Query Data:** First, use the 'cap.cqn.read' tool (or 'cap.sql.execute' with a read-only statement) to retrieve the necessary data from CAP. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which entities and columns are relevant for the analysis.
+                  2.  **Generate HTML File:** After successfully retrieving the data, you will generate a single, self-contained HTML file to present the analysis and visualization.
+                      -   **Structure:** Create a well-structured HTML5 document.
+                      -   **Styling:** Include some basic CSS in a <style> tag in the <head> for a clean and professional look (e.g., set a modern font, center content, add padding).
+                      -   **Visualization Library:** You MUST use a JavaScript charting library like **Chart.js** to create professional-looking charts (e.g., bar charts, line charts, pie charts). Include the library via its CDN link in a <script> tag in the <head>. Example: <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                      -   **Content:** The HTML body should contain:
+                          -   A clear headline (<h1>) describing the analysis (e.g., "Analyse der monatlichen Umsätze").
+                          -   A <canvas> element where the chart will be rendered.
+                          -   A <script> block at the end of the body. Inside this script, you will:
+                              a) Store the data retrieved from the database in a JavaScript variable.
+                              b) Write the JavaScript code to initialize Chart.js and render the chart on the canvas, using the data.
+                  3.  **Save the File:** Use the 'edit_file' tool to write the complete HTML code into a new file.
+                  4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
+
+                    `;
+
 export default class ClaimsService extends cds.ApplicationService {
   async init() {
     await super.init();
@@ -120,6 +202,13 @@ export default class ClaimsService extends cds.ApplicationService {
         });
       }
       return notificationSessions.get(userId)!;
+    };
+
+    const ensureMcpClients = async (): Promise<MCPClients> => {
+      if (mcpClients) return mcpClients;
+      const clients = await initAllMCPClients({ capService: this, logger: console });
+      mcpClients = clients;
+      return clients;
     };
 
     const summarizer = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
@@ -173,6 +262,29 @@ export default class ClaimsService extends cds.ApplicationService {
         return typeof message === 'string' ? message : String(message);
       }
       return String(err);
+    };
+
+    const buildCapContext = (req: CapRequestContext) => ({
+      user: req.user,
+      tenant: req.user?.tenant || req.tenant,
+      locale: req.locale
+    });
+
+    const executeClaudeCall = async (prompt: string, req: CapRequestContext): Promise<string> => {
+      const clients = await ensureMcpClients();
+      if (!clients?.cap) {
+        throw new Error('CAP MCP client is not initialized.');
+      }
+      console.log('🤖 Invoking Claude Agent SDK for prompt');
+      const rawResponse = await clients.cap.runWithContext(buildCapContext(req), async () =>
+        runClaudeAgent({
+          prompt,
+          systemPrompt: MULTI_MODAL_SYSTEM_PROMPT,
+          logger: console
+        })
+      );
+
+      return MarkdownConverter.convertForClaims(rawResponse);
     };
 
     const isExcelAttachment = (attachment: GraphAttachment | null | undefined): boolean => {
@@ -745,8 +857,7 @@ ${safeContent}`;
       console.log("Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
 
       try {
-        const clients = await initAllMCPClients({ capService: this, logger: console });
-        mcpClients = clients;
+        const clients = await ensureMcpClients();
 
         const [capTools, cdsModelTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
           loadMcpTools('cap', clients.cap),
@@ -758,7 +869,7 @@ ${safeContent}`;
         ]) as StructuredToolInterface[][];
 
         // PostgreSQL tools are temporarily disabled while the CAP MCP migration is in progress.
-        // const postgresTools = await loadMcpTools("query", mcpClients.postgres);
+        // const postgresTools = await loadMcpTools("query", clients.postgres);
         const postgresTools: StructuredToolInterface[] = [];
 
         // Kombiniere alle Tools
@@ -806,7 +917,13 @@ ${safeContent}`;
       }
     };
 
-    await initializeAgent();
+    const preferredBackend = resolveAgentBackend();
+    if (preferredBackend === 'langgraph') {
+      await initializeAgent();
+    } else {
+      console.log('Claude Agent backend selected; initializing MCP clients without LangGraph warmup.');
+      await ensureMcpClients();
+    }
 
     this.on('callLLM', async (req) => {
       const { prompt: userPrompt } = req.data;
@@ -815,99 +932,30 @@ ${safeContent}`;
         return;
       }
 
-      console.log('🚀 Received prompt for Multi-Modal Agent:', userPrompt);
-      const executor = await initializeAgent();
-
-      const capContext = {
-        user: req.user,
-        tenant: req.user?.tenant || req.tenant,
-        locale: req.locale
-      };
+      const backend = resolveAgentBackend();
+      console.log(`🚀 Received prompt for ${backend === 'claude' ? 'Claude Agent' : 'Multi-Modal Agent'}:`, userPrompt);
 
       try {
-        const clients = mcpClients;
-        if (!clients) {
-          throw new Error('MCP clients are not initialized.');
+        if (backend === 'claude') {
+          const claudeResponse = await executeClaudeCall(userPrompt, req);
+          return { response: claudeResponse };
         }
+
+        const executor = await initializeAgent();
+        const clients = await ensureMcpClients();
+        const capContext = buildCapContext(req);
 
         return await clients.cap.runWithContext(capContext, async () => {
           const systemMessage = {
-            role: "system",
-            content: `You are a helpful assistant with access to database queries, web search, the local filesystem, Microsoft 365 (mail + calendar), and MS Excel capabilities, who helps the user Hoang by his work.
-
-                   RESPONSE GUIDELINES:
-              - Keep responses intentionally concise: focus on the key result, list only the most relevant steps, and offer extra details only when the user asks for them.
-              - Highlight the most important information for the user by wrapping key phrases or sentences in **bold**.
-
-                  CAP MODEL CONTEXT:
-                  - Before answering any question about CDS models, entities, fields, services, or CAP APIs, you MUST call the cds-mcp tool 'search_model' for the exact entity/service (unless you already called it earlier in this conversation and nothing has changed). Do not rely on intuition or prior knowledge.
-                  - If 'search_model' returns no match, state that clearly and ask the user for clarification instead of guessing; only read *.cds files directly when the user explicitly requests it.
-                  - Summarize the relevant findings from 'search_model' in your reply (for example required fields, draft status, endpoints) so subsequent tool calls remain grounded in that metadata.
-
-                  DATABASE ACCESS:
-                  - Before invoking any 'cap.*' tool (cqn.read, draft.new, draft.patch, etc.), ensure the relevant entity/service metadata from 'search_model' is already in context for this conversation; if not, call 'search_model' first and base your reasoning on its results.
-                  - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example kfz.claims.Claims) and keep result sets small (limit ≤ 200).
-                  - Use 'cap.sql.execute' when you need raw SQL. The tool is read-only by default; set allowWrite=true only after explicit user approval and double-check the statement before execution.
-                  - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. The MCP remembers the most recently created draft automatically; only provide keys when multiple drafts are open.
-                  - 'cap.draft.patch/save/cancel' accept convenient top-level fields (for example 'claim_number', 'status', 'estimated_cost'). If the draft ID is missing, the MCP reuses the last known draft instance.
-                  - CAP entity names use dot notation, but physical tables are underscored (kfz_claims_claims, kfz_claims_claimdocuments). Inspect a single row with 'cap.cqn.read' before mutating data.
-                  - Always tell the user which tool/entity you intend to modify before enabling allowWrite or saving a draft, and report affected rows or IDs afterward.
-
-                  CLAIMS HANDLING GUIDELINES (POC):
-                  - ID generation: Prefer letting CAP/DB defaults create UUIDs. If you must set IDs manually in SQL, call gen_random_uuid() within 'cap.sql.execute' (allowWrite=true) and document it.
-                  - All write operations require explicit user approval. Use draft-enabled flows ('cap.draft.new' → 'cap.draft.save') when capturing claim edits.
-                  - Key claim attributes to surface (confirm via 'cap.cqn.read'): "claim_number", "status", "incident_date", "estimated_cost", "severity_score", "fraud_score".
-                  - Validate enum fields before persisting: status ∈ {Eingegangen, In Prüfung, Freigegeben, Abgelehnt}.
-                  - Monetary values in 'estimated_cost' are CHF decimals (13,2). Normalize to two decimal places before saving.
-                  - Severity and fraud scores are integers 0–100; clamp user inputs to this range.
-                  - ClaimDocuments must reference an existing Claim via 'claim_ID'. Store structured metadata in 'parsed_meta' (JSON) and human-readable context in 'extracted_text'.
-
-                  WEB SEARCH ACCESS:
-                  - You can search the web using 'brave_web_search'. 
-
-                  FILESYSTEM ACCESS:
-                  - You can read, write, and manage files and directories in the project.
-                  - SECURITY: You can ONLY operate within the allowed project directory.
-                  - Use 'list_directory' with '.' or a subdirectory to see available files first.
-                  - For 'edit_file', ALWAYS use 'dryRun: true' first to preview changes.
-
-                  MICROSOFT 365 ACCESS:
-                  - Use mail tools for reading, replying, or downloading attachments.
-                  - Use calendar tools only if the user explicitly asks to schedule or modify a meeting; do not create events when the user only requests text drafts.
-                  - Before scheduling events with relative dates ("morgen", "übermorgen", "in X Tagen"), call the 'get_current_time' tool with timezone 'Europe/Berlin', compute the exact target date/time, confirm it with the user if unclear, and then create the event.
-
-                  EXCEL ACCESS:
-                  - You can read from and write to MS Excel files (.xlsx, .xlsm, etc.).
-                  - Available tools: excel_describe_sheets, excel_read_sheet, excel_write_to_sheet, excel_create_table, excel_copy_sheet, excel_screen_capture (Windows only).
-                  - ALWAYS start by using 'excel_describe_sheets' to understand the file's structure (sheet names).
-                  - For all Excel tools, you MUST provide the 'fileAbsolutePath' to the target Excel file.
-                  - When reading large sheets, the tool uses pagination. Pay attention to the 'knownPagingRanges' argument to read subsequent parts.
-                  - When writing with 'excel_write_to_sheet', you can create a new sheet by setting 'newSheet: true'. Be careful as writing can modify files permanently.
-
-                  ANALYSIS & VISUALIZATION WORKFLOW:
-                  - If the user asks for an "analysis", "report", or "visualization" of data, you MUST follow this specific workflow:
-                  1.  **Query Data:** First, use the 'cap.cqn.read' tool (or 'cap.sql.execute' with a read-only statement) to retrieve the necessary data from CAP. If the user's request is ambiguous (e.g., "analyze the data"), ask clarifying questions to determine which entities and columns are relevant for the analysis.
-                  2.  **Generate HTML File:** After successfully retrieving the data, you will generate a single, self-contained HTML file to present the analysis and visualization.
-                      -   **Structure:** Create a well-structured HTML5 document.
-                      -   **Styling:** Include some basic CSS in a <style> tag in the <head> for a clean and professional look (e.g., set a modern font, center content, add padding).
-                      -   **Visualization Library:** You MUST use a JavaScript charting library like **Chart.js** to create professional-looking charts (e.g., bar charts, line charts, pie charts). Include the library via its CDN link in a <script> tag in the <head>. Example: <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-                      -   **Content:** The HTML body should contain:
-                          -   A clear headline (<h1>) describing the analysis (e.g., "Analyse der monatlichen Umsätze").
-                          -   A <canvas> element where the chart will be rendered.
-                          -   A <script> block at the end of the body. Inside this script, you will:
-                              a) Store the data retrieved from the database in a JavaScript variable.
-                              b) Write the JavaScript code to initialize Chart.js and render the chart on the canvas, using the data.
-                  3.  **Save the File:** Use the 'edit_file' tool to write the complete HTML code into a new file.
-                  4.  **Report Back:** Finally, after the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.
-
-                    `
-                      };
+            role: 'system',
+            content: MULTI_MODAL_SYSTEM_PROMPT
+          };
 
           const userMessage = {
-            role: "user",
+            role: 'user',
             content: userPrompt
           };
-          
+
           const stream = await executor.stream(
             {
               messages: [systemMessage, userMessage]
@@ -917,7 +965,7 @@ ${safeContent}`;
             }
           );
 
-          const finalResponseParts = [];
+          const finalResponseParts: string[] = [];
           console.log("\n\n---- AGENT STREAM START ----\n");
 
           for await (const chunk of stream) {
@@ -929,15 +977,26 @@ ${safeContent}`;
               }
               if (message.tool_calls && message.tool_calls.length > 0) {
                 const toolCall = message.tool_calls[0];
-                const toolCallStr = `\n\n<TOOL_CALL>\n  Tool: ${toolCall.name}\n  Args: ${JSON.stringify(toolCall.args)}\n</TOOL_CALL>\n\n`;
+                const toolCallStr = `
+
+<TOOL_CALL>
+  Tool: ${toolCall.name}
+  Args: ${JSON.stringify(toolCall.args)}
+</TOOL_CALL>
+
+`;
                 process.stdout.write(toolCallStr);
               }
             }
 
-          if (chunk.tools?.messages) {
-               const toolMessage = chunk.tools.messages[0];
-               const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolMessage.content}\n</TOOL_OUTPUT>\n\n`;
-               process.stdout.write(toolOutputStr);
+            if (chunk.tools?.messages) {
+              const toolMessage = chunk.tools.messages[0];
+              const toolOutputStr = `<TOOL_OUTPUT>
+  ${toolMessage.content}
+</TOOL_OUTPUT>
+
+`;
+              process.stdout.write(toolOutputStr);
             }
           }
           console.log("\n---- AGENT STREAM END ----\n");
@@ -950,7 +1009,26 @@ ${safeContent}`;
 
       } catch (error) {
         console.error('💥 Error during agent execution:', error);
-        req.error(500, `Failed to process query: ${getErrorMessage(error)}`);
+        const backendLabel = backend === 'claude' ? 'Claude Agent' : 'LangGraph agent';
+        req.error(500, `Failed to process query via ${backendLabel}: ${getErrorMessage(error)}`);
+      }
+    });
+
+    this.on('callClaudeAgent', async (req) => {
+      const { prompt: userPrompt } = req.data;
+      if (!userPrompt) {
+        req.error(400, 'Prompt is required');
+        return;
+      }
+
+      console.log('🚀 Received prompt for Claude Agent (direct):', userPrompt);
+
+      try {
+        const claudeResponse = await executeClaudeCall(userPrompt, req);
+        return { response: claudeResponse };
+      } catch (error) {
+        console.error('💥 Error during Claude agent execution:', error);
+        req.error(500, `Failed to process query via Claude Agent: ${getErrorMessage(error)}`);
       }
     });
 
