@@ -1,5 +1,5 @@
 {
-  "name": "StammtischAI",
+  "name": "claimai",
   "version": "1.0.0",
   "type": "module",
   "description": "A simple CAP project.",
@@ -42,20 +42,20 @@
         "[development]": {
           "credentials": {
             "host": "localhost",
-            "port": 5432,
-            "database": "stammtisch_ai_db",
-            "user": "duh",
-            "password": "test123"
+            "port": 5433,
+            "database": "claimai_db",
+            "user": "claimai",
+            "password": "claimai"
           }
         },
         "[hybrid]": {
           "kind": "postgres",
           "credentials": {
             "host": "localhost",
-            "port": 5432,
-            "database": "stammtisch_ai_db",
-            "user": "duh",
-            "password": "test123"
+            "port": 5433,
+            "database": "claimai_db",
+            "user": "claimai",
+            "password": "claimai"
           }
         }
       },

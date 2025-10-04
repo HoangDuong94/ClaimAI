@@ -1,38 +1,32 @@
 sap.ui.define([
-    "sap/ui/test/opaQunit"
-], function (opaTest) {
-    "use strict";
+    'sap/ui/test/opaQunit'
+], function(opaTest) {
+    'use strict';
 
-    var Journey = {
+    const Journey = {
         run: function() {
-            QUnit.module("First journey");
+            QUnit.module('Claims journey');
 
-            opaTest("Start application", function (Given, When, Then) {
+            opaTest('Start application', function(Given, When, Then) {
                 Given.iStartMyApp();
 
-                Then.onTheStammtischeList.iSeeThisPage();
-
+                Then.onTheClaimsList.iSeeThisPage();
             });
 
+            opaTest('Navigate to Claim ObjectPage', function(Given, When, Then) {
+                When.onTheClaimsList.onFilterBar().iExecuteSearch();
 
-            opaTest("Navigate to ObjectPage", function (Given, When, Then) {
-                // Note: this test will fail if the ListReport page doesn't show any data
-                
-                When.onTheStammtischeList.onFilterBar().iExecuteSearch();
-                
-                Then.onTheStammtischeList.onTable().iCheckRows();
+                Then.onTheClaimsList.onTable().iCheckRows();
 
-                When.onTheStammtischeList.onTable().iPressRow(0);
-                Then.onTheStammtischeObjectPage.iSeeThisPage();
-
+                When.onTheClaimsList.onTable().iPressRow(0);
+                Then.onTheClaimsObjectPage.iSeeThisPage();
             });
 
-            opaTest("Teardown", function (Given, When, Then) { 
-                // Cleanup
+            opaTest('Teardown', function(Given, When, Then) {
                 Given.iTearDownMyApp();
             });
         }
-    }
+    };
 
     return Journey;
 });

@@ -2,7 +2,7 @@
 
 specVersion: "3.1"
 metadata:
-  name: sap.stammtisch.ui.app
+  name: kfz.claims.ui.app
 type: application
 server:
   customMiddleware:

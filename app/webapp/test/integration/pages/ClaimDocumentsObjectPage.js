@@ -1,16 +1,16 @@
 sap.ui.define(['sap/fe/test/ObjectPage'], function(ObjectPage) {
     'use strict';
 
-    var CustomPageDefinitions = {
+    const CustomPageDefinitions = {
         actions: {},
         assertions: {}
     };
 
     return new ObjectPage(
         {
-            appId: 'sap.stammtisch.ui.app',
-            componentId: 'StammtischeObjectPage',
-            contextPath: '/Stammtische'
+            appId: 'kfz.claims.ui.app',
+            componentId: 'ClaimDocumentsObjectPage',
+            contextPath: '/ClaimDocuments'
         },
         CustomPageDefinitions
     );

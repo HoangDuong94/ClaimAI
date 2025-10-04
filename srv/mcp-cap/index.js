@@ -52,7 +52,7 @@ const toolDefinitions = [
     inputSchema: {
       type: 'object',
       properties: {
-        entity: { type: 'string', description: 'Entity name as exposed by the service (for example sap.stammtisch.Stammtische).' },
+        entity: { type: 'string', description: 'Entity name as exposed by the service (for example kfz.claims.Claims).' },
         columns: { type: 'array', items: { type: 'string' }, description: 'Optional list of columns to project.' },
         where: { type: 'object', additionalProperties: true, description: 'Optional WHERE clause expressed as CQN object literal.' },
         limit: { type: 'integer', minimum: 1, description: 'Maximum number of rows to return.' },

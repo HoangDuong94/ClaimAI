@@ -228,7 +228,7 @@ class MarkdownConverter {
   /**
    * Hauptmethode für die Konvertierung mit SAP-spezifischen Verbesserungen
    */
-  static convertForStammtischAI(markdown) {
+  static convertForClaims(markdown) {
     let html = this.convertToHTML(markdown);
     html = this.convertSAPContent(html);
     return html;

@@ -34,7 +34,7 @@
 
 ## Security & Configuration Tips
 - Do not commit secrets. Use `.env` for local dev and environment variables to override `cds.requires` (Postgres, destinations, AI services). `.gitignore` already excludes common files.
-- Service runs at port `9999` (see `package.json`). Service root: `/service/stammtisch`; action `callLLM` in `srv/service.js` executes the multi-tool agent.
+- Service runs at port `9999` (see `package.json`). Service root: `/service/claims`; action `callLLM` in `srv/service.js` executes the multi-tool agent.
 - Supporting agent helpers live in `srv/lib/` and `srv/utils/`; avoid reintroducing generated artefacts into version control.
 
 ## MCP Servers

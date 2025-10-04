@@ -1,4 +1,4 @@
-// srv/StammtischService.js
+// srv/ClaimsService.js
 
 import cds from '@sap/cds';
 import express from 'express';
@@ -16,7 +16,7 @@ import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
 import MarkdownConverter from './utils/markdown-converter.js';
 
-export default class StammtischService extends cds.ApplicationService {
+export default class ClaimsService extends cds.ApplicationService {
   async init() {
     await super.init();
     let agentExecutor = null;
@@ -584,7 +584,7 @@ ${safeContent}`;
     };
 
     // SSE stream endpoint
-    app.get('/service/stammtisch/notifications/stream', async (req, res) => {
+    app.get('/service/claims/notifications/stream', async (req, res) => {
       const userId = getUserId(req);
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -624,7 +624,7 @@ ${safeContent}`;
     });
 
     // Mark-as-read endpoint (backend-only, no MCP tool)
-    app.post('/service/stammtisch/notifications/markRead', express.json(), async (req, res) => {
+    app.post('/service/claims/notifications/markRead', express.json(), async (req, res) => {
       try {
         const userId = getUserId(req);
         const { id } = req.body || {};
@@ -745,21 +745,21 @@ ${safeContent}`;
 
                   DATABASE ACCESS:
                   - Before invoking any 'cap.*' tool (cqn.read, draft.new, draft.patch, etc.), ensure the relevant entity/service metadata from 'search_model' is already in context for this conversation; if not, call 'search_model' first and base your reasoning on its results.
-                  - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example sap.stammtisch.Stammtische) and keep result sets small (limit ≤ 200).
+                  - Use 'cap.cqn.read' for SELECT-style queries against CAP entities. Always provide the fully qualified entity name (for example kfz.claims.Claims) and keep result sets small (limit ≤ 200).
                   - Use 'cap.sql.execute' when you need raw SQL. The tool is read-only by default; set allowWrite=true only after explicit user approval and double-check the statement before execution.
                   - Draft workflow: 'cap.draft.new' → optional 'cap.draft.patch' → 'cap.draft.save'. The MCP remembers the most recently created draft automatically; only provide keys when multiple drafts are open.
-                  - 'cap.draft.patch/save/cancel' accept convenient top-level fields (for example 'thema', 'datum'). If the draft ID is missing, the MCP reuses the last known draft instance.
-                  - CAP entity names use dot notation, but physical tables are underscored (sap_stammtisch_stammtische, sap_stammtisch_praesentatoren, sap_stammtisch_teilnehmer). Inspect a single row with 'cap.cqn.read' before mutating data.
+                  - 'cap.draft.patch/save/cancel' accept convenient top-level fields (for example 'claim_number', 'status', 'estimated_cost'). If the draft ID is missing, the MCP reuses the last known draft instance.
+                  - CAP entity names use dot notation, but physical tables are underscored (kfz_claims_claims, kfz_claims_claimdocuments). Inspect a single row with 'cap.cqn.read' before mutating data.
                   - Always tell the user which tool/entity you intend to modify before enabling allowWrite or saving a draft, and report affected rows or IDs afterward.
 
-                  STAMMTISCH IMPORT RULES (POC):
+                  CLAIMS HANDLING GUIDELINES (POC):
                   - ID generation: Prefer letting CAP/DB defaults create UUIDs. If you must set IDs manually in SQL, call gen_random_uuid() within 'cap.sql.execute' (allowWrite=true) and document it.
-                  - On explicit user approval import new Themen via 'cap.draft.new' + 'cap.draft.save' or a single 'cap.sql.execute' (allowWrite=true). Follow up with a read-back so the user sees the persisted row.
-                  - Columns to consider (confirm via 'cap.cqn.read'): "ID", "thema", "datum", "ort", "notizen", "praesentator_ID".
-                  - datum: Build a timestamp at 18:00 local (ISO string, e.g., '2025-09-30T18:00:00Z'). Ask the user if the date is unknown.
-                  - ort: Default to 'Luzern' unless the user provides a different location.
-                  - Presenter mapping: For each value in the Excel column "Vorgetragen durch", set "praesentator_ID" to a UUID (prefer DB default or gen_random_uuid()).
-                  - Duplicate prevention: Compare normalized Themen against BekannteThemenJSON (case-insensitive, trim). If a duplicate exists, pause and request explicit approval before inserting or saving a draft.
+                  - All write operations require explicit user approval. Use draft-enabled flows ('cap.draft.new' → 'cap.draft.save') when capturing claim edits.
+                  - Key claim attributes to surface (confirm via 'cap.cqn.read'): "claim_number", "status", "incident_date", "estimated_cost", "severity_score", "fraud_score".
+                  - Validate enum fields before persisting: status ∈ {eingegangen, in_pruefung, freigegeben, abgelehnt}.
+                  - Monetary values in 'estimated_cost' are CHF decimals (13,2). Normalize to two decimal places before saving.
+                  - Severity and fraud scores are integers 0–100; clamp user inputs to this range.
+                  - ClaimDocuments must reference an existing Claim via 'claim_ID'. Store structured metadata in 'parsed_meta' (JSON) and human-readable context in 'extracted_text'.
 
                   WEB SEARCH ACCESS:
                   - You can search the web using 'brave_web_search'. 
@@ -842,7 +842,7 @@ ${safeContent}`;
           console.log("\n---- AGENT STREAM END ----\n");
 
           const rawResponse = finalResponseParts.join("");
-          const htmlResponse = MarkdownConverter.convertForStammtischAI(rawResponse);
+          const htmlResponse = MarkdownConverter.convertForClaims(rawResponse);
 
           return { response: htmlResponse };
         });

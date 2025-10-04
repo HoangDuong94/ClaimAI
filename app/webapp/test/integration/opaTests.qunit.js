@@ -1,25 +1,23 @@
 sap.ui.require(
     [
         'sap/fe/test/JourneyRunner',
-        'sap/stammtisch/ui/app/test/integration/FirstJourney',
-		'sap/stammtisch/ui/app/test/integration/pages/StammtischeList',
-		'sap/stammtisch/ui/app/test/integration/pages/StammtischeObjectPage',
-		'sap/stammtisch/ui/app/test/integration/pages/TeilnehmerObjectPage'
+        'kfz/claims/ui/app/test/integration/FirstJourney',
+        'kfz/claims/ui/app/test/integration/pages/ClaimsList',
+        'kfz/claims/ui/app/test/integration/pages/ClaimsObjectPage',
+        'kfz/claims/ui/app/test/integration/pages/ClaimDocumentsObjectPage'
     ],
-    function(JourneyRunner, opaJourney, StammtischeList, StammtischeObjectPage, TeilnehmerObjectPage) {
+    function(JourneyRunner, opaJourney, ClaimsList, ClaimsObjectPage, ClaimDocumentsObjectPage) {
         'use strict';
-        var JourneyRunner = new JourneyRunner({
-            // start index.html in web folder
-            launchUrl: sap.ui.require.toUrl('sap/stammtisch/ui/app') + '/index.html'
+        const journeyRunner = new JourneyRunner({
+            launchUrl: sap.ui.require.toUrl('kfz/claims/ui/app') + '/index.html'
         });
 
-       
-        JourneyRunner.run(
+        journeyRunner.run(
             {
-                pages: { 
-					onTheStammtischeList: StammtischeList,
-					onTheStammtischeObjectPage: StammtischeObjectPage,
-					onTheTeilnehmerObjectPage: TeilnehmerObjectPage
+                pages: {
+                    onTheClaimsList: ClaimsList,
+                    onTheClaimsObjectPage: ClaimsObjectPage,
+                    onTheClaimDocumentsObjectPage: ClaimDocumentsObjectPage
                 }
             },
             opaJourney.run

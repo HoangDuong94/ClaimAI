@@ -1,26 +1,18 @@
-using { sap.stammtisch as StammtischModel } from '../db/schema';
-using from '../app/annotations'; 
+using { kfz.claims as ClaimsModel } from '../db/schema';
+using from '../app/annotations';
 
-service StammtischService @(path: '/service/stammtisch') { 
+service ClaimsService @(path: '/service/claims') {
 
-    @odata.draft.enabled // Aktiviere Draft-Modus für diese Entität
-    entity Stammtische as projection on StammtischModel.Stammtische {
+    @odata.draft.enabled
+    entity Claims as projection on ClaimsModel.Claims {
         *,
-        // Navigation Properties explizit exponieren
-        praesentator : redirected to Praesentatoren,
-        teilnehmer : redirected to Teilnehmer
+        documents : redirected to ClaimDocuments
     };
 
-    entity Praesentatoren as projection on StammtischModel.Praesentatoren {
+    entity ClaimDocuments as projection on ClaimsModel.ClaimDocuments {
         *,
-        stammtische : redirected to Stammtische
-    };
-    
-    entity Teilnehmer as projection on StammtischModel.Teilnehmer {
-        *,
-        stammtisch : redirected to Stammtische
+        claim : redirected to Claims
     };
 
     action callLLM (prompt: String) returns { response: String };
-
 }

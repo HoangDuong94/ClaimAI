@@ -1,10 +1,12 @@
 {
   "_version": "1.65.0",
   "sap.app": {
-    "id": "sap.stammtisch.ui.app",
+    "id": "kfz.claims.ui.app",
     "type": "application",
     "i18n": "i18n/i18n.properties",
-    "applicationVersion": { "version": "0.0.1" },
+    "applicationVersion": {
+      "version": "0.0.1"
+    },
     "title": "{{appTitle}}",
     "description": "{{appDescription}}",
     "resources": "resources.json",
@@ -15,7 +17,7 @@
     },
     "dataSources": {
       "mainService": {
-        "uri": "/service/stammtisch/",
+        "uri": "/service/claims/",
         "type": "OData",
         "settings": {
           "annotations": [],
@@ -26,20 +28,41 @@
   },
   "sap.ui": {
     "technology": "UI5",
-    "icons": { "icon": "", "favIcon": "", "phone": "", "phone@2": "", "tablet": "", "tablet@2": "" },
-    "deviceTypes": { "desktop": true, "tablet": true, "phone": true }
+    "icons": {
+      "icon": "",
+      "favIcon": "",
+      "phone": "",
+      "phone@2": "",
+      "tablet": "",
+      "tablet@2": ""
+    },
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
   },
   "sap.ui5": {
     "flexEnabled": true,
     "dependencies": {
       "minUI5Version": "1.120.0",
-      "libs": { "sap.m": {}, "sap.ui.core": {}, "sap.ui.layout": {}, "sap.fe.templates": {} }
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {},
+        "sap.ui.layout": {},
+        "sap.fe.templates": {}
+      }
     },
-    "contentDensities": { "compact": true, "cozy": true },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
     "models": {
       "i18n": {
         "type": "sap.ui.model.resource.ResourceModel",
-        "settings": { "bundleName": "sap.stammtisch.ui.app.i18n.i18n" }
+        "settings": {
+          "bundleName": "kfz.claims.ui.app.i18n.i18n"
+        }
       },
       "": {
         "dataSource": "mainService",
@@ -55,163 +78,95 @@
         "uri": "i18n/i18n.properties"
       }
     },
-    "resources": { "css": [{ "uri": "css/customStyles.css" }] },
+    "resources": {
+      "css": [
+        {
+          "uri": "css/customStyles.css"
+        }
+      ]
+    },
     "routing": {
       "config": {},
       "routes": [
         {
           "pattern": ":?query:",
-          "name": "StammtischeList",
-          "target": "StammtischeList",
+          "name": "ClaimsList",
+          "target": "ClaimsList",
           "level": 1
         },
         {
-          "pattern": "Stammtische({key}):?query:",
-          "name": "StammtischeObjectPage",
-          "target": "StammtischeObjectPage",
+          "pattern": "Claims({key}):?query:",
+          "name": "ClaimsObjectPage",
+          "target": "ClaimsObjectPage",
           "level": 1
         },
         {
-          "pattern": "Stammtische({key})/teilnehmer({key2}):?query:",
-          "name": "TeilnehmerObjectPage",
-          "target": "TeilnehmerObjectPage",
-          "level": 1
-        },
-        {
-          "pattern": "Praesentatoren:?query:",
-          "name": "PraesentatorenList",
-          "target": "PraesentatorenList",
-          "level": 1
-        },
-        {
-          "pattern": "Praesentatoren({key}):?query:",
-          "name": "PraesentatorenObjectPage",
-          "target": "PraesentatorenObjectPage",
-          "level": 1
-        },
-        {
-          "pattern": "Praesentatoren({key})/stammtische({stammtischKey}):?query:",
-          "name": "PraesentatorToStammtischObjectPage",
-          "target": "StammtischeObjectPage",
-          "level": 1
+          "pattern": "Claims({key})/documents({docKey}):?query:",
+          "name": "ClaimDocumentsObjectPage",
+          "target": "ClaimDocumentsObjectPage",
+          "level": 2
         }
       ],
       "targets": {
-        "StammtischeList": {
+        "ClaimsList": {
           "type": "Component",
-          "id": "StammtischeList",
+          "id": "ClaimsList",
           "name": "sap.fe.templates.ListReport",
           "options": {
             "settings": {
-              "contextPath": "/Stammtische",
+              "contextPath": "/Claims",
               "variantManagement": "Page",
               "navigation": {
-                "Stammtische": { "detail": { "route": "StammtischeObjectPage" } }
+                "Claims": {
+                  "detail": {
+                    "route": "ClaimsObjectPage"
+                  }
+                }
               },
               "controlConfiguration": {
                 "@com.sap.vocabularies.UI.v1.LineItem": {
-                  "tableSettings": { "type": "ResponsiveTable" }
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  }
                 }
               }
             }
-          },
-          "extends": {
-            "controller": {
-              "name": "sap.stammtisch.ui.app.ext.CustomActions",
-              "namespace": "sap.stammtisch.ui.app.ext"
-            }
           }
         },
-        "StammtischeObjectPage": {
+        "ClaimsObjectPage": {
           "type": "Component",
-          "id": "StammtischeObjectPage",
+          "id": "ClaimsObjectPage",
           "name": "sap.fe.templates.ObjectPage",
           "options": {
             "settings": {
+              "contextPath": "/Claims",
               "editableHeaderContent": false,
-              "contextPath": "/Stammtische",
               "navigation": {
-                "teilnehmer": { "detail": { "route": "TeilnehmerObjectPage" } }
-              },
-              "actions": {
-                "AIChatActionStammtischOP": {
-                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onToggleChatSidePanel",
-                  "text": "{{btnTextAIChat}}",
-                  "visible": true,
-                  "enabled": true,
-                  "requiresSelection": false
+                "documents": {
+                  "detail": {
+                    "route": "ClaimDocumentsObjectPage"
+                  }
                 }
               }
             }
-          },
-          "extends": {
-            "controller": {
-              "name": "sap.stammtisch.ui.app.ext.CustomActions",
-              "namespace": "sap.stammtisch.ui.app.ext"
-            }
           }
         },
-        "TeilnehmerObjectPage": {
+        "ClaimDocumentsObjectPage": {
           "type": "Component",
-          "id": "TeilnehmerObjectPage",
+          "id": "ClaimDocumentsObjectPage",
           "name": "sap.fe.templates.ObjectPage",
           "options": {
             "settings": {
-              "editableHeaderContent": false,
-              "contextPath": "/Stammtische/teilnehmer",
-              "actions": {
-                "AIChatActionTeilnehmerOP": {
-                  "press": "sap.stammtisch.ui.app.ext.CustomActions.onOpenAIChatDialog",
-                  "text": "{{btnTextAIChat}}",
-                  "visible": true,
-                  "enabled": true,
-                  "requiresSelection": false
-                }
-              }
-            }
-          },
-          "extends": {
-            "controller": {
-              "name": "sap.stammtisch.ui.app.ext.CustomActions",
-              "namespace": "sap.stammtisch.ui.app.ext"
-            }
-          }
-        },
-        "PraesentatorenList": {
-          "type": "Component",
-          "id": "PraesentatorenList",
-          "name": "sap.fe.templates.ListReport",
-          "options": {
-            "settings": {
-              "contextPath": "/Praesentatoren",
-              "variantManagement": "Page",
-              "navigation": {
-                "Praesentatoren": { "detail": { "route": "PraesentatorenObjectPage" } }
-              },
-              "controlConfiguration": {
-                "@com.sap.vocabularies.UI.v1.LineItem": {
-                  "tableSettings": { "type": "ResponsiveTable" }
-                }
-              }
-            }
-          }
-        },
-        "PraesentatorenObjectPage": {
-          "type": "Component",
-          "id": "PraesentatorenObjectPage",
-          "name": "sap.fe.templates.ObjectPage",
-          "options": {
-            "settings": {
-              "editableHeaderContent": false,
-              "contextPath": "/Praesentatoren",
-              "navigation": {
-                "stammtische": { "detail": { "route": "StammtischeObjectPage" } }
-              }
+              "contextPath": "/ClaimDocuments",
+              "editableHeaderContent": false
             }
           }
         }
       }
     }
   },
-  "sap.fiori": { "registrationIds": [], "archeType": "transactional" }
+  "sap.fiori": {
+    "registrationIds": [],
+    "archeType": "transactional"
+  }
 }

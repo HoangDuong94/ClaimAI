@@ -4,7 +4,7 @@ sap.ui.define([
 ], function (AppComponent) {
     "use strict";
 
-    return AppComponent.extend("sap.stammtisch.ui.app.Component", {
+    return AppComponent.extend("kfz.claims.ui.app.Component", {
         metadata: {
             manifest: "json"
         },
@@ -16,7 +16,7 @@ sap.ui.define([
         init: function () {
             // Standard FE Initialisierung
             AppComponent.prototype.init.apply(this, arguments);
-            console.log("Fiori Elements Component 'sap.stammtisch.ui.app' initialized.");
+            console.log("Fiori Elements Component 'kfz.claims.ui.app' initialized.");
         },
 
         // Wird von main.js aufgerufen

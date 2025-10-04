@@ -7,21 +7,21 @@
 |**Generation Platform**<br>CLI|
 |**Template Used**<br>List Report Page V4|
 |**Service Type**<br>Local Cap|
-|**Service URL**<br>http://localhost:4004/service/stammtisch/|
+|**Service URL**<br>http://localhost:9999/service/claims/|
 |**Module Name**<br>app|
-|**Application Title**<br>Stammtisch Verwaltung|
-|**Namespace**<br>sap.stammtisch.ui|
+|**Application Title**<br>ClaimAI Assistant|
+|**Namespace**<br>kfz.claims.ui|
 |**UI5 Theme**<br>sap_horizon|
 |**UI5 Version**<br>1.136.0|
 |**Enable Code Assist Libraries**<br>False|
 |**Enable TypeScript**<br>False|
 |**Add Eslint configuration**<br>False|
-|**Main Entity**<br>Stammtische|
-|**Navigation Entity**<br>teilnehmer|
+|**Main Entity**<br>Claims|
+|**Navigation Entity**<br>documents|
 
 ## app
 
-SAP Stammtisch
+ClaimAI Assistant
 
 ### Starting the generated app
 

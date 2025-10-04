@@ -1,56 +1,39 @@
-namespace sap.stammtisch;
+namespace kfz.claims;
 
-using { cuid, managed, temporal } from '@sap/cds/common';
+using { cuid, managed } from '@sap/cds/common';
 
-entity Praesentatoren : cuid, managed {
-    @Common.Label : 'Name'
-    @Common.Text : {
-        $value : name,
-        textArrangement : #TextFirst // oder #TextOnly
-    }
-    name          : String(100) not null;
+type Money : Decimal(13,2);
+type ClaimStatus : String enum { eingegangen; in_pruefung; freigegeben; abgelehnt; }
+type DocumentType : String enum { foto; kalkulation; polizeibericht; sonstiges; }
 
-    @Common.Label : 'E-Mail'
-    email         : String;
+entity Claims : cuid, managed {
+  key ID                 : UUID @(Core.Computed: true);
+  claim_number           : String(40);
+  received_at            : DateTime;
+  status                 : ClaimStatus;
+  claimant_name          : String(100);
+  claimant_email         : String(120);
+  claimant_phone         : String(40);
+  policy_number          : String(40);
+  vehicle_license        : String(20);
+  vehicle_vin            : String(40);
+  incident_date          : DateTime;
+  incident_location      : String(120);
+  description_short      : String(500);
+  estimated_cost         : Money;
+  severity_score         : Integer;
+  fraud_score            : Integer;
+  notes                  : LargeString;
 
-    @Common.Label : 'LinkedIn'
-    linkedin      : String;
-
-    // Diese Komposition erlaubt es, auf der Präsentator-Objektseite eine Tabelle
-    // mit den Stammtischen dieses Präsentators anzuzeigen.
-    stammtische   : Composition of many Stammtische
-                      on stammtische.praesentator = $self;
+  documents              : Composition of many ClaimDocuments
+                             on documents.claim = $self;
 }
 
-entity Stammtische : cuid, managed {
-    key ID        : UUID @(Core.Computed : true);
-
-    @Common.Label : 'Thema'
-    thema         : String(255) not null;
-
-    @Common.Label : 'Datum'
-    datum         : DateTime not null;
-
-    @Common.Label : 'Ort'
-    ort           : String(100);
-
-    @Common.Label : 'Notizen'
-    notizen       : LargeString;
-
-    @Common.Label : 'Präsentator'
-    praesentator  : Association to Praesentatoren;
-
-    teilnehmer    : Composition of many Teilnehmer
-                      on teilnehmer.stammtisch = $self;
-}
-
-entity Teilnehmer : cuid, managed {
-    key ID        : UUID @(Core.Computed : true);
-
-    @Common.Label : 'Name des Teilnehmers'
-    name          : String(100) not null;
-
-    @Common.Label : 'E-Mail des Teilnehmers'
-    email         : String;
-    stammtisch    : Association to Stammtische;
+entity ClaimDocuments : cuid, managed {
+  key ID           : UUID @(Core.Computed: true);
+  claim            : Association to Claims;
+  filename         : String(200);
+  doc_type         : DocumentType;
+  parsed_meta      : LargeString;
+  extracted_text   : LargeString;
 }

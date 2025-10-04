@@ -1,192 +1,98 @@
-using StammtischService as service from '../srv/service';
-using { sap.stammtisch as model }   from '../db/schema';
-
+using ClaimsService as service from '../srv/service';
+using { kfz.claims as model } from '../db/schema';
 
 /* =========================================================
- * Stammtische (Service-Entität)
+ * Claims (Root Entity)
  * =======================================================*/
-annotate service.Stammtische with @(
+annotate service.Claims with @(
     UI.HeaderInfo : {
-        TypeName        : 'Stammtisch',
-        TypeNamePlural  : 'Stammtische',
-        Title           : { Value : thema },
-        Description     : { Value : ort }
+        TypeName       : 'Schadenfall',
+        TypeNamePlural : 'Schadenfälle',
+        Title          : { Value : claim_number },
+        Description    : { Value : status }
     },
 
-    UI.FieldGroup #GeneratedGroup : {
+    UI.LineItem : [
+        { Value : claim_number, Label : 'Schaden-Nr.' },
+        { Value : status },
+        { Value : received_at },
+        { Value : claimant_name },
+        { Value : incident_date },
+        { Value : incident_location },
+        { Value : estimated_cost, ![@UI.Importance] : #High },
+        { Value : severity_score, Label : 'Schweregrad' },
+        { Value : fraud_score, Label : 'Betrugsindikator' }
+    ],
+
+    UI.Facets : [
+        {
+            $Type : 'UI.ReferenceFacet',
+            ID    : 'ClaimGeneralInfo',
+            Label : 'Schadeninformationen',
+            Target: '@UI.FieldGroup#ClaimSummary'
+        },
+        {
+            $Type : 'UI.ReferenceFacet',
+            ID    : 'ClaimDocumentsFacet',
+            Label : 'Dokumente',
+            Target: 'documents/@UI.LineItem'
+        },
+        {
+            $Type : 'UI.ReferenceFacet',
+            ID    : 'NotesFacet',
+            Label : 'Notizen',
+            Target: '@UI.FieldGroup#ClaimNotes'
+        }
+    ],
+
+    UI.FieldGroup #ClaimSummary : {
         $Type : 'UI.FieldGroupType',
         Data  : [
-            { Value : thema },
-            { Value : datum },
-            { Value : ort  },
-            {
-            $Type  : 'UI.DataFieldWithNavigationPath',   // V4-konform
-            Label  : 'Präsentator',
-            Value  : praesentator,          // Navigation Property, nicht _ID
-            Target : 'praesentator'         // erzeugt Link zur Presenter-OP
-            },
-            { Value : notizen }
+            { Value : claim_number },
+            { Value : status },
+            { Value : received_at },
+            { Value : incident_date },
+            { Value : incident_location },
+            { Value : policy_number },
+            { Value : vehicle_license },
+            { Value : vehicle_vin },
+            { Value : claimant_name },
+            { Value : claimant_email },
+            { Value : claimant_phone },
+            { Value : estimated_cost },
+            { Value : severity_score },
+            { Value : fraud_score }
         ]
     },
 
-    UI.Facets : [
-        {
-            $Type : 'UI.ReferenceFacet',
-            ID    : 'StammtischGeneralInfoFacet',
-            Label : 'Allgemeine Informationen',
-            Target: '@UI.FieldGroup#GeneratedGroup'
-        },
-        {
-            $Type : 'UI.ReferenceFacet',
-            ID    : 'TeilnehmerFacet',
-            Label : 'Teilnehmer',
-            Target: 'teilnehmer/@UI.LineItem'
-        }
-    ],
-
-    UI.LineItem : [
-        { Value : thema },
-        { Value : datum },
-        { Value : ort  },
-        {
-            Value : praesentator.name,
-            Label : 'Präsentator'
-        },
-        { Value : notizen, ![@UI.Importance] : #Low }
-    ]
-) {
-    /* -------- Value Help & Semantik für Präsentator -------- */
-    praesentator @Common.ValueList : {
-        $Type          : 'Common.ValueListType',
-        CollectionPath : 'Praesentatoren',
-        Parameters     : [
-            {
-                $Type              : 'Common.ValueListParameterInOut',
-                LocalDataProperty  : praesentator_ID,
-                ValueListProperty  : 'ID'
-            },
-            {
-                $Type             : 'Common.ValueListParameterDisplayOnly',
-                ValueListProperty : 'name'
-            },
-            {
-                $Type             : 'Common.ValueListParameterDisplayOnly',
-                ValueListProperty : 'email'
-            }
-        ]
-    };
-    praesentator @Common.SemanticObject : 'Praesentator';
-
-    /* -------- Fix: Line-Item auf Navigation Property -------- */
-    teilnehmer @(
-        UI.LineItem : [
-            { Value : name,  Label : 'Name'  },
-            { Value : email, Label : 'E-Mail'}
-        ],
-        UI.Identification : [
-            { Value : name }
-        ]
-    );
-};   /* <<———— Semikolon */
-
-
-/* =========================================================
- * Präsentatoren (Service-Entität)
- * =======================================================*/
-annotate service.Praesentatoren with @(
-    UI.HeaderInfo : {
-        TypeName       : 'Präsentator',
-        TypeNamePlural : 'Präsentatoren',
-        Title          : { Value : name },
-        Description    : { Value : email }
-    },
-
-    UI.LineItem : [
-        { Value : name },
-        { Value : email },
-        { Value : linkedin, ![@UI.Importance] : #Low }
-    ],
-
-    UI.Facets : [
-        {
-            $Type  : 'UI.ReferenceFacet',
-            Label  : 'Allgemeine Informationen',
-            Target : '@UI.FieldGroup#PraesentatorGeneralInfo'
-        },
-        {
-            $Type  : 'UI.ReferenceFacet',
-            Label  : 'Gehaltene Stammtische',
-            Target : 'stammtische/@UI.LineItem'
-        }
-    ],
-
-    UI.FieldGroup #PraesentatorGeneralInfo : {
-        Data : [
-            { Value : name     },
-            { Value : email    },
-            { Value : linkedin }
+    UI.FieldGroup #ClaimNotes : {
+        $Type : 'UI.FieldGroupType',
+        Data  : [
+            { Value : description_short, ![@UI.MultiLineText] : true },
+            { Value : notes, ![@UI.MultiLineText] : true }
         ]
     }
-);   /* <<———— Semikolon */
-
+);
 
 /* =========================================================
- * Teilnehmer (Service-Entität)
+ * ClaimDocuments (Sub Entity)
  * =======================================================*/
-annotate service.Teilnehmer with @(
-    UI.HeaderInfo : {
-        TypeName       : 'Teilnehmer',
-        TypeNamePlural : 'Teilnehmer',
-        Title          : { Value : name  },
-        Description    : { Value : email }
-    },
-
+annotate service.ClaimDocuments with @(
     UI.LineItem : [
-        { Value : name,  Label : 'Name'  },
-        { Value : email, Label : 'E-Mail'}
+        { Value : filename },
+        { Value : doc_type },
+        { Value : parsed_meta },
+        { Value : extracted_text }
     ],
-
-    UI.Facets : [
-        {
-            $Type  : 'UI.ReferenceFacet',
-            Label  : 'Details zum Teilnehmer',
-            Target : '@UI.FieldGroup#TeilnehmerDetails'
-        }
-    ],
-
-    UI.FieldGroup #TeilnehmerDetails : {
-        Data : [
-            { Value : name  },
-            { Value : email }
-        ]
+    UI.HeaderInfo : {
+        TypeName       : 'Dokument',
+        TypeNamePlural : 'Dokumente',
+        Title          : { Value : filename },
+        Description    : { Value : doc_type }
     }
-);   /* <<———— Semikolon */
+);
 
-
-/* =========================================================
- * Modell-Annotationen (optional)
- * =======================================================*/
-annotate model.Praesentatoren with {
-    stammtische @(
-        UI.LineItem : [
-            { Value : thema },
-            { Value : datum },
-            { Value : ort   }
-        ],
-        UI.Identification : [
-            { Value : thema }
-        ]
-    );
-};  /* <<———— Semikolon */
-
-annotate model.Stammtische with {
-    teilnehmer @(
-        UI.LineItem : [
-            { Value : name,  Label : 'Name'  },
-            { Value : email, Label : 'E-Mail'}
-        ],
-        UI.Identification : [
-            { Value : name }
-        ]
-    );
-};  /* <<———— Semikolon */
+annotate model.ClaimDocuments with {
+    parsed_meta      @UI.MultiLineText : true;
+    extracted_text   @UI.MultiLineText : true;
+};

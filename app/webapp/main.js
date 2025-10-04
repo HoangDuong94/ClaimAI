@@ -24,12 +24,12 @@ sap.ui.define([
             this.chatPanel = null;
             this.feAppComponentInstance = null;
             this.currentRecognition = null;
-            this.serviceUrl = "/service/stammtisch"; // Service URL from manifest.json
+            this.serviceUrl = "/service/claims"; // Service URL from manifest.json
             this.notificationsEventSource = null;
-            this.topicsCache = [];
-            this.topicsCacheTimestamp = 0;
-            this.topicsLoadingPromise = null;
-            this.TOPIC_CACHE_MAX_AGE_MS = 30000;
+            this.claimsCache = [];
+            this.claimsCacheTimestamp = 0;
+            this.claimsLoadingPromise = null;
+            this.CLAIM_CACHE_MAX_AGE_MS = 30000;
             this.isMentionOpen = false;
             this._mentionTokenStart = null;
             this._mentionFilter = "";
@@ -56,21 +56,12 @@ sap.ui.define([
                 statusMessage: "",
                 showSuggestions: false,
                 suggestions: [
-                    { text: 'Fasse den Excel‑Anhang mit Terminen, Themen und Kerndaten kurz zusammen.' },
-                    { text: 'Liste alle Events mit Datum, Themen und Referenten tabellarisch auf.' },
-                    { text: 'Importiere bitte die Excel Zeile mit dem Datum 30.09.2025 in unsere passende DB.' },
-                    { text: 'Importiere bitte die Excel Zeile mit dem Datum 30.09.2025 und 18.11.2025 in unsere passende DB.' },
-                    { text: 'Nur „Integration Suite“ importieren' },
-                    { text: 'Nur die ohne Duplikate importieren' },
-                    { text: 'Füge als Präsentator in "Integration Suite" {Name} hinzu' },
-                    { text: 'Füge als Präsentator in "Integration Suite" und "Business Event und openSource Generator" den passenden Präsentator hinnzu'},
-                    { text: 'Schaue in der Excel nach welche passen' },
-                    { text: 'Erstelle einen Termin zur Duplikatklärung (übermorgen 10–11 Uhr).' },
-                    { text: 'Formuliere Email Antwort was wir bisher alles gemacht haben.' },
-                    { text: 'Habe ich in meinem File System eine Teilnehmer Datei?' },
-                    { text: 'Zeige mir den Inhalt von Teilnehmer.txt an.' },
-                    { text: 'Ordne alle Personen aus „Teilnehmer.txt“ dem aktuellen neuem Event „Integration Suite“ zu und bereite Commit vor.' },
-                    { text: "Erzeuge eine Teilnehmeranalyse (Häufigkeit) und hebe die Top 3 hervor." }
+                    { text: 'Fasse den Schadenfall CLM-CH-LU-2025-001 mit Status, Kosten und Scores zusammen.' },
+                    { text: 'Liste alle offenen Claims (Status eingegangen) mit geschätzten Kosten absteigend.' },
+                    { text: 'Prüfe, ob es bereits einen Claim mit der Nummer CLM-CH-LU-2025-002 gibt.' },
+                    { text: 'Analysiere die Fraud Scores und markiere Auffälligkeiten über 40.' },
+                    { text: 'Welche Dokumente liegen zum Claim CLM-CH-LU-2025-003 vor?' },
+                    { text: 'Generiere eine kurze Zusammenfassung der letzten drei Schadenmeldungen.' }
                 ]
             });
 
@@ -688,7 +679,7 @@ sap.ui.define([
                     throw new Error("OData Model not found");
                 }
 
-                const finalPrompt = await this.addTopicContextToPrompt(prompt);
+                const finalPrompt = await this.addClaimsContextToPrompt(prompt);
 
                 // Erstelle Operation Binding für unbound Action
                 const oOperationBinding = oDataModel.bindContext("/callLLM(...)");
@@ -705,8 +696,8 @@ sap.ui.define([
 
                 console.log("Claude operation result:", result);
 
-                this.refreshTopicsCache().catch((refreshError) => {
-                    console.warn("Aktualisierung der Stammtisch-Themen nach Agent-Call fehlgeschlagen:", refreshError);
+                this.refreshClaimsCache().catch((refreshError) => {
+                    console.warn("Aktualisierung der Schadenfälle nach Agent-Call fehlgeschlagen:", refreshError);
                 });
 
                 return result.response || "No response received";
@@ -717,26 +708,26 @@ sap.ui.define([
             }
         }
 
-        async addTopicContextToPrompt(prompt) {
-            const topics = await this.getTopicsSnapshot().catch((error) => {
-                console.warn("Konnte Themenliste nicht ermitteln:", error);
+        async addClaimsContextToPrompt(prompt) {
+            const claims = await this.getClaimsSnapshot().catch((error) => {
+                console.warn("Konnte Liste der Schadenfälle nicht ermitteln:", error);
                 return [];
             });
 
-            if (!Array.isArray(topics) || topics.length === 0) {
+            if (!Array.isArray(claims) || claims.length === 0) {
                 return prompt;
             }
 
-            const listForPrompt = topics.map((entry) => ({
+            const listForPrompt = claims.map((entry) => ({
                 id: entry.id,
-                thema: entry.thema,
+                claim_number: entry.claim_number,
                 normalized: entry.normalized
             }));
 
             const instructions = [
-                "Kontext: Verwende die folgende JSON-Liste, um neue Stammtisch-Themen auf Duplikate (case-insensitive, trim) zu prüfen, bevor du Einträge anlegst.",
-                "Wenn bereits ein Thema existiert, informiere den Nutzer, frage nach dem gewünschten Vorgehen und führe kein INSERT ohne explizite Freigabe aus.",
-                `BekannteThemenJSON=${JSON.stringify(listForPrompt)}`,
+                "Kontext: Prüfe die folgende JSON-Liste bekannter Claims (Claim-Nummern, lower-case/trim), bevor du neue Schadenfälle anlegst.",
+                "Sollte eine Claim-Nummer bereits existieren, informiere den Nutzer, kläre das gewünschte Vorgehen und führe keine Inserts ohne explizite Freigabe aus.",
+                `BekannteClaimsJSON=${JSON.stringify(listForPrompt)}`,
                 "---",
                 prompt
             ];
@@ -744,70 +735,70 @@ sap.ui.define([
             return instructions.join("\n\n");
         }
 
-        normalizeTopicName(thema) {
-            return typeof thema === "string" ? thema.trim().toLowerCase() : "";
+        normalizeClaimNumber(claimNumber) {
+            return typeof claimNumber === "string" ? claimNumber.trim().toLowerCase() : "";
         }
 
-        async getTopicsSnapshot(options = {}) {
+        async getClaimsSnapshot(options = {}) {
             const { force = false } = options;
             const now = Date.now();
-            const isStale = now - this.topicsCacheTimestamp > this.TOPIC_CACHE_MAX_AGE_MS;
+            const isStale = now - this.claimsCacheTimestamp > this.CLAIM_CACHE_MAX_AGE_MS;
 
-            if (!force && this.topicsCache.length && !isStale) {
-                return this.topicsCache;
+            if (!force && this.claimsCache.length && !isStale) {
+                return this.claimsCache;
             }
 
-            if (this.topicsLoadingPromise) {
-                return this.topicsLoadingPromise;
+            if (this.claimsLoadingPromise) {
+                return this.claimsLoadingPromise;
             }
 
-            this.topicsLoadingPromise = this.refreshTopicsCache()
+            this.claimsLoadingPromise = this.refreshClaimsCache()
                 .catch((error) => {
-                    this.topicsLoadingPromise = null;
+                    this.claimsLoadingPromise = null;
                     throw error;
                 })
                 .then((result) => {
-                    this.topicsLoadingPromise = null;
+                    this.claimsLoadingPromise = null;
                     return result;
                 });
 
-            return this.topicsLoadingPromise;
+            return this.claimsLoadingPromise;
         }
 
-        async refreshTopicsCache() {
+        async refreshClaimsCache() {
             if (!this.feAppComponentInstance) {
-                return this.topicsCache;
+                return this.claimsCache;
             }
 
             const model = this.feAppComponentInstance.getModel();
             if (!model) {
-                return this.topicsCache;
+                return this.claimsCache;
             }
 
-            const listBinding = model.bindList("/Stammtische");
+            const listBinding = model.bindList("/Claims");
 
             try {
                 const contexts = await listBinding.requestContexts(0, 500);
                 const snapshot = contexts
                     .map((ctx) => ctx?.getObject?.())
-                    .filter((entry) => entry && typeof entry.thema === "string" && entry.thema.trim());
+                    .filter((entry) => entry && typeof entry.claim_number === "string" && entry.claim_number.trim());
 
-                this.topicsCache = snapshot.map((entry) => ({
+                this.claimsCache = snapshot.map((entry) => ({
                     id: entry.ID,
-                    thema: entry.thema,
-                    normalized: this.normalizeTopicName(entry.thema)
+                    claim_number: entry.claim_number,
+                    normalized: this.normalizeClaimNumber(entry.claim_number)
                 }));
-                this.topicsCacheTimestamp = Date.now();
+                this.claimsCacheTimestamp = Date.now();
 
-                return this.topicsCache;
+                return this.claimsCache;
             } finally {
                 listBinding.destroy();
             }
         }
 
-        invalidateTopicsCache() {
-            this.topicsCacheTimestamp = 0;
-            this.topicsCache = [];
+        invalidateClaimsCache() {
+            this.claimsCacheTimestamp = 0;
+            this.claimsCache = [];
         }
 
         // Update status message with auto-clear
@@ -1744,7 +1735,7 @@ sap.ui.define([
             // Load chat fragment
             const chatPanelContent = await Fragment.load({
                 id: "chatSidePanelFragmentGlobal",
-                name: "sap.stammtisch.ui.app.ext.ChatSidePanelContent",
+                name: "kfz.claims.ui.app.ext.ChatSidePanelContent",
                 controller: chatController
             });
 
@@ -1765,7 +1756,7 @@ sap.ui.define([
 
             // Create Fiori Elements component
             const feComponent = await Component.create({
-                name: "sap.stammtisch.ui.app",
+                name: "kfz.claims.ui.app",
                 id: "feAppComponentCore"
             });
 
@@ -1818,9 +1809,9 @@ sap.ui.define([
             chatManager.setupNotificationsSSE();
 
             try {
-                await chatManager.getTopicsSnapshot({ force: true });
-            } catch (topicError) {
-                console.warn("Initiales Laden der Stammtisch-Themen fehlgeschlagen:", topicError);
+                await chatManager.getClaimsSnapshot({ force: true });
+            } catch (claimsSnapshotError) {
+                console.warn("Initiales Laden der Schadenfälle fehlgeschlagen:", claimsSnapshotError);
             }
 
             console.log("Application initialized successfully");
