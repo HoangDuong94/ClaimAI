@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.cds.json",
+  "compilerOptions": {
+    "sourceMap": false
+  },
+  "exclude": [
+    "app",
+    "gen"
+  ]
+}

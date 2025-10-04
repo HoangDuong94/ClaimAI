@@ -28,11 +28,21 @@
   "devDependencies": {
     "@cap-js/cds-typer": "^0.34.0",
     "@cap-js/cds-types": "^0.10.0",
-    "@cap-js/sqlite": "^1"
+    "@cap-js/sqlite": "^1",
+    "@sap/cds-dk": "^8.9.4",
+    "@types/node": "^20.17.22",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.6.3"
   },
   "scripts": {
-    "start": "cds-serve",
-    "watch-app": "cds watch --open app/webapp/index.html?sap-ui-xx-viewCache=false"
+    "start": "npm run ts:build && cds-serve",
+    "serve:hybrid": "cds-serve --profile hybrid",
+    "run:hybrid": "npm run ts:build && npx cds run --profile hybrid",
+    "ts:build": "tsc -p tsconfig.cds.json",
+    "ts:check": "tsc --noEmit -p tsconfig.json",
+    "ts:watch": "tsc -w -p tsconfig.cds.json",
+    "watch-hybrid": "npm run ts:build && concurrently --names \"ts,cds\" --prefix-colors \"cyan,green\" \"npm run ts:watch\" \"cds watch --profile hybrid\"",
+    "watch-app": "npm run ts:build && concurrently --names \"ts,cds\" --prefix-colors \"cyan,green\" \"npm run ts:watch\" \"cds watch --profile hybrid --open app/webapp/index.html?sap-ui-xx-viewCache=false\""
   },
   "cds": {
     "requires": {

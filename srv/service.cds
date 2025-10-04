@@ -1,7 +1,7 @@
 using { kfz.claims as ClaimsModel } from '../db/schema';
 using from '../app/annotations';
 
-service ClaimsService @(path: '/service/claims') {
+service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
 
     @odata.draft.enabled
     entity Claims as projection on ClaimsModel.Claims {

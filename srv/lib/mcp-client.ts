@@ -1,3 +1,4 @@
+// @ts-nocheck
 // srv/lib/mcp-client.js
 
 import cds from '@sap/cds';

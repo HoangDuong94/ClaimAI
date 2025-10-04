@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./gen/srv",
+    "rootDir": "./srv",
+    "sourceMap": true,
+    "inlineSources": true,
+    "declaration": false
+  },
+  "include": [
+    "srv/**/*.ts",
+    "srv/**/*.mts"
+  ],
+  "exclude": [
+    "srv/**/__tests__/**"
+  ]
+}
