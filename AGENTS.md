@@ -26,6 +26,12 @@
 - Microsoft 365 tooling requires the m365 CLI login; Excel attachments are downloaded to `tmp/attachments` and enriched automatically.
 - CAP MCP actions (`srv/mcp-cap/index.ts`) maintain draft caches per entity—prefer `cap.draft.*` flows over raw SQL writes.
 
+## Codex SDK Agent
+- Switch the backend by setting `CLAIMAI_AGENT_BACKEND=codex`; the default remains the LangGraph agent.
+- Set `CODEX_API_KEY` if you want to override the cached credentials from `codex login`; other knobs (`CODEX_BASE_URL`, `CODEX_MODEL`, `CODEX_SANDBOX_MODE`, `CODEX_WORKING_DIRECTORY`, `CODEX_SKIP_GIT_CHECK`, `CODEX_EXECUTABLE`) remain optional overrides.
+- Codex threads are kept per user session; they reuse the same working directory and sandbox defaults derived from environment variables.
+- The Codex SDK bundles the CLI binary for common platforms; set `CODEX_EXECUTABLE` only if you need to point at a custom build.
+
 ## Coding Style & Naming Conventions
 - Node services use ES modules, 2-space indentation, and mandatory semicolons; run `npx eslint .` before committing.
 - CDS artifacts: lowercase namespaces (`kfz.claims`), PascalCase entities (`Claims`), snake_case database columns.

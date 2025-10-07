@@ -13,11 +13,13 @@ import * as z from "zod";
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
+import { CodexAgent } from './lib/codex-agent.js';
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
 import { runClaudeAgent } from './lib/claude-agent.js';
 import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
 import MarkdownConverter from './utils/markdown-converter.js';
+import type { CodexOptions, SandboxMode, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 
 type MCPClients = Awaited<ReturnType<typeof initAllMCPClients>>;
 type AgentExecutor = ReturnType<typeof createReactAgent>;
@@ -82,14 +84,28 @@ interface NotificationSession {
   timer: NodeJS.Timeout | null;
 }
 
-type AgentBackend = 'langgraph' | 'claude';
+type AgentBackend = 'langgraph' | 'claude' | 'codex';
 
 const resolveAgentBackend = (): AgentBackend => {
   const raw = (process.env.CLAIMAI_AGENT_BACKEND || '').trim().toLowerCase();
   if (['claude', 'claude-agent', 'claude_agent', 'anthropic', 'anthropic-claude'].includes(raw)) {
     return 'claude';
   }
+  if (['codex', 'codex-sdk', 'codex_agent', 'codexagent'].includes(raw)) {
+    return 'codex';
+  }
   return 'langgraph';
+};
+
+const describeAgentBackend = (backend: AgentBackend): string => {
+  switch (backend) {
+    case 'claude':
+      return 'Claude Agent';
+    case 'codex':
+      return 'Codex Agent';
+    default:
+      return 'Multi-Modal Agent';
+  }
 };
 
 const CLAUDE_APPEND_PROMPT = `Keep replies focused, note every tool you invoke, and highlight critical findings in **bold**.`;
@@ -106,11 +122,93 @@ export default class ClaimsService extends cds.ApplicationService {
       : CLAUDE_APPEND_PROMPT;
     let agentExecutor: AgentExecutor | null = null;
     let mcpClients: MCPClients | null = null;
+    let codexAgent: CodexAgent | null = null;
     const app = cds.app as express.Application;
 
     // Lightweight in-memory notification hub (per-user)
     const notificationSessions = new Map<string, NotificationSession>();
     const claudeSessions = new Map<string, string>();
+
+    const resolveCodexSandboxMode = (): SandboxMode => {
+      const value = (process.env.CODEX_SANDBOX_MODE || '').trim().toLowerCase();
+      switch (value) {
+        case '':
+          return 'workspace-write';
+        case 'read-only':
+        case 'workspace-write':
+        case 'danger-full-access':
+          return value;
+        default:
+          console.warn(
+            `[CodexAgent] Unsupported CODEX_SANDBOX_MODE "${value}", falling back to workspace-write.`,
+          );
+          return 'workspace-write';
+      }
+    };
+
+    const resolveCodexWorkingDirectory = (): string => {
+      const raw =
+        (process.env.CODEX_WORKING_DIRECTORY || process.env.CODEX_WORKING_DIR || '').trim();
+      if (!raw) {
+        return process.cwd();
+      }
+      return path.resolve(raw);
+    };
+
+    const shouldSkipCodexGitCheck = (): boolean => {
+      const raw =
+        (process.env.CODEX_SKIP_GIT_CHECK || process.env.CODEX_SKIP_GIT_REPO_CHECK || '')
+          .trim()
+          .toLowerCase();
+      if (!raw) return true;
+      if (['false', '0', 'no'].includes(raw)) return false;
+      return true;
+    };
+
+    const buildCodexThreadOptions = (): ThreadOptions => {
+      const options: ThreadOptions = {
+        sandboxMode: resolveCodexSandboxMode(),
+        workingDirectory: resolveCodexWorkingDirectory(),
+        skipGitRepoCheck: shouldSkipCodexGitCheck(),
+      };
+      const model = (process.env.CODEX_MODEL || '').trim();
+      if (model) {
+        options.model = model;
+      }
+      return options;
+    };
+
+    const ensureCodexAgent = (): CodexAgent => {
+      if (codexAgent) return codexAgent;
+
+      const apiKey = (process.env.CODEX_API_KEY || '').trim();
+      const baseUrl = (process.env.CODEX_BASE_URL || '').trim();
+      const codexExecutable = (process.env.CODEX_EXECUTABLE || '').trim();
+
+      const codexOptions: CodexOptions = {};
+      if (apiKey) {
+        codexOptions.apiKey = apiKey;
+      } else {
+        console.log(
+          '[CodexAgent] CODEX_API_KEY not set; falling back to Codex CLI cached credentials if available.',
+        );
+      }
+      if (baseUrl) {
+        codexOptions.baseUrl = baseUrl;
+      }
+      if (codexExecutable) {
+        codexOptions.codexPathOverride = codexExecutable;
+      }
+
+      codexAgent = new CodexAgent({
+        logger: console,
+        codexOptions,
+        defaultThreadOptions: buildCodexThreadOptions(),
+      });
+
+      console.log('[CodexAgent] Codex SDK initialized.');
+      return codexAgent;
+    };
 
     const getUserId = (req: ClaimsRequest): string => {
       try {
@@ -211,6 +309,18 @@ export default class ClaimsService extends cds.ApplicationService {
       locale: req.locale
     });
 
+    const extractCodexAgentMessage = (items: ThreadItem[]): string | null => {
+      for (const item of items) {
+        if (item && item.type === 'agent_message') {
+          const candidate = (item as { text?: unknown }).text;
+          if (typeof candidate === 'string' && candidate.trim().length > 0) {
+            return candidate;
+          }
+        }
+      }
+      return null;
+    };
+
     const executeClaudeCall = async (prompt: string, req: CapRequestContext): Promise<string> => {
       const clients = await ensureMcpClients();
       if (!clients?.cap) {
@@ -246,6 +356,30 @@ export default class ClaimsService extends cds.ApplicationService {
       }
 
       return MarkdownConverter.convertForClaims(agentResult.result);
+    };
+
+    const executeCodexCall = async (prompt: string, req: CapRequestContext): Promise<string> => {
+      const agent = ensureCodexAgent();
+      const userId = getUserId(req as ClaimsRequest);
+      console.log('🤖 Invoking Codex SDK for prompt');
+
+      const result = await agent.run(userId, prompt, {
+        threadOptions: buildCodexThreadOptions(),
+      });
+
+      if (result.usage) {
+        console.debug?.('[CodexAgent] Token usage', result.usage);
+      }
+
+      const rawResponse =
+        (result.finalResponse && result.finalResponse.trim().length > 0
+          ? result.finalResponse
+          : extractCodexAgentMessage(result.items)) ?? '';
+
+      const normalizedResponse =
+        rawResponse.trim().length > 0 ? rawResponse : 'Keine Antwort vom Codex-Agenten erhalten.';
+
+      return MarkdownConverter.convertForClaims(normalizedResponse);
     };
 
     const isExcelAttachment = (attachment: GraphAttachment | null | undefined): boolean => {
@@ -879,10 +1013,16 @@ ${safeContent}`;
     };
 
     const preferredBackend = resolveAgentBackend();
+    console.log(
+      `[ClaimAI] Agent backend preference: ${preferredBackend} (env: "${(process.env.CLAIMAI_AGENT_BACKEND || '').trim()}")`,
+    );
     if (preferredBackend === 'langgraph') {
       await initializeAgent();
-    } else {
+    } else if (preferredBackend === 'claude') {
       console.log('Claude Agent backend selected; initializing MCP clients without LangGraph warmup.');
+      await ensureMcpClients();
+    } else if (preferredBackend === 'codex') {
+      console.log('Codex Agent backend selected; LangGraph warmup skipped (MCP clients load on demand).');
       await ensureMcpClients();
     }
 
@@ -894,12 +1034,16 @@ ${safeContent}`;
       }
 
       const backend = resolveAgentBackend();
-      console.log(`🚀 Received prompt for ${backend === 'claude' ? 'Claude Agent' : 'Multi-Modal Agent'}:`, userPrompt);
+      console.log(`🚀 Received prompt for ${describeAgentBackend(backend)}:`, userPrompt);
 
       try {
         if (backend === 'claude') {
           const claudeResponse = await executeClaudeCall(userPrompt, req);
           return { response: claudeResponse };
+        }
+        if (backend === 'codex') {
+          const codexResponse = await executeCodexCall(userPrompt, req);
+          return { response: codexResponse };
         }
 
         const executor = await initializeAgent();
@@ -970,7 +1114,12 @@ ${safeContent}`;
 
       } catch (error) {
         console.error('💥 Error during agent execution:', error);
-        const backendLabel = backend === 'claude' ? 'Claude Agent' : 'LangGraph agent';
+        const backendLabel =
+          backend === 'claude'
+            ? 'Claude Agent'
+            : backend === 'codex'
+              ? 'Codex agent'
+              : 'LangGraph agent';
         req.error(500, `Failed to process query via ${backendLabel}: ${getErrorMessage(error)}`);
       }
     });
@@ -1003,6 +1152,7 @@ ${safeContent}`;
       notificationSessions.clear();
       await graph.close();
       await closeMCPClients();
+      codexAgent?.clearAllSessions();
     });
   }
 }
