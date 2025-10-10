@@ -709,8 +709,8 @@ sap.ui.define([
         prepareMessageContent(type, text) {
             const value = typeof text === "string" ? text : String(text ?? "");
             if (type === "assistant") {
-                const sanitized = this.sanitizeHTMLContent(value);
-                return `<div class="ai-response-container">${sanitized}</div>`;
+                // const sanitized = this.sanitizeHTMLContent(value);
+                return `<div class="ai-response-container">${value}</div>`;
             }
             return this.escapePlainText(value);
         }
@@ -930,16 +930,16 @@ sap.ui.define([
             this.scrollToBottomEnhanced();
         }
 
-        // HTML Content Sanitization (Basis-Sicherheit)
-        sanitizeHTMLContent(html) {
-            let sanitized = html.replace(/on\w+="[^"]*"/gi, ''); // onclick, onload, etc.
-            sanitized = sanitized.replace(/javascript:/gi, ''); // javascript: URLs
-            sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // script tags
-            sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
-            sanitized = sanitized.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '');
-            sanitized = sanitized.replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '');
-            return sanitized.trim();
-        }
+        // // HTML Content Sanitization (Basis-Sicherheit)
+        // sanitizeHTMLContent(html) {
+        //     let sanitized = html.replace(/on\w+="[^"]*"/gi, ''); // onclick, onload, etc.
+        //     sanitized = sanitized.replace(/javascript:/gi, ''); // javascript: URLs
+        //     sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // script tags
+        //     sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+        //     sanitized = sanitized.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '');
+        //     sanitized = sanitized.replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '');
+        //     return sanitized.trim();
+        // }
 
         // Link-Handler für AI-Links
         handleAILink(event) {
