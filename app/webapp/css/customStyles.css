@@ -645,28 +645,21 @@
 }
 
 .ai-unordered-list {
-  list-style-type: none;
+  list-style: disc outside;
 }
 
 .ai-ordered-list {
-  list-style-type: decimal;
+  list-style: decimal outside;
+}
+
+.ai-response-container {
+  display: block;
 }
 
 .ai-list-item,
 .ai-numbered-item {
   margin: var(--sapHorizon-Space-Tiny) 0;
   line-height: 1.5;
-  position: relative;
-}
-
-.ai-unordered-list .ai-list-item::before {
-  content: "▪";
-  /* color: var(--sapHorizon-Blue-Primary); */
-  font-weight: bold;
-  position: absolute;
-/* left: calc(-1 * var(--sapHorizon-Space-Large)); */
-  left: 10px;
-  font-size: 1.2em;
 }
 
 /* AI Links */

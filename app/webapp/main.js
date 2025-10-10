@@ -705,13 +705,35 @@ sap.ui.define([
             }
         }
 
+        // Prepare content for HTML control depending on message type
+        prepareMessageContent(type, text) {
+            const value = typeof text === "string" ? text : String(text ?? "");
+            if (type === "assistant") {
+                const sanitized = this.sanitizeHTMLContent(value);
+                return `<div class="ai-response-container">${sanitized}</div>`;
+            }
+            return this.escapePlainText(value);
+        }
+
+        escapePlainText(text) {
+            const escaped = text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;")
+                .replace(/\r?\n/g, "<br/>");
+            return `<span class="ai-plain-text">${escaped}</span>`;
+        }
+
         // Add message to chat history
         addMessage(type, text, timestamp = this.getCurrentTimestamp()) {
             const history = this.chatModel.getProperty("/chatHistory");
-            history.push({ type, text, timestamp });
+            const processedText = this.prepareMessageContent(type, text);
+            history.push({ type, text: processedText, timestamp });
             this.chatModel.setProperty("/chatHistory", history);
             this.chatModel.refresh(true);
-            this.scrollToBottom();
+            this.scrollToBottomEnhanced();
         }
 
         // Remove last "Thinking..." message
@@ -876,7 +898,7 @@ sap.ui.define([
                 setTimeout(() => {
                     scrollContainer.scrollTo(0, 99999, 500);
 
-                    // Trigger re-rendering für FormattedText mit HTML
+                    // Trigger Re-Rendering für HTML-Control Content
                     const chatList = sap.ui.core.Fragment.byId(
                         "chatSidePanelFragmentGlobal",
                         "chatMessagesList"
@@ -892,18 +914,13 @@ sap.ui.define([
         addMessageEnhanced(type, text, timestamp = this.getCurrentTimestamp()) {
             const history = this.chatModel.getProperty("/chatHistory");
 
-            // Spezielle Behandlung für HTML-Content
-            let processedText = text;
-            if (type === "assistant" && text.includes('<')) {
-                // HTML-Content erkannt - stelle sicher, dass es sicher ist
-                processedText = this.sanitizeHTMLContent(text);
-            }
+            const processedText = this.prepareMessageContent(type, text);
 
             history.push({
                 type,
                 text: processedText,
                 timestamp,
-                isHTML: text.includes('<') // Flag für HTML-Content
+                isHTML: type === "assistant"
             });
 
             this.chatModel.setProperty("/chatHistory", history);
@@ -915,19 +932,13 @@ sap.ui.define([
 
         // HTML Content Sanitization (Basis-Sicherheit)
         sanitizeHTMLContent(html) {
-            // Erlaubte Tags für AI-Antworten
-            const allowedTags = [
-                'p', 'br', 'strong', 'em', 'code', 'pre',
-                'h1', 'h2', 'h3', 'ul', 'ol', 'li',
-                'div', 'span', 'a'
-            ];
-
-            // Entferne potentiell gefährliche Attribute
             let sanitized = html.replace(/on\w+="[^"]*"/gi, ''); // onclick, onload, etc.
             sanitized = sanitized.replace(/javascript:/gi, ''); // javascript: URLs
             sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // script tags
-
-            return sanitized;
+            sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+            sanitized = sanitized.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '');
+            sanitized = sanitized.replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '');
+            return sanitized.trim();
         }
 
         // Link-Handler für AI-Links

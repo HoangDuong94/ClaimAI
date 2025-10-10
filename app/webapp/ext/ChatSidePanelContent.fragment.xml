@@ -124,7 +124,7 @@
                             <VBox visible="{= ${chat>type} === 'user' }" class="modernUserMessageContainer">
                                 <HBox justifyContent="End" class="modernMessageRow">
                                     <VBox class="modernUserMessage">
-                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernUserText"/>
+                                        <core:HTML content="{chat>text}" sanitizeContent="false" class="modernMessageText modernUserText"/>
                                         <Text text="{chat>timestamp}" class="modernTimestamp modernUserTimestamp"/>
                                     </VBox>
                                 </HBox>
@@ -134,7 +134,7 @@
                             <VBox visible="{= ${chat>type} === 'assistant' }" class="modernAssistantMessageContainer">
                                 <HBox justifyContent="Start" class="modernMessageRow">
                                     <VBox class="modernAssistantMessage">
-                                        <FormattedText htmlText="{chat>text}" class="modernMessageText modernAssistantText"/>
+                                        <core:HTML content="{chat>text}" sanitizeContent="false" class="modernMessageText modernAssistantText"/>
                                         <HBox justifyContent="SpaceBetween" alignItems="Center" class="modernMessageFooter">
                                             <Text text="{chat>timestamp}" class="modernTimestamp modernAssistantTimestamp"/>
                                             <HBox class="modernMessageActions" visible="{= ${chat>text} !== 'Thinking...' }">
@@ -145,18 +145,6 @@
                                                     press="onCopyMessage"
                                                     class="modernActionButton"
                                                     ariaLabel="Nachricht kopieren"/>
-                                                <Button 
-                                                    icon="sap-icon://thumb-up" 
-                                                    type="Transparent" 
-                                                    tooltip="Gefällt mir"
-                                                    class="modernActionButton"
-                                                    ariaLabel="Positive Bewertung"/>
-                                                <Button 
-                                                    icon="sap-icon://thumb-down" 
-                                                    type="Transparent" 
-                                                    tooltip="Gefällt mir nicht"
-                                                    class="modernActionButton"
-                                                    ariaLabel="Negative Bewertung"/>
                                             </HBox>
                                         </HBox>
                                     </VBox>
