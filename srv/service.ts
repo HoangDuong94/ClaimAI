@@ -128,6 +128,8 @@ export default class ClaimsService extends cds.ApplicationService {
     // Lightweight in-memory notification hub (per-user)
     const notificationSessions = new Map<string, NotificationSession>();
     const claudeSessions = new Map<string, string>();
+    const preferredBackend = resolveAgentBackend();
+    const mcpInfrastructureEnabled = preferredBackend !== 'codex';
 
     const resolveCodexSandboxMode = (): SandboxMode => {
       const value = (process.env.CODEX_SANDBOX_MODE || '').trim().toLowerCase();
@@ -244,6 +246,9 @@ export default class ClaimsService extends cds.ApplicationService {
     };
 
     const ensureMcpClients = async (): Promise<MCPClients> => {
+      if (!mcpInfrastructureEnabled) {
+        throw new Error('MCP clients are disabled for the Codex backend.');
+      }
       if (mcpClients) return mcpClients;
       const clients = await initAllMCPClients({ capService: this, logger: console });
       mcpClients = clients;
@@ -809,7 +814,11 @@ ${safeContent}`;
 
     // Microsoft Graph client (CLI login based)
     const graph = new GraphClient({ logger: console });
-    await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'Calendars.Read', 'Calendars.ReadWrite']);
+    if (mcpInfrastructureEnabled) {
+      await graph.bootstrap(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'Calendars.Read', 'Calendars.ReadWrite']);
+    } else {
+      console.log('Codex backend active; skipping Microsoft 365 MCP bootstrap.');
+    }
 
     const POLL_INTERVAL_MS = 10_000;
     const MAX_INIT_UNREAD = 10;
@@ -887,6 +896,11 @@ ${safeContent}`;
 
     // SSE stream endpoint
     app.get('/service/claims/notifications/stream', async (req: ClaimsRequest, res: Response) => {
+      if (!mcpInfrastructureEnabled) {
+        return res
+          .status(503)
+          .json({ error: 'Microsoft 365 notifications are disabled for the Codex backend.' });
+      }
       const userId = getUserId(req);
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -927,6 +941,11 @@ ${safeContent}`;
 
     // Mark-as-read endpoint (backend-only, no MCP tool)
     app.post('/service/claims/notifications/markRead', express.json(), async (req: ClaimsRequest, res: Response) => {
+      if (!mcpInfrastructureEnabled) {
+        return res
+          .status(503)
+          .json({ error: 'Microsoft 365 notifications are disabled for the Codex backend.' });
+      }
       try {
         const userId = getUserId(req);
         const { id } = req.body || {};
@@ -1012,7 +1031,6 @@ ${safeContent}`;
       }
     };
 
-    const preferredBackend = resolveAgentBackend();
     console.log(
       `[ClaimAI] Agent backend preference: ${preferredBackend} (env: "${(process.env.CLAIMAI_AGENT_BACKEND || '').trim()}")`,
     );
@@ -1022,8 +1040,7 @@ ${safeContent}`;
       console.log('Claude Agent backend selected; initializing MCP clients without LangGraph warmup.');
       await ensureMcpClients();
     } else if (preferredBackend === 'codex') {
-      console.log('Codex Agent backend selected; LangGraph warmup skipped (MCP clients load on demand).');
-      await ensureMcpClients();
+      console.log('Codex Agent backend selected; skipping MCP client initialization (Codex provides its own tools).');
     }
 
     this.on('callLLM', async (req) => {
@@ -1143,7 +1160,11 @@ ${safeContent}`;
     });
 
     this.on('EXIT', async () => {
-      console.log('Shutting down MCP clients...');
+      if (mcpInfrastructureEnabled) {
+        console.log('Shutting down MCP clients...');
+      } else {
+        console.log('Codex backend active; no MCP clients were initialized.');
+      }
       for (const session of notificationSessions.values()) {
         if (session.timer) {
           clearInterval(session.timer);
@@ -1151,7 +1172,9 @@ ${safeContent}`;
       }
       notificationSessions.clear();
       await graph.close();
-      await closeMCPClients();
+      if (mcpInfrastructureEnabled) {
+        await closeMCPClients();
+      }
       codexAgent?.clearAllSessions();
     });
   }
