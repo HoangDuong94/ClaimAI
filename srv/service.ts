@@ -3,35 +3,22 @@
 import cds from '@sap/cds';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { loadMcpTools } from '@langchain/mcp-adapters';
-import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
-import { MemorySaver } from "@langchain/langgraph-checkpoint";
-import { DynamicStructuredTool } from "@langchain/core/tools";
-import type { StructuredToolInterface } from "@langchain/core/tools";
-import * as z from "zod";
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
-import { CodexAgent } from './lib/codex-agent.js';
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
-import { runClaudeAgent } from './lib/claude-agent.js';
-import { jsonSchemaToZod } from './m365-mcp/mcp-jsonschema.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
-import MarkdownConverter from './utils/markdown-converter.js';
-import type { CodexOptions, SandboxMode, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
+import { LangGraphAgentAdapter } from './agents/langgraph-adapter.js';
+import { ClaudeAgentAdapter } from './agents/claude-adapter.js';
+import { CodexAgentAdapter } from './agents/codex-adapter.js';
+import type { AgentAdapter } from './agents/agent-adapter.js';
+import type { CapRequestContext } from './types/cap-context.js';
 
 type MCPClients = Awaited<ReturnType<typeof initAllMCPClients>>;
-type AgentExecutor = ReturnType<typeof createReactAgent>;
 type AttachmentDirPromise = Promise<unknown> | null;
 
 type SsePayload = { type: string; [key: string]: unknown };
-
-interface CapRequestContext {
-  user?: { id?: string; name?: string; tenant?: string } | null;
-  tenant?: string;
-  locale?: string;
-}
 
 type ClaimsRequest = Request & CapRequestContext;
 
@@ -120,9 +107,7 @@ export default class ClaimsService extends cds.ApplicationService {
     const langGraphSystemPrompt = projectClaudeInstructions
       ? `${projectClaudeInstructions}\n\n${CLAUDE_APPEND_PROMPT}`
       : CLAUDE_APPEND_PROMPT;
-    let agentExecutor: AgentExecutor | null = null;
     let mcpClients: MCPClients | null = null;
-    let codexAgent: CodexAgent | null = null;
     const app = cds.app as express.Application;
 
     // Lightweight in-memory notification hub (per-user)
@@ -131,88 +116,7 @@ export default class ClaimsService extends cds.ApplicationService {
     const preferredBackend = resolveAgentBackend();
     const mcpInfrastructureEnabled = preferredBackend !== 'codex';
 
-    const resolveCodexSandboxMode = (): SandboxMode => {
-      const value = (process.env.CODEX_SANDBOX_MODE || '').trim().toLowerCase();
-      switch (value) {
-        case '':
-          return 'workspace-write';
-        case 'read-only':
-        case 'workspace-write':
-        case 'danger-full-access':
-          return value;
-        default:
-          console.warn(
-            `[CodexAgent] Unsupported CODEX_SANDBOX_MODE "${value}", falling back to workspace-write.`,
-          );
-          return 'workspace-write';
-      }
-    };
-
-    const resolveCodexWorkingDirectory = (): string => {
-      const raw =
-        (process.env.CODEX_WORKING_DIRECTORY || process.env.CODEX_WORKING_DIR || '').trim();
-      if (!raw) {
-        return process.cwd();
-      }
-      return path.resolve(raw);
-    };
-
-    const shouldSkipCodexGitCheck = (): boolean => {
-      const raw =
-        (process.env.CODEX_SKIP_GIT_CHECK || process.env.CODEX_SKIP_GIT_REPO_CHECK || '')
-          .trim()
-          .toLowerCase();
-      if (!raw) return true;
-      if (['false', '0', 'no'].includes(raw)) return false;
-      return true;
-    };
-
-    const buildCodexThreadOptions = (): ThreadOptions => {
-      const options: ThreadOptions = {
-        sandboxMode: resolveCodexSandboxMode(),
-        workingDirectory: resolveCodexWorkingDirectory(),
-        skipGitRepoCheck: shouldSkipCodexGitCheck(),
-      };
-      const model = (process.env.CODEX_MODEL || '').trim();
-      if (model) {
-        options.model = model;
-      }
-      return options;
-    };
-
-    const ensureCodexAgent = (): CodexAgent => {
-      if (codexAgent) return codexAgent;
-
-      const apiKey = (process.env.CODEX_API_KEY || '').trim();
-      const baseUrl = (process.env.CODEX_BASE_URL || '').trim();
-      const codexExecutable = (process.env.CODEX_EXECUTABLE || '').trim();
-
-      const codexOptions: CodexOptions = {};
-      if (apiKey) {
-        codexOptions.apiKey = apiKey;
-      } else {
-        console.log(
-          '[CodexAgent] CODEX_API_KEY not set; falling back to Codex CLI cached credentials if available.',
-        );
-      }
-      if (baseUrl) {
-        codexOptions.baseUrl = baseUrl;
-      }
-      if (codexExecutable) {
-        codexOptions.codexPathOverride = codexExecutable;
-      }
-
-      codexAgent = new CodexAgent({
-        logger: console,
-        codexOptions,
-        defaultThreadOptions: buildCodexThreadOptions(),
-      });
-
-      console.log('[CodexAgent] Codex SDK initialized.');
-      return codexAgent;
-    };
-
-    const getUserId = (req: ClaimsRequest): string => {
+    const getUserId = (req: CapRequestContext): string => {
       try {
         return (req.user && (req.user.id || req.user.name)) || 'local';
       } catch {
@@ -314,77 +218,25 @@ export default class ClaimsService extends cds.ApplicationService {
       locale: req.locale
     });
 
-    const extractCodexAgentMessage = (items: ThreadItem[]): string | null => {
-      for (const item of items) {
-        if (item && item.type === 'agent_message') {
-          const candidate = (item as { text?: unknown }).text;
-          if (typeof candidate === 'string' && candidate.trim().length > 0) {
-            return candidate;
-          }
-        }
-      }
-      return null;
-    };
+    const claudeAdapter = new ClaudeAgentAdapter({
+      ensureMcpClients,
+      claudeSessions,
+      systemPrompt: CLAUDE_APPEND_PROMPT,
+      logger: console
+    });
 
-    const executeClaudeCall = async (prompt: string, req: CapRequestContext): Promise<string> => {
-      const clients = await ensureMcpClients();
-      if (!clients?.cap) {
-        throw new Error('CAP MCP client is not initialized.');
-      }
-      console.log('🤖 Invoking Claude Agent SDK for prompt');
-      const capServerConfig = clients.cap.sdkServer
-        ? { cap: clients.cap.sdkServer }
-        : undefined;
+    const langGraphAdapter = new LangGraphAgentAdapter({
+      ensureMcpClients,
+      langGraphSystemPrompt,
+      logger: console
+    });
 
-      const capAllowedTools = Array.isArray(clients.cap.toolDefinitions)
-        ? clients.cap.toolDefinitions.map((tool: { name: string }) => `mcp__cap__${tool.name}`)
-        : undefined;
+    const codexAdapter = new CodexAgentAdapter({ logger: console });
 
-      const userId = getUserId(req as ClaimsRequest);
-      const resumeSessionId = claudeSessions.get(userId);
-
-      const agentResult = await clients.cap.runWithContext(buildCapContext(req), async () =>
-        runClaudeAgent({
-          prompt,
-          systemPrompt: CLAUDE_APPEND_PROMPT,
-          logger: console,
-          resumeSessionId,
-          options: {
-            ...(capServerConfig ? { mcpServers: capServerConfig } : {}),
-            ...(capAllowedTools?.length ? { allowedTools: capAllowedTools } : {})
-          }
-        })
-      );
-
-      if (agentResult.sessionId) {
-        claudeSessions.set(userId, agentResult.sessionId);
-      }
-
-      return MarkdownConverter.convertForClaims(agentResult.result);
-    };
-
-    const executeCodexCall = async (prompt: string, req: CapRequestContext): Promise<string> => {
-      const agent = ensureCodexAgent();
-      const userId = getUserId(req as ClaimsRequest);
-      console.log('🤖 Invoking Codex SDK for prompt');
-
-      const result = await agent.run(userId, prompt, {
-        threadOptions: buildCodexThreadOptions(),
-      });
-
-      if (result.usage) {
-        console.debug?.('[CodexAgent] Token usage', result.usage);
-      }
-
-      const rawResponse =
-        (result.finalResponse && result.finalResponse.trim().length > 0
-          ? result.finalResponse
-          : extractCodexAgentMessage(result.items)) ?? '';
-
-      const normalizedResponse =
-        rawResponse.trim().length > 0 ? rawResponse : 'Keine Antwort vom Codex-Agenten erhalten.';
-
-      return MarkdownConverter.convertForClaims(normalizedResponse);
+    const agentAdapters: Record<AgentBackend, AgentAdapter> = {
+      langgraph: langGraphAdapter,
+      claude: claudeAdapter,
+      codex: codexAdapter
     };
 
     const isExcelAttachment = (attachment: GraphAttachment | null | undefined): boolean => {
@@ -964,78 +816,11 @@ ${safeContent}`;
       }
     });
 
-    const initializeAgent = async (): Promise<AgentExecutor> => {
-      if (agentExecutor) return agentExecutor;
-
-      // +++ ERWEITERT: Log-Nachricht angepasst +++
-      console.log("Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...");
-
-      try {
-        const clients = await ensureMcpClients();
-
-        const [capTools, cdsModelTools, braveSearchTools, filesystemTools, excelTools, timeTools] = await Promise.all([
-          loadMcpTools('cap', clients.cap),
-          loadMcpTools('search_model', clients.cdsModel),
-          loadMcpTools("brave_web_search,brave_local_search", clients.braveSearch),
-          loadMcpTools("read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories", clients.filesystem),
-          loadMcpTools("excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet", clients.excel),
-          loadMcpTools("get_current_time,convert_time", clients.time)
-        ]) as StructuredToolInterface[][];
-
-        // PostgreSQL tools are temporarily disabled while the CAP MCP migration is in progress.
-        // const postgresTools = await loadMcpTools("query", clients.postgres);
-        const postgresTools: StructuredToolInterface[] = [];
-
-        // Kombiniere alle Tools
-        const allTools = [...postgresTools, ...cdsModelTools, ...capTools, ...braveSearchTools, ...filesystemTools, ...excelTools, ...timeTools];
-
-        // Lade Microsoft 365 Tools dynamisch aus dem Manifest
-        if (clients.m365) {
-          console.log("Loading Microsoft 365 tools...");
-          const manifest = await clients.m365.listTools();
-          const m365Tools = manifest.tools.map((toolDef) => {
-            const schema = jsonSchemaToZod(toolDef.inputSchema, z);
-            return new DynamicStructuredTool({
-              name: toolDef.name,
-              description: toolDef.description,
-              schema,
-              func: async (input) => {
-                const result = await clients.m365!.callTool({ name: toolDef.name, arguments: input });
-                return typeof result === 'string' ? result : JSON.stringify(result);
-              }
-            });
-          });
-          allTools.push(...m365Tools);
-          console.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
-        }
-
-        console.log(`✅ Loaded ${capTools.length} CAP, ${cdsModelTools.length} cds-mcp, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`);
-        console.log("Available tools:", allTools.map(tool => tool.name));
-
-        const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
-        const checkpointer = new MemorySaver();
-
-        agentExecutor = createReactAgent({
-          llm,
-          tools: allTools,
-          checkpointSaver: checkpointer
-        });
-        
-        // +++ ERWEITERT: Log-Nachricht angepasst +++
-        console.log("✅ Multi-Modal Agent is ready (Database + Web Search + Filesystem + Excel + M365 + Time).");
-        return agentExecutor;
-
-      } catch (error) {
-        console.error("❌ Failed to initialize agent:", error);
-        throw error;
-      }
-    };
-
     console.log(
       `[ClaimAI] Agent backend preference: ${preferredBackend} (env: "${(process.env.CLAIMAI_AGENT_BACKEND || '').trim()}")`,
     );
     if (preferredBackend === 'langgraph') {
-      await initializeAgent();
+      await langGraphAdapter.warmup?.();
     } else if (preferredBackend === 'claude') {
       console.log('Claude Agent backend selected; initializing MCP clients without LangGraph warmup.');
       await ensureMcpClients();
@@ -1052,83 +837,22 @@ ${safeContent}`;
 
       const backend = resolveAgentBackend();
       console.log(`🚀 Received prompt for ${describeAgentBackend(backend)}:`, userPrompt);
+      const adapter = agentAdapters[backend];
+      if (!adapter) {
+        req.error(500, `No adapter configured for backend ${backend}.`);
+        return;
+      }
+      const userId = getUserId(req as CapRequestContext);
+      const capContext = buildCapContext(req as CapRequestContext);
 
       try {
-        if (backend === 'claude') {
-          const claudeResponse = await executeClaudeCall(userPrompt, req);
-          return { response: claudeResponse };
-        }
-        if (backend === 'codex') {
-          const codexResponse = await executeCodexCall(userPrompt, req);
-          return { response: codexResponse };
-        }
-
-        const executor = await initializeAgent();
-        const clients = await ensureMcpClients();
-        const capContext = buildCapContext(req);
-
-        return await clients.cap.runWithContext(capContext, async () => {
-          const systemMessage = {
-            role: 'system',
-            content: langGraphSystemPrompt
-          };
-
-          const userMessage = {
-            role: 'user',
-            content: userPrompt
-          };
-
-          const stream = await executor.stream(
-            {
-              messages: [systemMessage, userMessage]
-            },
-            {
-              configurable: { thread_id: `session_test}` }
-            }
-          );
-
-          const finalResponseParts: string[] = [];
-          console.log("\n\n---- AGENT STREAM START ----\n");
-
-          for await (const chunk of stream) {
-            if (chunk.agent?.messages) {
-              const message = chunk.agent.messages[chunk.agent.messages.length - 1];
-              if (message && message.content) {
-                process.stdout.write(message.content);
-                finalResponseParts.push(message.content);
-              }
-              if (message.tool_calls && message.tool_calls.length > 0) {
-                const toolCall = message.tool_calls[0];
-                const toolCallStr = `
-
-<TOOL_CALL>
-  Tool: ${toolCall.name}
-  Args: ${JSON.stringify(toolCall.args)}
-</TOOL_CALL>
-
-`;
-                process.stdout.write(toolCallStr);
-              }
-            }
-
-            if (chunk.tools?.messages) {
-              const toolMessage = chunk.tools.messages[0];
-              const toolOutputStr = `<TOOL_OUTPUT>
-  ${toolMessage.content}
-</TOOL_OUTPUT>
-
-`;
-              process.stdout.write(toolOutputStr);
-            }
-          }
-          console.log("\n---- AGENT STREAM END ----\n");
-
-          const rawResponse = finalResponseParts.join("");
-          const htmlResponse = MarkdownConverter.convertForClaims(rawResponse);
-
-          return { response: htmlResponse };
+        const response = await adapter.call({
+          prompt: userPrompt,
+          userId,
+          capContext,
+          request: req,
         });
-
+        return { response };
       } catch (error) {
         console.error('💥 Error during agent execution:', error);
         const backendLabel =
@@ -1149,10 +873,17 @@ ${safeContent}`;
       }
 
       console.log('🚀 Received prompt for Claude Agent (direct):', userPrompt);
+      const userId = getUserId(req as CapRequestContext);
+      const capContext = buildCapContext(req as CapRequestContext);
 
       try {
-        const claudeResponse = await executeClaudeCall(userPrompt, req);
-        return { response: claudeResponse };
+        const response = await claudeAdapter.call({
+          prompt: userPrompt,
+          userId,
+          capContext,
+          request: req,
+        });
+        return { response };
       } catch (error) {
         console.error('💥 Error during Claude agent execution:', error);
         req.error(500, `Failed to process query via Claude Agent: ${getErrorMessage(error)}`);
@@ -1175,7 +906,7 @@ ${safeContent}`;
       if (mcpInfrastructureEnabled) {
         await closeMCPClients();
       }
-      codexAgent?.clearAllSessions();
+      await codexAdapter.shutdown?.();
     });
   }
 }
