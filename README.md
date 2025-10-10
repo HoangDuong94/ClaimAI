@@ -59,7 +59,6 @@ All scripts automatically disable the CDS `tsx` auto-runner (`CDS_TYPESCRIPT=fal
 - Namespace: `kfz.claims` (entities `Claims` and `ClaimDocuments`).
 - Draft handling is enabled for claims to support staged edits.
 - The multi-tool agent entry point remains the `callLLM` action in `srv/service.ts`. Set `CLAIMAI_AGENT_BACKEND=claude` to route that action through the Claude Agent SDK (requires `ANTHROPIC_API_KEY`), or `CLAIMAI_AGENT_BACKEND=codex` to target the Codex SDK backend (requires `CODEX_API_KEY`).
-- For explicit comparisons, the service also exposes `callClaudeAgent`, which always talks to the Claude Agent SDK regardless of the toggle.
 - Microsoft 365 tooling expects the `m365` CLI to be available globally (install via `npm i -g @pnp/cli-microsoft365`). The backend will log a warning if the CLI is missing but continue to start.
 
 ### Codex SDK backend

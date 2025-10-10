@@ -761,64 +761,6 @@ sap.ui.define([
             this.setStatusMessage("Error occurred", 5000);
         }
 
-        // Call Claude service via HTTP
-        async callLLMService(prompt) {
-            try {
-                // Get CSRF token first
-                const csrfToken = await this.getCSRFToken();
-
-                // Prepare the request
-                const requestOptions = {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-CSRF-Token': csrfToken
-                    },
-                    body: JSON.stringify({
-                        prompt: prompt
-                    })
-                };
-
-                // Make the actual call to Claude service
-                const response = await fetch(`${this.serviceUrl}/callLLM`, requestOptions);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                // Handle response from Claude
-                if (data && data.response) {
-                    return data.response;
-                } else {
-                    throw new Error("No valid response from Claude service");
-                }
-
-            } catch (error) {
-                console.error("Error calling Claude service:", error);
-                throw error;
-            }
-        }
-
-        // Get CSRF token for OData service calls
-        async getCSRFToken() {
-            try {
-                const response = await fetch(`${this.serviceUrl}/`, {
-                    method: 'GET',
-                    headers: {
-                        'X-CSRF-Token': 'Fetch'
-                    }
-                });
-
-                return response.headers.get('X-CSRF-Token') || '';
-            } catch (error) {
-                console.warn("Could not fetch CSRF token:", error);
-                return '';
-            }
-        }
-
         // Modern clipboard copy with fallback
         async copyToClipboard(text) {
             try {

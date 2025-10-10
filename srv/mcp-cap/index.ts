@@ -64,11 +64,6 @@ type RequestContextState = ContextOverrides & { request?: ServiceRequest };
 
 const MAX_ROWS = 200;
 
-const DEFAULT_DRAFT_DATA: AnyRecord = {
-  ort: 'Luzern',
-  datum: null
-};
-
 // Lightweight in-memory cache that remembers the most recent drafts per entity.
 const draftContext = new Map<string, DraftStore>();
 const requestContextStorage = new AsyncLocalStorage<RequestContextState>();
@@ -634,13 +629,7 @@ export async function initCapMCPClient(options: CapInitOptions) {
     const { entity } = input;
     const entityRef = resolveEntity(entity);
     const draftEntity = ensureDraftEntity(entityRef, entity);
-    // Apply domain defaults only for elements that actually exist
     const basePayload: AnyRecord = {};
-    if (draftEntity?.elements) {
-      for (const [k, v] of Object.entries(DEFAULT_DRAFT_DATA)) {
-        if (k in draftEntity.elements) basePayload[k] = v;
-      }
-    }
     const rawData: AnyRecord = input.data && typeof input.data === 'object' ? { ...input.data } : {};
     const extraFields: AnyRecord = { ...input };
     delete extraFields.entity;

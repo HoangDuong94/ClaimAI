@@ -19,63 +19,11 @@ interface InitAllClientOptions {
 interface InitAllClientsResult {
   cap: any;
   cdsModel: Client;
-  postgres: Client;
   braveSearch: Client;
-  playwright: null;
   filesystem: Client;
   excel: Client;
   m365: Awaited<ReturnType<typeof createInProcessM365Client>>;
   time: Client;
-}
-
-interface DbCredentials {
-  user: string;
-  password: string;
-  host: string;
-  port: number | string;
-  database: string;
-}
-
-interface RequiresDbConfig {
-  credentials?: Partial<DbCredentials> | null;
-}
-
-function normalizeDbCredentials(candidate: Partial<DbCredentials> | null | undefined): DbCredentials | null {
-  if (!candidate) return null;
-  const { user, password, host, database } = candidate;
-  const port = candidate.port ?? 5433;
-  if (!user || !password || !host || !database) {
-    return null;
-  }
-  return {
-    user,
-    password,
-    host,
-    port,
-    database
-  };
-}
-
-function resolveDbCredentials(): DbCredentials {
-  const requiresDb = cds.env?.requires?.db as RequiresDbConfig | undefined;
-  const credentialsFromConfig = normalizeDbCredentials(requiresDb?.credentials ?? null);
-  if (credentialsFromConfig) {
-    return credentialsFromConfig;
-  }
-
-  const envCredentials = normalizeDbCredentials({
-    user: process.env.POSTGRES_USER ?? process.env.CLAIMAI_POSTGRES_USER ?? undefined,
-    password: process.env.POSTGRES_PASSWORD ?? process.env.CLAIMAI_POSTGRES_PASSWORD ?? undefined,
-    host: process.env.POSTGRES_HOST ?? process.env.CLAIMAI_POSTGRES_HOST ?? 'localhost',
-    port: process.env.POSTGRES_PORT ?? process.env.CLAIMAI_POSTGRES_PORT ?? 5433,
-    database: process.env.POSTGRES_DB ?? process.env.CLAIMAI_POSTGRES_DB ?? undefined
-  });
-
-  if (envCredentials) {
-    return envCredentials;
-  }
-
-  throw new Error('Unable to resolve PostgreSQL credentials from cds.env or process.env.');
 }
 
 function sanitizeEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
@@ -95,36 +43,13 @@ function sanitizeEnv(overrides: Record<string, string | undefined> = {}): Record
   return sanitized;
 }
 
-const dbCredentials = resolveDbCredentials();
-
-let postgresClient: Client | null = null;
 let braveSearchClient: Client | null = null;
-let playwrightClient: null = null;
 let filesystemClient: Client | null = null;
 let excelClient: Client | null = null;
 let m365Client: Awaited<ReturnType<typeof createInProcessM365Client>> | null = null;
 let timeClient: Client | null = null;
 let capClient: any | null = null;
 let cdsModelClient: Client | null = null;
-
-function getPostgresUri(): string {
-  const creds = dbCredentials;
-  return `postgresql://${creds.user}:${creds.password}@${creds.host}:${creds.port}/${creds.database}`;
-}
-
-export async function initPostgresMCPClient(): Promise<Client> {
-  if (postgresClient) return postgresClient;
-  console.log('Initializing PostgreSQL MCP client...');
-  const postgresUri = getPostgresUri();
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', 'mcp-postgres-full-access', postgresUri]
-  });
-  postgresClient = new Client({ name: 'postgres-client', version: '1.0.0' }, {});
-  await postgresClient.connect(transport);
-  console.log('✅ PostgreSQL MCP Client initialized successfully.');
-  return postgresClient;
-}
 
 export async function initBraveSearchMCPClient(): Promise<Client> {
   if (braveSearchClient) return braveSearchClient;
@@ -140,11 +65,6 @@ export async function initBraveSearchMCPClient(): Promise<Client> {
   await braveSearchClient.connect(transport);
   console.log('✅ Brave Search MCP Client initialized successfully.');
   return braveSearchClient;
-}
-
-export async function initPlaywrightMCPClient(): Promise<null> {
-  console.log('⏸️ Playwright MCP client initialization is temporarily disabled.');
-  return null;
 }
 
 export async function initFilesystemMCPClient(): Promise<Client> {
@@ -246,10 +166,9 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
   console.log('Initializing all MCP clients...');
 
   const { capService, logger } = options;
-  const [capInProcessClient, cdsModel, pgClient, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+  const [capInProcessClient, cdsModel, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initCapInProcessClient({ capService, logger }),
     initCdsModelMCPClient(),
-    initPostgresMCPClient(),
     initBraveSearchMCPClient(),
     initFilesystemMCPClient(),
     initExcelMCPClient(),
@@ -260,9 +179,7 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
   return {
     cap: capInProcessClient,
     cdsModel,
-    postgres: pgClient,
     braveSearch: braveClient,
-    playwright: playwrightClient,
     filesystem: fsClient,
     excel: xlsxClient,
     m365: microsoft365Client,
@@ -273,11 +190,6 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
 export async function closeMCPClients(): Promise<void> {
   const closePromises: Array<Promise<unknown>> = [];
 
-  if (postgresClient) {
-    console.log('Closing PostgreSQL MCP client connection');
-    closePromises.push(postgresClient.close());
-    postgresClient = null;
-  }
   if (braveSearchClient) {
     console.log('Closing Brave Search MCP client connection');
     closePromises.push(braveSearchClient.close());
@@ -317,6 +229,3 @@ export async function closeMCPClients(): Promise<void> {
   await Promise.all(closePromises);
   console.log('✅ All MCP clients closed');
 }
-
-export const initMCPClient = initPostgresMCPClient;
-export const closeMCPClient = closeMCPClients;

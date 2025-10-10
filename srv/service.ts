@@ -865,31 +865,6 @@ ${safeContent}`;
       }
     });
 
-    this.on('callClaudeAgent', async (req) => {
-      const { prompt: userPrompt } = (req.data ?? {}) as { prompt?: string };
-      if (!userPrompt) {
-        req.error(400, 'Prompt is required');
-        return;
-      }
-
-      console.log('🚀 Received prompt for Claude Agent (direct):', userPrompt);
-      const userId = getUserId(req as CapRequestContext);
-      const capContext = buildCapContext(req as CapRequestContext);
-
-      try {
-        const response = await claudeAdapter.call({
-          prompt: userPrompt,
-          userId,
-          capContext,
-          request: req,
-        });
-        return { response };
-      } catch (error) {
-        console.error('💥 Error during Claude agent execution:', error);
-        req.error(500, `Failed to process query via Claude Agent: ${getErrorMessage(error)}`);
-      }
-    });
-
     this.on('EXIT', async () => {
       if (mcpInfrastructureEnabled) {
         console.log('Shutting down MCP clients...');
