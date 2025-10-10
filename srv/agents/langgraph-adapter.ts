@@ -10,6 +10,19 @@ import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
 import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
 
+const isTruthy = (value: string | undefined): boolean => {
+  if (!value) return false;
+  switch (value.toLowerCase().trim()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    default:
+      return false;
+  }
+};
+
 type MCPClients = Awaited<ReturnType<typeof initAllMCPClients>>;
 type AgentExecutor = ReturnType<typeof createReactAgent>;
 
@@ -24,6 +37,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
   private readonly langGraphSystemPrompt: string;
   private readonly logger: Console;
   private agentExecutor: AgentExecutor | null = null;
+  private langSmithStateLogged = false;
 
   constructor(deps: LangGraphAdapterDependencies) {
     this.ensureMcpClients = deps.ensureMcpClients;
@@ -110,6 +124,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       return this.agentExecutor;
     }
 
+    this.logLangSmithState();
     this.logger.log(
       'Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...',
     );
@@ -184,6 +199,27 @@ export class LangGraphAgentAdapter implements AgentAdapter {
     } catch (error) {
       this.logger.error?.('❌ Failed to initialize agent:', error);
       throw error;
+    }
+  }
+
+  private logLangSmithState(): void {
+    if (this.langSmithStateLogged) return;
+    this.langSmithStateLogged = true;
+
+    const tracingEnabled =
+      isTruthy(process.env.LANGSMITH_TRACING) || isTruthy(process.env.LANGCHAIN_TRACING_V2);
+    const project =
+      process.env.LANGSMITH_PROJECT ||
+      process.env.LANGCHAIN_PROJECT ||
+      process.env.LANGSMITH_DEFAULT_PROJECT;
+
+    if (tracingEnabled) {
+      const projectSuffix = project ? ` (project: ${project})` : '';
+      this.logger.log(`LangSmith tracing enabled${projectSuffix}.`);
+    } else {
+      this.logger.log(
+        'LangSmith tracing disabled. Set LANGSMITH_TRACING=true to emit traces to smith.langchain.com.',
+      );
     }
   }
 }

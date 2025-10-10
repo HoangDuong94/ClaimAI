@@ -74,5 +74,5 @@ If the user asks for an “analysis”, “report”, or “visualization” of 
      - A `<script>` block at the end of the body. Inside this script, you will:
        1. Store the data retrieved from the database in a JavaScript variable.
        2. Write the JavaScript code to initialize Chart.js and render the chart on the canvas, using the data.
-3. **Save the File:** Use the `edit_file` tool to write the complete HTML code into a new file.
+3. **Save the File:** If the target file does not exist yet, call `write_file` with the full HTML payload to create it (create missing folders first with `create_directory` when needed). Use `edit_file` only for subsequent updates to an existing file, always with `dryRun: true` before applying changes.
 4. **Report Back:** After the file has been successfully created, inform the user that the analysis is complete and provide the full, correct path to the generated HTML file so they can open it.

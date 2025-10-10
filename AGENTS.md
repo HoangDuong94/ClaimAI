@@ -26,6 +26,11 @@
 - Microsoft 365 tooling requires the m365 CLI login; Excel attachments are downloaded to `tmp/attachments` and enriched automatically.
 - CAP MCP actions (`srv/mcp-cap/index.ts`) maintain draft caches per entity—prefer `cap.draft.*` flows over raw SQL writes.
 
+## LangSmith Observability
+- Enable tracing by exporting `LANGSMITH_TRACING=true`, `LANGSMITH_ENDPOINT=https://api.smith.langchain.com`, `LANGSMITH_API_KEY=<your-langsmith-key>`, and `LANGSMITH_PROJECT=pr-enchanted-savior-100` in your local `.env`. Keep secrets (API key) out of git.
+- Restart `npm run watch-hybrid` (or your chosen start script) after setting the variables; the LangGraph adapter logs whether tracing is active.
+- When tracing is on, visit [https://smith.langchain.com](https://smith.langchain.com) → `Projects` → `pr-enchanted-savior-100` to inspect runs with tool/LLM breakdowns.
+
 ## Codex SDK Agent
 - Switch the backend by setting `CLAIMAI_AGENT_BACKEND=codex`; the default remains the LangGraph agent.
 - Set `CODEX_API_KEY` if you want to override the cached credentials from `codex login`; other knobs (`CODEX_BASE_URL`, `CODEX_MODEL`, `CODEX_SANDBOX_MODE`, `CODEX_WORKING_DIRECTORY`, `CODEX_SKIP_GIT_CHECK`, `CODEX_EXECUTABLE`) remain optional overrides.
