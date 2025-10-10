@@ -26,10 +26,6 @@ sap.ui.define([
             this.currentRecognition = null;
             this.serviceUrl = "/service/claims"; // Service URL from manifest.json
             this.notificationsEventSource = null;
-            this.claimsCache = [];
-            this.claimsCacheTimestamp = 0;
-            this.claimsLoadingPromise = null;
-            this.CLAIM_CACHE_MAX_AGE_MS = 30000;
             this.isMentionOpen = false;
             this._mentionTokenStart = null;
             this._mentionFilter = "";
@@ -679,13 +675,11 @@ sap.ui.define([
                     throw new Error("OData Model not found");
                 }
 
-                const finalPrompt = await this.addClaimsContextToPrompt(prompt);
-
                 // Erstelle Operation Binding für unbound Action
                 const oOperationBinding = oDataModel.bindContext("/callLLM(...)");
 
                 // Setze Parameter
-                oOperationBinding.setParameter("prompt", finalPrompt);
+                oOperationBinding.setParameter("prompt", prompt);
 
                 // Führe Action aus
                 await oOperationBinding.execute();
@@ -695,110 +689,12 @@ sap.ui.define([
                 const result = oContext.getObject();
 
                 console.log("Claude operation result:", result);
-
-                this.refreshClaimsCache().catch((refreshError) => {
-                    console.warn("Aktualisierung der Schadenfälle nach Agent-Call fehlgeschlagen:", refreshError);
-                });
-
                 return result.response || "No response received";
 
             } catch (error) {
                 console.error("Error in callLLMViaOperationBinding:", error);
                 throw error;
             }
-        }
-
-        async addClaimsContextToPrompt(prompt) {
-            const claims = await this.getClaimsSnapshot().catch((error) => {
-                console.warn("Konnte Liste der Schadenfälle nicht ermitteln:", error);
-                return [];
-            });
-
-            if (!Array.isArray(claims) || claims.length === 0) {
-                return prompt;
-            }
-
-            const listForPrompt = claims.map((entry) => ({
-                id: entry.id,
-                claim_number: entry.claim_number,
-                normalized: entry.normalized
-            }));
-
-            const instructions = [
-                "Kontext: Prüfe die folgende JSON-Liste bekannter Claims (Claim-Nummern, lower-case/trim), bevor du neue Schadenfälle anlegst.",
-                "Sollte eine Claim-Nummer bereits existieren, informiere den Nutzer, kläre das gewünschte Vorgehen und führe keine Inserts ohne explizite Freigabe aus.",
-                `BekannteClaimsJSON=${JSON.stringify(listForPrompt)}`,
-                "---",
-                prompt
-            ];
-
-            return instructions.join("\n\n");
-        }
-
-        normalizeClaimNumber(claimNumber) {
-            return typeof claimNumber === "string" ? claimNumber.trim().toLowerCase() : "";
-        }
-
-        async getClaimsSnapshot(options = {}) {
-            const { force = false } = options;
-            const now = Date.now();
-            const isStale = now - this.claimsCacheTimestamp > this.CLAIM_CACHE_MAX_AGE_MS;
-
-            if (!force && this.claimsCache.length && !isStale) {
-                return this.claimsCache;
-            }
-
-            if (this.claimsLoadingPromise) {
-                return this.claimsLoadingPromise;
-            }
-
-            this.claimsLoadingPromise = this.refreshClaimsCache()
-                .catch((error) => {
-                    this.claimsLoadingPromise = null;
-                    throw error;
-                })
-                .then((result) => {
-                    this.claimsLoadingPromise = null;
-                    return result;
-                });
-
-            return this.claimsLoadingPromise;
-        }
-
-        async refreshClaimsCache() {
-            if (!this.feAppComponentInstance) {
-                return this.claimsCache;
-            }
-
-            const model = this.feAppComponentInstance.getModel();
-            if (!model) {
-                return this.claimsCache;
-            }
-
-            const listBinding = model.bindList("/Claims");
-
-            try {
-                const contexts = await listBinding.requestContexts(0, 500);
-                const snapshot = contexts
-                    .map((ctx) => ctx?.getObject?.())
-                    .filter((entry) => entry && typeof entry.claim_number === "string" && entry.claim_number.trim());
-
-                this.claimsCache = snapshot.map((entry) => ({
-                    id: entry.ID,
-                    claim_number: entry.claim_number,
-                    normalized: this.normalizeClaimNumber(entry.claim_number)
-                }));
-                this.claimsCacheTimestamp = Date.now();
-
-                return this.claimsCache;
-            } finally {
-                listBinding.destroy();
-            }
-        }
-
-        invalidateClaimsCache() {
-            this.claimsCacheTimestamp = 0;
-            this.claimsCache = [];
         }
 
         // Update status message with auto-clear
@@ -1807,12 +1703,6 @@ sap.ui.define([
 
             // Connect notifications stream
             chatManager.setupNotificationsSSE();
-
-            try {
-                await chatManager.getClaimsSnapshot({ force: true });
-            } catch (claimsSnapshotError) {
-                console.warn("Initiales Laden der Schadenfälle fehlgeschlagen:", claimsSnapshotError);
-            }
 
             console.log("Application initialized successfully");
 

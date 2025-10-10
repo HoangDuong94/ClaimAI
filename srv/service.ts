@@ -1044,7 +1044,7 @@ ${safeContent}`;
     }
 
     this.on('callLLM', async (req) => {
-      const { prompt: userPrompt } = req.data;
+      const { prompt: userPrompt } = (req.data ?? {}) as { prompt?: string };
       if (!userPrompt) {
         req.error(400, 'Prompt is required');
         return;
@@ -1142,7 +1142,7 @@ ${safeContent}`;
     });
 
     this.on('callClaudeAgent', async (req) => {
-      const { prompt: userPrompt } = req.data;
+      const { prompt: userPrompt } = (req.data ?? {}) as { prompt?: string };
       if (!userPrompt) {
         req.error(400, 'Prompt is required');
         return;
