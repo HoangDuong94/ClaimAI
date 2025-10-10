@@ -17,4 +17,13 @@ service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
     entity ClaimStatusTexts as projection on ClaimsModel.ClaimStatusTexts;
 
     action callLLM (prompt: String) returns { response: String };
+
+    action triageLatestMail(
+        folder   : String,
+        messageId: String
+    ) returns {
+        summary     : String;
+        category    : String;
+        agentContext: LargeString;
+    };
 }

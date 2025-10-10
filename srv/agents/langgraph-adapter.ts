@@ -178,6 +178,26 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         this.logger.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
       }
 
+      if (clients.cap) {
+        const triageToolSchema = z.object({
+          folder: z.string().optional().describe('Mailordner (Standard: inbox).'),
+          messageId: z.string().optional().describe('Optional: Konkrete Nachricht ID statt neuester Nachricht.')
+        });
+        const mailTriageTool = new DynamicStructuredTool({
+          name: 'cap_mail_triage_latest',
+          description: 'Führt die ClaimAI Mail-Triage aus (Zusammenfassung, Kategorie und Anhangs-Insights).',
+          schema: triageToolSchema,
+          func: async (input) => {
+            const result = await clients.cap.callTool({
+              name: 'cap.mail.triageLatest',
+              arguments: input
+            });
+            return typeof result === 'string' ? result : JSON.stringify(result);
+          }
+        });
+        allTools.push(mailTriageTool);
+      }
+
       this.logger.log(
         `✅ Loaded ${capTools.length} CAP, ${cdsModelTools.length} cds-mcp, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`,
       );

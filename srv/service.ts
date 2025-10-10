@@ -160,12 +160,14 @@ export default class ClaimsService extends cds.ApplicationService {
     };
 
     const summarizer = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+    const visionClient = new AzureOpenAiChatClient({ modelName: 'gpt-4.1', max_tokens: 400 });
 
     const SUMMARY_MAX_INPUT_CHARS = 6000;
     const SUMMARY_MAX_OUTPUT_CHARS = 280;
     const SUMMARY_FALLBACK = 'Keine Zusammenfassung verfügbar.';
     const SUMMARY_CATEGORIES = ['To Respond', 'Notification', 'FYI', 'Meeting Update', 'Action needed', 'Completed'];
     const DEFAULT_CATEGORY = 'Notification';
+    const DEFAULT_IMAGE_PROMPT = 'Beschreibe den sichtbaren Schaden in höchstens drei Sätzen. Falls erkennbar: Fahrzeugtyp, betroffene Bauteile, Umfeld. Nutze EXIF-Informationen nicht direkt in deiner Beschreibung.';
     const ATTACHMENTS_DIR = process.env.M365_ATTACHMENT_BASE_PATH
       ? path.resolve(process.env.M365_ATTACHMENT_BASE_PATH)
       : path.resolve(process.cwd(), 'tmp', 'attachments');
@@ -176,6 +178,7 @@ export default class ClaimsService extends cds.ApplicationService {
       'text/csv',
       'application/vnd.ms-excel.sheet'
     ];
+    const IMAGE_MIME_PREFIXES = ['image/png', 'image/jpeg', 'image/webp'];
 
     let attachmentDirReadyPromise: AttachmentDirPromise = null;
 
@@ -248,6 +251,41 @@ export default class ClaimsService extends cds.ApplicationService {
       return EXCEL_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
     };
 
+    const isImageAttachment = (attachment: GraphAttachment | null | undefined): boolean => {
+      if (!attachment) return false;
+      const type = (attachment.contentType || '').toLowerCase();
+      if (IMAGE_MIME_PREFIXES.some((prefix) => type.startsWith(prefix))) return true;
+      const name = (attachment.name || '').toLowerCase();
+      const ext = path.extname(name);
+      return ['.png', '.jpg', '.jpeg', '.webp'].includes(ext);
+    };
+
+    const EXIF_TAG_NAMES: Record<number, string> = {
+      0x010f: 'Make',
+      0x0110: 'Model',
+      0x0112: 'Orientation',
+      0x0131: 'Software',
+      0x0132: 'DateTime',
+      0x829a: 'ExposureTime',
+      0x829d: 'FNumber',
+      0x9003: 'DateTimeOriginal',
+      0x9004: 'DateTimeDigitized',
+      0x9209: 'Flash',
+      0xa002: 'PixelXDimension',
+      0xa003: 'PixelYDimension'
+    };
+
+    const EXIF_TYPE_SIZES: Record<number, number> = {
+      1: 1,
+      2: 1,
+      3: 2,
+      4: 4,
+      5: 8,
+      7: 1,
+      9: 4,
+      10: 8
+    };
+
     const parseMcpContent = (payload: unknown): unknown => {
       if (payload === null || payload === undefined) return null;
       if (typeof payload === 'string') {
@@ -286,6 +324,160 @@ export default class ClaimsService extends cds.ApplicationService {
         return record;
       }
       return payload;
+    };
+
+    const formatNumberArray = (arr: unknown): unknown => {
+      if (!Array.isArray(arr)) return arr;
+      return arr.map((value) => (typeof value === 'number' ? Number(value.toFixed(4)) : value));
+    };
+
+    const extractExifMetadata = (buffer: Buffer): Record<string, unknown> => {
+      if (!isPng(buffer)) return {};
+      const exifChunk = readPngExifChunk(buffer);
+      if (!exifChunk) return {};
+      return parseExifBuffer(exifChunk);
+    };
+
+    const isPng = (buffer: Buffer): boolean => {
+      const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      return buffer.slice(0, 8).equals(pngSignature);
+    };
+
+    const readPngExifChunk = (buffer: Buffer): Buffer | null => {
+      let offset = 8;
+      while (offset + 12 <= buffer.length) {
+        const length = buffer.readUInt32BE(offset);
+        const type = buffer.toString('ascii', offset + 4, offset + 8);
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + length;
+        if (dataEnd > buffer.length) break;
+        if (type === 'eXIf') {
+          return buffer.subarray(dataStart, dataEnd);
+        }
+        offset = dataEnd + 4;
+      }
+      return null;
+    };
+
+    const parseExifBuffer = (buffer: Buffer): Record<string, unknown> => {
+      if (!buffer || buffer.length < 12) {
+        return {};
+      }
+      const header = buffer.toString('ascii', 0, 4);
+      if (header !== 'Exif') {
+        return {};
+      }
+      const tiffBase = 6;
+      const endianMarker = buffer.toString('ascii', tiffBase, tiffBase + 2);
+      const littleEndian = endianMarker === 'II';
+
+      const readUInt16 = (offset: number): number => littleEndian ? buffer.readUInt16LE(offset) : buffer.readUInt16BE(offset);
+      const readInt32 = (offset: number): number => littleEndian ? buffer.readInt32LE(offset) : buffer.readInt32BE(offset);
+      const readUInt32 = (offset: number): number => littleEndian ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
+
+      const data: Record<string, unknown> = {};
+      const firstIfdOffset = readUInt32(tiffBase + 4);
+      processIfd(tiffBase + firstIfdOffset, 'IFD0');
+      return data;
+
+      function processIfd(offset: number, section: string): void {
+        if (!offset || offset < tiffBase || offset >= buffer.length) {
+          return;
+        }
+        if (offset + 2 > buffer.length) {
+          return;
+        }
+        const entryCount = readUInt16(offset);
+        let cursor = offset + 2;
+        if (entryCount === 0 || cursor + entryCount * 12 > buffer.length) {
+          return;
+        }
+        const sectionData = data[section] || (data[section] = {});
+
+        for (let i = 0; i < entryCount; i++, cursor += 12) {
+          const tag = readUInt16(cursor);
+          const type = readUInt16(cursor + 2);
+          const count = readUInt32(cursor + 4);
+          const valueOffset = cursor + 8;
+          const tagName = EXIF_TAG_NAMES[tag] || `Tag_0x${tag.toString(16)}`;
+          const value = readTagValue({ tag, type, count, valueOffset });
+          if (value !== undefined) {
+            (sectionData as Record<string, unknown>)[tagName] = formatNumberArray(value);
+          }
+        }
+      }
+
+      function readTagValue({ type, count, valueOffset }: { tag: number; type: number; count: number; valueOffset: number }): unknown {
+        const typeSize = EXIF_TYPE_SIZES[type];
+        if (!typeSize || count <= 0) {
+          return undefined;
+        }
+        const byteLength = typeSize * count;
+        let dataOffset: number;
+
+        if (byteLength <= 4) {
+          dataOffset = valueOffset;
+        } else {
+          const relativeOffset = readUInt32(valueOffset);
+          dataOffset = tiffBase + relativeOffset;
+        }
+
+        if (dataOffset < 0 || dataOffset + byteLength > buffer.length) {
+          return undefined;
+        }
+
+        const slice = buffer.subarray(dataOffset, dataOffset + byteLength);
+        switch (type) {
+          case 1:
+          case 7:
+            return Array.from(slice.values());
+          case 2: {
+            const str = slice.toString('utf8').replace(/\0+$/, '').trim();
+            return str.length ? str : undefined;
+          }
+          case 3: {
+            const values: number[] = [];
+            for (let i = 0; i < count; i++) {
+              values.push(readUInt16(dataOffset + i * 2));
+            }
+            return count === 1 ? values[0] : values;
+          }
+          case 4: {
+            const values: number[] = [];
+            for (let i = 0; i < count; i++) {
+              values.push(readUInt32(dataOffset + i * 4));
+            }
+            return count === 1 ? values[0] : values;
+          }
+          case 5: {
+            const values: Array<number | null> = [];
+            for (let i = 0; i < count; i++) {
+              const numerator = readUInt32(dataOffset + i * 8);
+              const denominator = readUInt32(dataOffset + i * 8 + 4);
+              values.push(denominator ? numerator / denominator : null);
+            }
+            return count === 1 ? values[0] : values;
+          }
+          case 9: {
+            const values: number[] = [];
+            for (let i = 0; i < count; i++) {
+              values.push(readInt32(dataOffset + i * 4));
+            }
+            return count === 1 ? values[0] : values;
+          }
+          case 10: {
+            const values: Array<number | null> = [];
+            for (let i = 0; i < count; i++) {
+              const numerator = readInt32(dataOffset + i * 8);
+              const denominator = readInt32(dataOffset + i * 8 + 4);
+              values.push(denominator ? numerator / denominator : null);
+            }
+            return count === 1 ? values[0] : values;
+          }
+          default:
+            return undefined;
+        }
+      }
     };
 
     const callExcelTool = async (toolName: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -358,7 +550,47 @@ export default class ClaimsService extends cds.ApplicationService {
       return { describe: describeResult, sheets };
     };
 
-    const ensureExcelAttachmentDetails = async (message: GraphMessage, summaryEntry: SummaryRecord | null | undefined): Promise<void> => {
+    const analyzeImageAttachment = async (filePath: string): Promise<{ description: string | null; exif: Record<string, unknown>; error?: string }> => {
+      try {
+        const buffer = await readFile(filePath);
+        const base64Image = buffer.toString('base64');
+        const exif = extractExifMetadata(buffer);
+        const systemMessage = {
+          role: 'system' as const,
+          content: 'Du analysierst Schadenfotos und antwortest kompakt auf Deutsch.'
+        };
+        const humanMessage = {
+          role: 'user' as const,
+          content: [
+            { type: 'text', text: DEFAULT_IMAGE_PROMPT },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${base64Image}`
+              }
+            }
+          ]
+        };
+        const response = await visionClient.invoke([systemMessage, humanMessage]);
+        let description: string | null = null;
+        const content = (response as any)?.content;
+        if (typeof content === 'string') {
+          description = content.trim() || null;
+        } else if (Array.isArray(content)) {
+          description = content
+            .filter((entry) => entry?.type === 'text' && typeof entry.text === 'string')
+            .map((entry) => entry.text as string)
+            .join('\n')
+            .trim() || null;
+        }
+        return { description, exif };
+      } catch (error) {
+        console.warn('Vision analysis failed:', getErrorMessage(error));
+        return { description: null, exif: {}, error: getErrorMessage(error) };
+      }
+    };
+
+    const ensureAttachmentDetails = async (message: GraphMessage, summaryEntry: SummaryRecord | null | undefined): Promise<void> => {
       if (!summaryEntry?.agentContext) return;
       const attachments = Array.isArray(message?.attachments) ? (message.attachments as GraphAttachment[]) : [];
       if (!attachments.length) return;
@@ -375,17 +607,12 @@ export default class ClaimsService extends cds.ApplicationService {
           isInline: Boolean(attachment.isInline)
         };
 
-        if (!isExcelAttachment(attachment) || (attachment as any).isInline) {
-          enriched.push(baseInfo);
-          continue;
-        }
-
         if (!attachment.id || !message.id) {
           enriched.push({ ...baseInfo, error: 'attachment id or message id missing' });
           continue;
         }
 
-        const safeName = sanitizeFileName(attachment.name || `${message.id}-${attachment.id}.xlsx`);
+        const safeName = sanitizeFileName(attachment.name || `${message.id}-${attachment.id}`);
         const targetPath = path.join(ATTACHMENTS_DIR, safeName);
 
         try {
@@ -397,14 +624,29 @@ export default class ClaimsService extends cds.ApplicationService {
             });
           }
 
-          const excel = await loadExcelAttachmentContext(targetPath);
-          enriched.push({
-            ...baseInfo,
-            path: targetPath,
-            excel
-          });
+          if (isExcelAttachment(attachment) && !(attachment as any).isInline) {
+            const excel = await loadExcelAttachmentContext(targetPath);
+            enriched.push({
+              ...baseInfo,
+              path: targetPath,
+              excel
+            });
+            continue;
+          }
+
+          if (isImageAttachment(attachment) && !(attachment as any).isInline) {
+            const vision = await analyzeImageAttachment(targetPath);
+            enriched.push({
+              ...baseInfo,
+              path: targetPath,
+              vision
+            });
+            continue;
+          }
+
+          enriched.push({ ...baseInfo, path: targetPath });
         } catch (error) {
-          console.warn('Failed to process Excel attachment:', attachment.name, getErrorMessage(error));
+          console.warn('Failed to process attachment:', attachment.name, getErrorMessage(error));
           enriched.push({ ...baseInfo, path: targetPath, error: getErrorMessage(error) });
         }
       }
@@ -646,9 +888,9 @@ ${safeContent}`;
       }
       const summary = await generateSummaryForMessage(message);
       try {
-        await ensureExcelAttachmentDetails(message, summary);
+        await ensureAttachmentDetails(message, summary);
       } catch (error) {
-        console.warn('ensureExcelAttachmentDetails failed:', getErrorMessage(error));
+        console.warn('ensureAttachmentDetails failed:', getErrorMessage(error));
       }
       session.summaries.set(message.id, summary);
       return summary;
@@ -862,6 +1104,47 @@ ${safeContent}`;
               ? 'Codex agent'
               : 'LangGraph agent';
         req.error(500, `Failed to process query via ${backendLabel}: ${getErrorMessage(error)}`);
+      }
+    });
+
+    this.on('triageLatestMail', async (req) => {
+      const { folder, messageId } = (req.data ?? {}) as { folder?: string | null; messageId?: string | null };
+      const targetFolder = typeof folder === 'string' && folder.trim().length ? folder.trim() : 'inbox';
+      try {
+        let message: GraphMessage | null = null;
+        if (messageId && messageId.trim()) {
+          try {
+            const list = await graph.listMessages({ folderId: targetFolder, maxResults: 20 }) as GraphMessage[];
+            message = list.find((entry) => entry.id === messageId) || null;
+          } catch (error) {
+            console.warn('triageLatestMail: listMessages failed, falling back to latest.', getErrorMessage(error));
+          }
+        }
+
+        if (!message) {
+          message = await graph.getLatestMessage({ folderId: targetFolder }) as GraphMessage | null;
+        }
+
+        if (!message) {
+          req.error(404, `Keine E-Mail im Ordner "${targetFolder}" gefunden.`);
+          return;
+        }
+
+        const summaryRecord = await generateSummaryForMessage(message);
+        try {
+          await ensureAttachmentDetails(message, summaryRecord);
+        } catch (error) {
+          console.warn('triageLatestMail: ensureAttachmentDetails failed', getErrorMessage(error));
+        }
+
+        return {
+          summary: summaryRecord.summary,
+          category: summaryRecord.category,
+          agentContext: JSON.stringify(summaryRecord.agentContext ?? null)
+        };
+      } catch (error) {
+        console.error('triageLatestMail failed:', error);
+        req.error(500, `Mail-Triage fehlgeschlagen: ${getErrorMessage(error)}`);
       }
     });
 

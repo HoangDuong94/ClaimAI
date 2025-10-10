@@ -269,6 +269,18 @@ const toolDefinitions: Array<{ name: string; description: string; inputSchema: J
       required: ['entity', 'child'],
       additionalProperties: true
     }
+  },
+  {
+    name: 'cap.mail.triageLatest',
+    description: 'Führt den ClaimAI Mail-Triage-Workflow aus (Zusammenfassung, Kategorisierung, Anhangsanreicherung).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder: { type: 'string', description: 'Zu prüfender Posteingangsordner (Standard: inbox).' },
+        messageId: { type: 'string', description: 'Optional: Konkrete Nachricht ID statt neuester Nachricht.' }
+      },
+      additionalProperties: false
+    }
   }
 ];
 
@@ -1043,6 +1055,29 @@ export async function initCapMCPClient(options: CapInitOptions) {
     return toResultPayload(result, { entity: entityRef.name, action: 'ADD_CHILD', child });
   }
 
+  async function handleMailTriage(input: AnyRecord = {}) {
+    const payload: AnyRecord = {};
+    if (typeof input.folder === 'string' && input.folder.trim()) {
+      payload.folder = input.folder.trim();
+    }
+    if (typeof input.messageId === 'string' && input.messageId.trim()) {
+      payload.messageId = input.messageId.trim();
+    }
+
+    const result = await withServiceContext(
+      async (req) => {
+        const tx = await (service as any).tx(req);
+        if (tx && typeof tx.call === 'function') {
+          return tx.call('triageLatestMail', payload);
+        }
+        return (service as any).call('triageLatestMail', payload);
+      },
+      { event: 'triageLatestMail', data: payload }
+    );
+
+    return toResultPayload(result, { action: 'TRIAGE_MAIL' });
+  }
+
   const handlers: Record<string, (input: AnyRecord) => Promise<any> | any> = {
     'cap.sql.execute': handleSqlExecute,
     'cap.cqn.read': handleCqnRead,
@@ -1052,7 +1087,8 @@ export async function initCapMCPClient(options: CapInitOptions) {
     'cap.draft.save': handleDraftSave,
     'cap.draft.cancel': handleDraftCancel,
     'cap.draft.getAdminData': handleDraftGetAdminData,
-    'cap.draft.addChild': handleDraftAddChild
+    'cap.draft.addChild': handleDraftAddChild,
+    'cap.mail.triageLatest': handleMailTriage
   };
 
   const invokeHandler = async (toolName: string, input: AnyRecord): Promise<CallToolResult> => {
@@ -1175,6 +1211,15 @@ export async function initCapMCPClient(options: CapInitOptions) {
           DraftAdministrativeData_DraftUUID: z.string().optional()
         },
         async (args) => invokeHandler('cap.draft.addChild', args)
+      ),
+      tool(
+        'cap.mail.triageLatest',
+        'Run the ClaimAI mail triage workflow (summary + attachment enrichment) on the latest or specified email.',
+        {
+          folder: z.string().optional(),
+          messageId: z.string().optional()
+        },
+        async (args) => invokeHandler('cap.mail.triageLatest', args)
       )
     ]
   });
