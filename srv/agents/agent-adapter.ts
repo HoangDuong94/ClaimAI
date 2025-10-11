@@ -5,6 +5,7 @@ export interface AgentCallOptions {
   userId: string;
   capContext?: Record<string, unknown>;
   request: CapRequestContext;
+  conversationId?: string | null;
 }
 
 export interface AgentAdapter {

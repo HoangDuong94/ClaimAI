@@ -1071,7 +1071,7 @@ ${safeContent}`;
     }
 
     this.on('callLLM', async (req) => {
-      const { prompt: userPrompt } = (req.data ?? {}) as { prompt?: string };
+      const { prompt: userPrompt, conversationId } = (req.data ?? {}) as { prompt?: string; conversationId?: string | null };
       if (!userPrompt) {
         req.error(400, 'Prompt is required');
         return;
@@ -1093,6 +1093,7 @@ ${safeContent}`;
           userId,
           capContext,
           request: req,
+          conversationId: typeof conversationId === 'string' ? conversationId : undefined,
         });
         return { response };
       } catch (error) {

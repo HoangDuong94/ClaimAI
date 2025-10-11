@@ -34,6 +34,7 @@ sap.ui.define([
             this._mentionSelectionIndex = 0;
             this.announcedMailIds = new Set();
             this.autoAnalyzedMailIds = new Set();
+            this.conversationId = null;
         }
 
         // Initialize chat model with welcome message
@@ -51,6 +52,7 @@ sap.ui.define([
                 isTyping: false,
                 statusMessage: "",
                 showSuggestions: false,
+                conversationId: "",
                 suggestions: [
                     { text: 'Fasse den Schadenfall CLM-CH-LU-2025-001 mit Status, Kosten und Scores zusammen.' },
                     { text: 'Liste alle offenen Claims (Status Eingegangen) mit geschätzten Kosten absteigend.' },
@@ -61,6 +63,8 @@ sap.ui.define([
                 ]
             });
 
+            this.ensureConversationId(true);
+
         }
 
         initializeNotificationsModel() {
@@ -69,6 +73,40 @@ sap.ui.define([
                 unreadCount: 0,
                 hasNew: false
             });
+        }
+
+        generateConversationId() {
+            if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+                return crypto.randomUUID();
+            }
+            return `conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        }
+
+        ensureConversationId(forceNew = false) {
+            if (forceNew || !this.conversationId) {
+                this.conversationId = this.generateConversationId();
+                if (this.chatModel) {
+                    this.chatModel.setProperty("/conversationId", this.conversationId);
+                }
+            }
+            return this.conversationId;
+        }
+
+        startNewConversation() {
+            const newId = this.ensureConversationId(true);
+            if (this.chatModel) {
+                this.chatModel.setProperty("/chatHistory", []);
+                this.chatModel.setProperty("/userInput", "");
+                this.chatModel.setProperty("/isTyping", false);
+                this.chatModel.setProperty("/statusMessage", "New chat started");
+                this.addMessageEnhanced(
+                    "system",
+                    "New conversation started. How can I help you today?"
+                );
+                this.setStatusMessage("New chat started");
+                this.chatModel.refresh(true);
+            }
+            return newId;
         }
 
         formatNotificationForDisplay(item) {
@@ -680,6 +718,8 @@ sap.ui.define([
 
                 // Setze Parameter
                 oOperationBinding.setParameter("prompt", prompt);
+                const conversationId = this.ensureConversationId();
+                oOperationBinding.setParameter("conversationId", conversationId);
 
                 // Führe Action aus
                 await oOperationBinding.execute();
@@ -1379,21 +1419,7 @@ sap.ui.define([
                     title: "New Chat",
                     onClose: (action) => {
                         if (action === sap.m.MessageBox.Action.OK) {
-                            // Reset chat state
-                            Object.assign(chatManager.chatModel.getData(), {
-                                chatHistory: [],
-                                userInput: "",
-                                isTyping: false,
-                                statusMessage: "New chat started"
-                            });
-
-                            // Add welcome message
-                            chatManager.addMessage(
-                                "system",
-                                "New conversation started. How can I help you today?"
-                            );
-
-                            chatManager.setStatusMessage("New chat started");
+                            chatManager.startNewConversation();
                         }
                     }
                 }
