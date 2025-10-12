@@ -151,7 +151,11 @@ const toolDefinitions: Array<{ name: string; description: string; inputSchema: J
         entity: { type: 'string', description: 'Entity name as exposed by the service (for example kfz.claims.Claims).' },
         columns: { type: 'array', items: { type: 'string' }, description: 'Optional list of columns to project.' },
         where: { type: 'object', additionalProperties: true, description: 'Optional WHERE clause expressed as CQN object literal.' },
-        limit: { type: 'integer', minimum: 1, description: 'Maximum number of rows to return.' },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Maximum number of rows to return.'
+        },
         offset: { type: 'integer', minimum: 0, description: 'Offset for pagination.' },
         draft: { type: 'string', enum: ['merged', 'active', 'draft'], default: 'merged', description: 'Choose between merged (default), active-only, or draft-only records.' }
       },
@@ -465,13 +469,17 @@ export async function initCapMCPClient(options: CapInitOptions) {
     const effectiveUser = overrides.user ?? ambient.user ?? previous?.user ?? privilegedUser;
     const effectiveTenant = overrides.tenant ?? ambient.tenant ?? previous?.tenant ?? (effectiveUser as User & { tenant?: string })?.tenant;
     const effectiveLocale = overrides.locale ?? ambient.locale ?? previous?.locale;
+    const previousAny = previous as unknown as { data?: AnyRecord; query?: AnyRecord; headers?: Record<string, string> } | undefined;
 
     const request = new cds.Request();
     Object.assign(request, {
       event: overrides.event ?? 'READ',
       user: effectiveUser,
       tenant: effectiveTenant,
-      locale: effectiveLocale
+      locale: effectiveLocale,
+      data: overrides.data ?? ambient.data ?? previousAny?.data ?? undefined,
+      query: overrides.query ?? ambient.query ?? previousAny?.query ?? undefined,
+      headers: overrides.headers ?? ambient.headers ?? previousAny?.headers ?? undefined
     });
 
     try {
@@ -1066,11 +1074,18 @@ export async function initCapMCPClient(options: CapInitOptions) {
 
     const result = await withServiceContext(
       async (req) => {
-        const tx = await (service as any).tx(req);
-        if (tx && typeof tx.call === 'function') {
-          return tx.call('triageLatestMail', payload);
+        req.data = payload;
+        const txFactory = typeof (service as any).tx === 'function' ? (service as any).tx.bind(service) : null;
+        if (txFactory) {
+          const tx = await txFactory(req);
+          if (tx && typeof tx.dispatch === 'function') {
+            return tx.dispatch(req);
+          }
         }
-        return (service as any).call('triageLatestMail', payload);
+        if (typeof (service as any).dispatch === 'function') {
+          return (service as any).dispatch(req);
+        }
+        throw new Error('CAP service instance does not support dispatch for triageLatestMail.');
       },
       { event: 'triageLatestMail', data: payload }
     );
