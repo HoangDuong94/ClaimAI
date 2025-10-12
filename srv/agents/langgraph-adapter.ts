@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { StateGraph, MessagesAnnotation, Command, START } from '@langchain/langgraph';
@@ -7,7 +8,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { BaseMessage } from '@langchain/core/messages';
-import { AIMessage, SystemMessage, isAIMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage, isAIMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 import MarkdownConverter from '../utils/markdown-converter.js';
 import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
@@ -26,6 +27,26 @@ const isTruthy = (value: string | undefined): boolean => {
       return false;
   }
 };
+
+const parsePositiveInteger = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const DEFAULT_MAX_HOPS = 6;
+
+const TRIAGE_KEYWORDS = /\b(mail|e-?mail|posteingang|inbox|anhang|attachment|outlook|teams)\b/i;
+
+const ALLOWED_GENERAL_TOOLS = new Set([
+  'cap.cqn.read',
+  'cap.claims.list_summary',
+  'reporting.list_reports',
+  'fs.write_report_html',
+]);
 
 const extractMessageText = (message: BaseMessage | undefined): string => {
   if (!message) return '';
@@ -50,23 +71,6 @@ const extractMessageText = (message: BaseMessage | undefined): string => {
     return typeof text === 'string' ? text : '';
   }
   return '';
-};
-
-const CLAIMS_KEYWORDS = [/schadenf[aä]ll/i, /claims?/i];
-const CLAIMS_CONTEXT_HINTS = [/liste/i, /welche/i, /zeige?|zeig/i, /anzahl/i, /habe?n?/i];
-const ROUTER_NEGATIVE_HINTS = [/neuer chat/i, /reset/i];
-
-const isClaimsDataIntent = (text: string): boolean => {
-  const normalized = text.trim();
-  if (!normalized) return false;
-  if (ROUTER_NEGATIVE_HINTS.some((regex) => regex.test(normalized))) {
-    return false;
-  }
-  const matchesKeyword = CLAIMS_KEYWORDS.some((regex) => regex.test(normalized));
-  if (!matchesKeyword) {
-    return false;
-  }
-  return CLAIMS_CONTEXT_HINTS.some((regex) => regex.test(normalized));
 };
 
 const stableStringify = (value: unknown): string => {
@@ -100,6 +104,79 @@ const formatDate = (value: unknown): string => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 'k. A.';
   return new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium' }).format(parsed);
+};
+
+const SUPERVISOR_PROMPT = [
+  'Du bist der ClaimAI Supervisor. Entscheide, welcher Spezialagent als nächstes aktiv werden soll.',
+  'Verfügbare Agenten:',
+  '- triage_agent: Microsoft 365 Posteingang, Anhänge, Mail-Triage.',
+  '- claims_data_agent: CAP-Schadenfalldaten abrufen, tabellarische Übersichten.',
+  '- report_agent: Analysen, Visualisierungen und Dateien schreiben oder aktualisieren.',
+  '- general_agent: Abschlussantwort für den Nutzer verfassen, Ergebnisse zusammenfassen.',
+  'Antworte ausschließlich mit gültigem JSON der Form {"next":"<agent>","instructions":"<kurzer Hinweis>","reason":"<Begründung>"}',
+  '"next" muss einer der Werte ["triage_agent","claims_data_agent","report_agent","general_agent","end"] sein.',
+  'Nutze "instructions" nur für kurze Hinweise (max. 120 Zeichen); sonst leere Zeichenkette.',
+  'Setze "next" auf "report_agent" für Analysen/Reports, auf "claims_data_agent" für Datenauswertungen.',
+  'Stelle sicher, dass "general_agent" am Ende ausgeführt wird, damit eine Nutzerantwort entsteht.',
+  'Verwende "end" nur, wenn keine weitere Antwort nötig ist.',
+].join('\n');
+
+const SUPERVISOR_MODEL_NAME =
+  (process.env.CLAIMAI_SUPERVISOR_MODEL && process.env.CLAIMAI_SUPERVISOR_MODEL.trim()) || 'gpt-4.1';
+
+type SupervisorNextAgent = 'triage_agent' | 'claims_data_agent' | 'report_agent' | 'general_agent' | 'end';
+
+interface SupervisorDecision {
+  next: SupervisorNextAgent;
+  instructions?: string | null;
+  reason?: string | null;
+}
+
+const stripCodeFences = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('```')) {
+    const withoutOpening = trimmed.replace(/^```[a-zA-Z]*\s*/, '');
+    const closingIndex = withoutOpening.lastIndexOf('```');
+    if (closingIndex >= 0) {
+      return withoutOpening.slice(0, closingIndex).trim();
+    }
+    return withoutOpening.trim();
+  }
+  return trimmed;
+};
+
+const parseSupervisorDecision = (raw: string): SupervisorDecision | null => {
+  if (!raw) return null;
+  const cleaned = stripCodeFences(raw);
+  try {
+    const parsed = JSON.parse(cleaned) as SupervisorDecision;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const next = (parsed as { next?: unknown }).next;
+    if (
+      next !== 'triage_agent' &&
+      next !== 'claims_data_agent' &&
+      next !== 'report_agent' &&
+      next !== 'general_agent' &&
+      next !== 'end'
+    ) {
+      return null;
+    }
+    const instructionsRaw = (parsed as { instructions?: unknown }).instructions;
+    const reasonRaw = (parsed as { reason?: unknown }).reason;
+    return {
+      next,
+      instructions:
+        typeof instructionsRaw === 'string' && instructionsRaw.trim().length
+          ? instructionsRaw.trim()
+          : null,
+      reason:
+        typeof reasonRaw === 'string' && reasonRaw.trim().length ? reasonRaw.trim() : null,
+    };
+  } catch {
+    return null;
+  }
 };
 
 interface ClaimsRowLike {
@@ -174,6 +251,39 @@ const stringifyToolResult = (value: unknown): string => {
   }
 };
 
+const normalizeWhitespace = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+const stripHtml = (html: string): string =>
+  html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ');
+
+const extractReportLabel = (html: string): string => {
+  if (!html) {
+    return 'Analyse';
+  }
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch && normalizeWhitespace(titleMatch[1])) {
+    return normalizeWhitespace(titleMatch[1]).slice(0, 120);
+  }
+  const headingMatch = html.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i);
+  if (headingMatch && normalizeWhitespace(headingMatch[1])) {
+    return normalizeWhitespace(headingMatch[1]).slice(0, 120);
+  }
+  const fallback = normalizeWhitespace(stripHtml(html));
+  return fallback ? fallback.slice(0, 120) : 'Analyse';
+};
+
+const extractTextSnippet = (html: string, maxLength = 200): string => {
+  if (!html) return '';
+  const plain = normalizeWhitespace(stripHtml(html));
+  if (!plain) return '';
+  if (plain.length <= maxLength) return plain;
+  return `${plain.slice(0, Math.max(0, maxLength - 1))}…`;
+};
+
 type MCPClients = Awaited<ReturnType<typeof initAllMCPClients>>;
 type AgentExecutor = ReturnType<typeof createReactAgent>;
 
@@ -211,32 +321,31 @@ export class LangGraphAgentAdapter implements AgentAdapter {
     const clients = await this.ensureMcpClients();
 
     return await clients.cap.runWithContext(capContext, async () => {
-      const systemMessage = {
-        role: 'system',
-        content: this.langGraphSystemPrompt,
-      };
-
-      const userMessage = {
-        role: 'user',
-        content: prompt,
-      };
-
-      this.logger.log('\n\n---- AGENT INVOKE START ----\n');
-
       const conversationKey =
         typeof conversationId === 'string' && conversationId.trim().length
           ? conversationId.trim()
           : `session_${userId || 'default'}`;
-      const threadId = `${conversationKey}_${Date.now()}`;
+      const threadId = conversationKey;
+
+      this.logger.log('\n\n---- AGENT INVOKE START ----\n');
+
+      this.logger.log(
+        `[Agent] conversation=${conversationKey} thread=${threadId} user="${normalizeWhitespace(prompt).slice(0, 120)}"`,
+      );
 
       const result = await executor.invoke(
         {
-          messages: [systemMessage, userMessage],
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
         },
         {
           configurable: {
             thread_id: threadId,
-            conversation_id: conversationId,
+            conversation_id: conversationKey,
           },
         },
       );
@@ -246,6 +355,12 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       const aiTexts = aiMessages
         .map((message) => extractMessageText(message))
         .filter((text) => text.trim().length > 0);
+      const aiTimeline = aiMessages.map((message, index) => {
+        const name = isAIMessage(message) && message.name ? message.name : `ai#${index + 1}`;
+        const text = normalizeWhitespace(extractMessageText(message)).slice(0, 160);
+        return `${name}: ${text}`;
+      });
+      this.logger.log('Agent timeline:', aiTimeline);
       const finalText =
         aiTexts[aiTexts.length - 1] ||
         extractMessageText(messages[messages.length - 1] as BaseMessage | undefined) ||
@@ -273,6 +388,8 @@ export class LangGraphAgentAdapter implements AgentAdapter {
     );
 
     const clients = await this.ensureMcpClients();
+    const maxHops = parsePositiveInteger(process.env.CLAIMAI_MAX_HOPS, DEFAULT_MAX_HOPS);
+    const supervisorDisabled = isTruthy(process.env.CLAIMAI_DISABLE_SUPERVISOR);
 
     try {
       const [
@@ -296,6 +413,115 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         ),
         loadMcpTools('get_current_time,convert_time', clients.time),
       ])) as StructuredToolInterface[][];
+
+      const reportingState = {
+        allowedRoots: null as string[] | null,
+        createdDirectories: new Set<string>(),
+        writtenFiles: new Map<
+          string,
+          { content: string; updatedAt: number; label: string }
+        >(),
+        reportHistory: [] as Array<{ path: string; label: string; updatedAt: number }>,
+      };
+
+      const recordReportMetadata = (filePath: string, content: string): void => {
+        const label = extractReportLabel(content);
+        const updatedAt = Date.now();
+        reportingState.writtenFiles.set(filePath, { content, updatedAt, label });
+        const existingIndex = reportingState.reportHistory.findIndex(
+          (entry) => entry.path === filePath,
+        );
+        const entry = { path: filePath, label, updatedAt };
+        if (existingIndex >= 0) {
+          reportingState.reportHistory[existingIndex] = entry;
+        } else {
+          reportingState.reportHistory.push(entry);
+        }
+        reportingState.reportHistory.sort((a, b) => b.updatedAt - a.updatedAt);
+        if (reportingState.reportHistory.length > 50) {
+          reportingState.reportHistory.length = 50;
+        }
+      };
+
+      const filesystemClient = clients.filesystem;
+      if (!filesystemClient) {
+        throw new Error('Filesystem MCP client ist nicht verfügbar.');
+      }
+
+      const toErrorMessage = (error: unknown): string =>
+        error instanceof Error ? error.message : String(error);
+
+      const ensureAllowedRoots = async (): Promise<string[]> => {
+        if (reportingState.allowedRoots) {
+          return reportingState.allowedRoots;
+        }
+        const result = await filesystemClient.callTool({
+          name: 'list_allowed_directories',
+          arguments: {},
+        });
+        const serialized = stringifyToolResult(result);
+        const lines = serialized
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        if (!lines.length) {
+          throw new Error('Keine erlaubten Verzeichnisse gefunden.');
+        }
+        const normalized = lines.map((entry) => path.normalize(entry));
+        reportingState.allowedRoots = normalized;
+        normalized.forEach((entry) => reportingState.createdDirectories.add(entry));
+        return normalized;
+      };
+
+      const resolvePathWithinRoots = async (
+        rawPath: string,
+      ): Promise<{ normalized: string; roots: string[] }> => {
+        if (typeof rawPath !== 'string') {
+          throw new Error('Pfad muss als String übergeben werden.');
+        }
+        const trimmed = rawPath.trim();
+        if (!trimmed) {
+          throw new Error('Pfad darf nicht leer sein.');
+        }
+        const roots = await ensureAllowedRoots();
+        const baseRoot = roots[0];
+        const baseNormalized = path.normalize(baseRoot);
+        const candidate = path.isAbsolute(trimmed)
+          ? path.normalize(trimmed)
+          : path.normalize(path.join(baseNormalized, trimmed));
+        const isInside = roots.some((root) => {
+          const normalizedRoot = path.normalize(root);
+          if (candidate === normalizedRoot) return true;
+          const withSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+          return candidate.startsWith(withSep);
+        });
+        if (!isInside) {
+          throw new Error(
+            `Pfad "${candidate}" liegt außerhalb der erlaubten Verzeichnisse: ${roots.join(', ')}`,
+          );
+        }
+        return { normalized: candidate, roots };
+      };
+
+      const ensureDirectoryInternal = async (rawDirPath: string): Promise<string> => {
+        const { normalized } = await resolvePathWithinRoots(rawDirPath);
+        if (reportingState.createdDirectories.has(normalized)) {
+          return normalized;
+        }
+        try {
+          await filesystemClient.callTool({
+            name: 'create_directory',
+            arguments: { path: normalized },
+          });
+        } catch (error) {
+          const message = toErrorMessage(error);
+          if (!/already exists/i.test(message)) {
+            throw error;
+          }
+        }
+        reportingState.createdDirectories.add(normalized);
+        return normalized;
+      };
 
       const searchModelDescription = rawCdsModelTools[0]?.description ??
         'Suche CAP Artefakte anhand ihres Namens oder einer Teilzeichenfolge.';
@@ -408,6 +634,138 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         },
       });
 
+      const listAllowedDirectoriesTool = new DynamicStructuredTool({
+        name: 'fs.list_allowed_directories',
+        description:
+          'Listet die erlaubten Sandbox-Wurzeln (gecached, um mehrfachen Aufruf zu vermeiden).',
+        schema: z.object({}).passthrough(),
+        func: async () => {
+          const roots = await ensureAllowedRoots();
+          return roots.join('\n');
+        },
+      });
+
+      const ensureDirectoryTool = new DynamicStructuredTool({
+        name: 'fs.ensure_directory',
+        description:
+          'Legt ein Verzeichnis innerhalb der erlaubten Sandbox an (idempotent, nutzt Cache).',
+        schema: z
+          .object({
+            path: z.string().trim().min(1, 'Pfad ist erforderlich.'),
+          })
+          .passthrough(),
+        func: async (input) => {
+          const target = typeof input?.path === 'string' ? input.path : '';
+          const { normalized } = await resolvePathWithinRoots(target);
+          if (reportingState.createdDirectories.has(normalized)) {
+            return `Directory already prepared: ${normalized}`;
+          }
+          try {
+            const result = await filesystemClient.callTool({
+              name: 'create_directory',
+              arguments: { path: normalized },
+            });
+            reportingState.createdDirectories.add(normalized);
+            return stringifyToolResult(result);
+          } catch (error) {
+            const message = toErrorMessage(error);
+            if (/already exists/i.test(message)) {
+              reportingState.createdDirectories.add(normalized);
+              return `Directory already existed: ${normalized}`;
+            }
+            throw error;
+          }
+        },
+      });
+
+      const writeReportTool = new DynamicStructuredTool({
+        name: 'fs.write_report_html',
+        description:
+          'Schreibt eine HTML-/Textdatei im erlaubten Verzeichnis (idempotent, cached Inhalt).',
+        schema: z
+          .object({
+            path: z.string().trim().min(1, 'Pfad ist erforderlich.'),
+            content: z.string().min(1, 'content darf nicht leer sein.'),
+            encoding: z.string().trim().optional(),
+          })
+          .passthrough(),
+        func: async (input) => {
+          const targetPath = typeof input?.path === 'string' ? input.path : '';
+          const content = typeof input?.content === 'string' ? input.content : '';
+          if (!content.trim()) {
+            throw new Error('content darf nicht leer sein.');
+          }
+          const { normalized } = await resolvePathWithinRoots(targetPath);
+          const directory = path.dirname(normalized);
+          await ensureDirectoryInternal(directory);
+          const cached = reportingState.writtenFiles.get(normalized);
+          if (cached?.content === content) {
+            recordReportMetadata(normalized, content);
+            return `Skipped write (content unchanged): ${normalized}`;
+          }
+          const args: Record<string, unknown> = {
+            path: normalized,
+            content,
+          };
+          if (typeof input?.encoding === 'string' && input.encoding.trim()) {
+            args.encoding = input.encoding.trim();
+          }
+          const result = await filesystemClient.callTool({
+            name: 'write_file',
+            arguments: args,
+          });
+          recordReportMetadata(normalized, content);
+          return stringifyToolResult(result);
+        },
+      });
+
+      const listReportsTool = new DynamicStructuredTool({
+        name: 'reporting.list_reports',
+        description:
+          'Listet die zuletzt generierten Analysen (neuste zuerst). Optional mit Vorschau.',
+        schema: z
+          .object({
+            limit: z
+              .number()
+              .int()
+              .min(1, 'limit muss mindestens 1 sein.')
+              .max(20, 'limit darf höchstens 20 sein.')
+              .optional(),
+            includePreview: z.boolean().optional(),
+          })
+          .passthrough(),
+        func: async (input) => {
+          if (!reportingState.reportHistory.length) {
+            return 'Es liegen keine gespeicherten Analysen aus dieser Sitzung vor.';
+          }
+          const rawLimit = typeof input?.limit === 'number' && Number.isFinite(input.limit)
+            ? Math.trunc(input.limit)
+            : 5;
+          const limit = Math.min(20, Math.max(1, rawLimit));
+          const includePreview = Boolean(input?.includePreview);
+          const entries = reportingState.reportHistory.slice(0, limit);
+          const lines = entries.map((entry, index) => {
+            const idx = index + 1;
+            const timestamp = new Date(entry.updatedAt);
+            const formatted = Number.isNaN(timestamp.getTime())
+              ? 'Zeitpunkt unbekannt'
+              : timestamp.toLocaleString('de-CH');
+            let preview = '';
+            if (includePreview) {
+              const meta = reportingState.writtenFiles.get(entry.path);
+              if (meta) {
+                const snippet = extractTextSnippet(meta.content, 200);
+                if (snippet) {
+                  preview = `\n    Vorschau: ${snippet}`;
+                }
+              }
+            }
+            return `${idx}. ${entry.label} — ${entry.path} (${formatted})${preview}`;
+          });
+          return lines.join('\n');
+        },
+      });
+
       const cdsModelTools: StructuredToolInterface[] = [cachedSearchModelTool];
       const postgresTools: StructuredToolInterface[] = [];
       const allTools: StructuredToolInterface[] = [
@@ -417,8 +775,19 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         claimsListSummaryTool,
         ...braveSearchTools,
         ...filesystemTools,
+        listAllowedDirectoriesTool,
+        ensureDirectoryTool,
+        writeReportTool,
+        listReportsTool,
         ...excelTools,
         ...timeTools,
+      ];
+
+      const reportingTools: StructuredToolInterface[] = [
+        listAllowedDirectoriesTool,
+        ensureDirectoryTool,
+        writeReportTool,
+        listReportsTool,
       ];
 
       if (clients.m365) {
@@ -470,23 +839,51 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       this.logger.log('Available tools:', allTools.map((tool) => tool.name));
 
       const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+      const supervisorModel = new AzureOpenAiChatClient({
+        modelName: SUPERVISOR_MODEL_NAME,
+        temperature: 0,
+      });
       const checkpointer = new MemorySaver();
 
       const triageTools: StructuredToolInterface[] = mailTriageTool ? [mailTriageTool] : [];
       const claimsDataTools: StructuredToolInterface[] = [cachedSearchModelTool, claimsListSummaryTool];
+      const reportTools: StructuredToolInterface[] = [
+        cachedSearchModelTool,
+        claimsListSummaryTool,
+        ...reportingTools,
+      ];
       const capReadTool = capTools.find((tool) => tool.name === 'cap.cqn.read');
       if (capReadTool) {
         claimsDataTools.push(capReadTool);
+        reportTools.push(capReadTool);
       }
-      const routedGeneralTools = allTools.filter((tool) => tool !== mailTriageTool);
+      const baseGeneralTools = allTools.filter((tool) => tool !== mailTriageTool);
+      const generalToolsSlim = baseGeneralTools.filter((tool) => ALLOWED_GENERAL_TOOLS.has(tool.name));
+      if (!generalToolsSlim.length) {
+        this.logger.debug?.(
+          'General-Agent verwendet vollständige Tool-Liste (keine Übereinstimmung mit whitelist).',
+        );
+      }
+      const generalAgentTools = generalToolsSlim.length ? generalToolsSlim : baseGeneralTools;
+
+      const generalAgent = createReactAgent({
+        llm,
+        tools: generalAgentTools,
+        stateModifier: new SystemMessage(
+          'Du bist der ClaimAI Hauptexperte. Fasse Beiträge der Sub-Agenten zusammen, setze bei Bedarf eigene Tools ein und liefere eine kurze, handlungsorientierte Antwort mit klaren Empfehlungen.',
+        ),
+        checkpointSaver: checkpointer,
+      });
+
+      if (supervisorDisabled) {
+        this.logger.log('Single-Agent-Modus aktiviert (Supervisor deaktiviert).');
+        this.agentExecutor = generalAgent;
+        return this.agentExecutor;
+      }
 
       if (triageTools.length === 0 && claimsDataTools.length === 0) {
         this.logger.log('⚠️ Kein dediziertes CAP-Triage-Tool gefunden – falle auf Single-Agent zurück.');
-        this.agentExecutor = createReactAgent({
-          llm,
-          tools: routedGeneralTools,
-          checkpointSaver: checkpointer,
-        });
+        this.agentExecutor = generalAgent;
         return this.agentExecutor;
       }
 
@@ -494,16 +891,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         llm,
         tools: triageTools,
         stateModifier: new SystemMessage(
-          'Du bist der ClaimAI Triage-Agent. Fasse den neuesten Posteingangseintrag zusammen, bewerte Priorität und hebe relevante Anhänge hervor. Nutze ausschließlich CAP/M365 Werkzeuge.',
-        ),
-        checkpointSaver: checkpointer,
-      });
-
-      const generalAgent = createReactAgent({
-        llm,
-        tools: routedGeneralTools,
-        stateModifier: new SystemMessage(
-          'Du bist der ClaimAI Hauptexperte. Übernimm vorhandene Zwischenergebnisse der Triage und liefere eine strukturierte, handlungsorientierte Antwort für das Schadenmanagement.',
+          'Du bist der ClaimAI Triage-Agent. Nutze die M365-Triage-Tools, fasse den neuesten Posteingang kurz zusammen (Inhalt, Priorität, Anhänge) und melde Fehler oder leere Ergebnisse knapp zurück.',
         ),
         checkpointSaver: checkpointer,
       });
@@ -512,55 +900,156 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         llm,
         tools: claimsDataTools,
         stateModifier: new SystemMessage(
-          'Du bist der ClaimAI Daten-Agent für Schadenfälle. Nutze zuerst `search_model` mit dem exakten Namen (z. B. "ClaimsService.Claims"), falls die Metadaten in dieser Unterhaltung noch nicht vorliegen. Verwende anschließend `cap.claims.list_summary`, um eine kompakte Liste (max. 20 Einträge) mit Status, Datum, Kosten sowie Fraud/Severity-Scores zu erzeugen. Gib niemals Roh-JSON zurück, sondern antworte in prägnantem Markdown auf Deutsch und schlage bei Bedarf sinnvolle nächste Schritte vor.',
+          'Du bist der ClaimAI Daten-Agent. HoIe bei Bedarf zuerst `search_model`, lies anschließend Claims-Daten (z. B. über `cap.claims.list_summary`) und gib eine kurze, strukturierte Markdown-Zusammenfassung der wichtigsten Kennzahlen.',
         ),
         checkpointSaver: checkpointer,
       });
 
-      const routerNode = (state: typeof MessagesAnnotation.State): Command => {
-        const lastUserMessage = [...state.messages]
-          .reverse()
-          .find((message) => message.getType && message.getType() === 'human');
-        const lastUserText = extractMessageText(lastUserMessage);
-        const triageCompleted = state.messages.some(
-          (message) => message.getType && message.getType() === 'ai' && message.name === 'triage_agent',
-        );
-        const generalCompleted = state.messages.some(
-          (message) => message.getType && message.getType() === 'ai' && message.name === 'general_agent',
-        );
-        const claimsCompleted = state.messages.some(
-          (message) => message.getType && message.getType() === 'ai' && message.name === 'claims_data_agent',
-        );
+      const reportAgent = createReactAgent({
+        llm,
+        tools: reportTools,
+        stateModifier: new SystemMessage(
+          'Du bist der ClaimAI Reporting-Agent. Hole bei Bedarf Metadaten, lies die nötigen CAP-Daten und aktualisiere eine HTML- oder Markdown-Analyse. Achte darauf, nur innerhalb der erlaubten Verzeichnisse zu schreiben und nenne am Ende den Speicherpfad plus wichtigste Befunde.',
+        ),
+        checkpointSaver: checkpointer,
+      });
 
-        const requiresTriage =
-          /triage|inbox|nachricht|mail|postfach|anhang|attachment|e-mail|email/i.test(lastUserText) &&
-          !triageCompleted;
-        const requiresClaimsData = isClaimsDataIntent(lastUserText) && !claimsCompleted;
+      const timedNodeInvoke = async (
+        agent: AgentExecutor,
+        name: string,
+        nodeState: typeof MessagesAnnotation.State,
+        runnableConfig?: RunnableConfig,
+      ) => {
+        const startedAt = Date.now();
+        const result = await agent.invoke(nodeState, runnableConfig);
+        const elapsed = Date.now() - startedAt;
+        this.logger.log(`[Node] ${name} finished in ${elapsed} ms`);
+        return result;
+      };
 
-        if (requiresTriage) {
-          return new Command({ goto: 'triage_agent' });
+      const supervisorNode = async (
+        state: typeof MessagesAnnotation.State,
+        config?: RunnableConfig,
+      ): Promise<Command> => {
+        const messages = state.messages ?? [];
+        let lastHumanIndex = -1;
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const entry = messages[index];
+          if (entry?.getType && entry.getType() === 'human') {
+            lastHumanIndex = index;
+            break;
+          }
         }
-
-        if (requiresClaimsData) {
-          return new Command({ goto: 'claims_data_agent' });
-        }
-
-        if (claimsCompleted) {
-          return new Command({ goto: '__end__' });
-        }
-
-        if (!generalCompleted) {
+        const lastUserMessage =
+          lastHumanIndex >= 0 ? (messages[lastHumanIndex] as BaseMessage | undefined) : undefined;
+        const lastUserText = normalizeWhitespace(extractMessageText(lastUserMessage));
+        const aiAfterLastHuman = messages.filter(
+          (message, index): message is AIMessage =>
+            index > lastHumanIndex && message.getType?.() === 'ai' && isAIMessage(message),
+        );
+        const agentNames = aiAfterLastHuman
+          .map((message) => message.name)
+          .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+        const seenAgents = new Set(agentNames);
+        const done = {
+          triage: seenAgents.has('triage_agent'),
+          claims: seenAgents.has('claims_data_agent'),
+          report: seenAgents.has('report_agent'),
+          general: seenAgents.has('general_agent'),
+        };
+        const hopCount = agentNames.filter((name) => /_agent$/.test(name)).length;
+        if (hopCount >= maxHops && !done.general) {
+          this.logger.log(
+            `[Supervisor] Hop-Limit erreicht (${hopCount}/${maxHops}) – wechsle zu general_agent.`,
+          );
           return new Command({ goto: 'general_agent' });
         }
 
-        return new Command({ goto: '__end__' });
+        const recentAgentContext = aiAfterLastHuman
+          .slice(-4)
+          .map((message) => {
+            const agentName = message.name ?? message.getType?.() ?? 'ai';
+            const text = normalizeWhitespace(extractMessageText(message)).slice(0, 160);
+            return text ? `${agentName}: ${text}` : `${agentName}: (keine Ausgabe)`;
+          })
+          .join('\n');
+
+        let decision: SupervisorDecision | null = null;
+        try {
+          const supervisorMessages = [
+            new SystemMessage(SUPERVISOR_PROMPT),
+            new HumanMessage(
+              [
+                `Letzte Nutzeranfrage: ${lastUserText || '(leer)'}`,
+                recentAgentContext
+                  ? `Bisherige Agentenantworten:\n${recentAgentContext}`
+                  : 'Keine relevanten Agentenantworten zuvor.',
+              ].join('\n'),
+            ),
+          ];
+          const response = await supervisorModel.invoke(supervisorMessages, config);
+          const decisionText = extractMessageText(response as BaseMessage);
+          decision = parseSupervisorDecision(decisionText);
+          if (!decision) {
+            this.logger.warn?.(
+              `[Supervisor] Entscheidung nicht parsebar, fallback auf general_agent. Antwort: ${decisionText}`,
+            );
+          }
+        } catch (error) {
+          this.logger.error?.('[Supervisor] Entscheidung fehlgeschlagen, fallback auf general_agent.', error);
+        }
+
+        if (!decision) {
+          if (done.general) {
+            return new Command({ goto: '__end__' });
+          }
+          return new Command({ goto: 'general_agent' });
+        }
+
+        const trimmedInstructions =
+          typeof decision.instructions === 'string'
+            ? normalizeWhitespace(decision.instructions).slice(0, 160)
+            : '';
+
+        const mayTriage = TRIAGE_KEYWORDS.test(lastUserText);
+        let next = decision.next;
+
+        if (next === 'triage_agent' && (!mayTriage || done.triage)) {
+          next = !done.claims ? 'claims_data_agent' : !done.report ? 'report_agent' : 'general_agent';
+        }
+        if (next === 'claims_data_agent' && done.claims) {
+          next = !done.report ? 'report_agent' : 'general_agent';
+        }
+        if (next === 'report_agent' && done.report) {
+          next = 'general_agent';
+        }
+
+        if (next === 'end' || (next === 'general_agent' && done.general)) {
+          return new Command({ goto: '__end__' });
+        }
+
+        this.logger.debug?.(
+          `[Supervisor] next=${decision.next} normalized=${next} instructions="${trimmedInstructions}" reason="${
+            decision.reason ?? ''
+          }"`,
+        );
+
+        const updates: SystemMessage[] = [];
+        if (trimmedInstructions) {
+          updates.push(new SystemMessage(`Supervisor-Anweisung: ${trimmedInstructions}`));
+        }
+
+        return new Command({
+          goto: next,
+          update: updates.length ? { messages: updates } : undefined,
+        });
       };
 
       const triageNode = async (
         state: typeof MessagesAnnotation.State,
         config?: RunnableConfig,
       ): Promise<Command> => {
-        const result = await triageAgent.invoke(state, config);
+        const result = await timedNodeInvoke(triageAgent, 'triage_agent', state, config);
         const lastMessage = result.messages[result.messages.length - 1];
         const updates: AIMessage[] = [];
         if (lastMessage && isAIMessage(lastMessage)) {
@@ -568,7 +1057,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           updates.push(lastMessage);
         }
         return new Command({
-          goto: 'router',
+          goto: 'supervisor',
           update: updates.length ? { messages: updates } : undefined,
         });
       };
@@ -577,7 +1066,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         state: typeof MessagesAnnotation.State,
         config?: RunnableConfig,
       ): Promise<Command> => {
-        const result = await generalAgent.invoke(state, config);
+        const result = await timedNodeInvoke(generalAgent, 'general_agent', state, config);
         const lastMessage = result.messages[result.messages.length - 1];
         const updates: AIMessage[] = [];
         if (lastMessage && isAIMessage(lastMessage)) {
@@ -585,7 +1074,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           updates.push(lastMessage);
         }
         return new Command({
-          goto: 'router',
+          goto: '__end__',
           update: updates.length ? { messages: updates } : undefined,
         });
       };
@@ -594,7 +1083,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         state: typeof MessagesAnnotation.State,
         config?: RunnableConfig,
       ): Promise<Command> => {
-        const result = await claimsDataAgent.invoke(state, config);
+        const result = await timedNodeInvoke(claimsDataAgent, 'claims_data_agent', state, config);
         const lastMessage = result.messages[result.messages.length - 1];
         const updates: AIMessage[] = [];
         if (lastMessage && isAIMessage(lastMessage)) {
@@ -602,22 +1091,44 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           updates.push(lastMessage);
         }
         return new Command({
-          goto: 'router',
+          goto: 'supervisor',
+          update: updates.length ? { messages: updates } : undefined,
+        });
+      };
+
+      const reportNode = async (
+        state: typeof MessagesAnnotation.State,
+        config?: RunnableConfig,
+      ): Promise<Command> => {
+        const result = await timedNodeInvoke(reportAgent, 'report_agent', state, config);
+        const lastMessage = result.messages[result.messages.length - 1];
+        const updates: AIMessage[] = [];
+        if (lastMessage && isAIMessage(lastMessage)) {
+          lastMessage.name = 'report_agent';
+          updates.push(lastMessage);
+        }
+        return new Command({
+          goto: 'supervisor',
           update: updates.length ? { messages: updates } : undefined,
         });
       };
 
       const graphBuilder = new StateGraph(MessagesAnnotation)
-        .addNode('router', routerNode, { ends: ['triage_agent', 'claims_data_agent', 'general_agent', '__end__'] })
-        .addNode('triage_agent', triageNode, { ends: ['router'] })
-        .addNode('claims_data_agent', claimsDataNode, { ends: ['router'] })
-        .addNode('general_agent', generalNode, { ends: ['router', '__end__'] })
-        .addEdge(START, 'router');
+        .addNode('supervisor', supervisorNode, {
+          ends: ['triage_agent', 'claims_data_agent', 'report_agent', 'general_agent', '__end__'],
+        })
+        .addNode('triage_agent', triageNode, { ends: ['supervisor'] })
+        .addNode('claims_data_agent', claimsDataNode, { ends: ['supervisor'] })
+        .addNode('report_agent', reportNode, { ends: ['supervisor'] })
+        .addNode('general_agent', generalNode, { ends: ['__end__'] })
+        .addEdge(START, 'supervisor');
 
       const compiledGraph = graphBuilder.compile({ checkpointer });
       this.agentExecutor = compiledGraph as unknown as AgentExecutor;
 
-      this.logger.log('✅ Multi-Agent LangGraph initialisiert (Router + Triage-Agent + Claims-Data-Agent + General-Agent).');
+      this.logger.log(
+        '✅ Multi-Agent LangGraph initialisiert (Supervisor + Triage-Agent + Claims-Data-Agent + Report-Agent + General-Agent).',
+      );
       return this.agentExecutor;
     } catch (error) {
       this.logger.error?.('❌ Failed to initialize agent:', error);
