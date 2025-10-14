@@ -547,6 +547,8 @@ export class GraphClient {
 
     const response = await this.request<any>('POST', '/me/events', {
       body: eventPayload,
+      // Send notifications to attendees when provided so invites are delivered
+      query: (Array.isArray(attendeeArray) && attendeeArray.length > 0) ? { sendNotifications: 'true' } : {},
       scopes: ['Calendars.ReadWrite']
     });
 

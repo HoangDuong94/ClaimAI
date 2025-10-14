@@ -647,10 +647,46 @@ export async function initCapMCPClient(options: CapInitOptions) {
     delete extraFields.entity;
     delete extraFields.data;
     const payload = { ...basePayload, ...extraFields, ...rawData };
-    const result = await withServiceContext(async () => (service as any).new(draftEntity, payload), { event: 'NEW' });
+    const result = await withServiceContext(
+      async (req) => {
+        const tx = await (service as any).tx(req);
+        if (tx && typeof tx.new === 'function') {
+          return tx.new(draftEntity, payload);
+        }
+        return (service as any).new(draftEntity, payload);
+      },
+      { event: 'NEW' }
+    );
 
     const instance = Array.isArray(result) ? result[0] : result;
     rememberDraft(entityRef, instance);
+
+    // Ensure DraftUUID is cached even if not present on the NEW result payload
+    try {
+      const id = instance?.ID ?? (Array.isArray(result) ? result?.[0]?.ID : undefined);
+      const hasUUID = Boolean(
+        instance?.DraftAdministrativeData_DraftUUID || instance?.draftAdministrativeData_DraftUUID
+      );
+      if (id !== undefined && id !== null && !hasUUID) {
+        const query = cds.ql.SELECT.one
+          .from(draftEntity)
+          .columns({ ref: ['ID'] }, { ref: ['DraftAdministrativeData_DraftUUID'] })
+          .where({ ID: id, IsActiveEntity: false });
+        const meta = await withServiceContext(async () => service.run(query));
+        if (meta?.DraftAdministrativeData_DraftUUID) {
+          console.log('[cap.draft.new] fetched DraftUUID for cache', {
+            ID: id,
+            DraftAdministrativeData_DraftUUID: meta.DraftAdministrativeData_DraftUUID
+          });
+          rememberDraft(entityRef, {
+            ID: id,
+            DraftAdministrativeData_DraftUUID: meta.DraftAdministrativeData_DraftUUID
+          });
+        }
+      }
+    } catch (e) {
+      console.log('[cap.draft.new] failed to fetch DraftUUID for cache', formatError(e));
+    }
 
     return toResultPayload(result, { entity: entityRef.name, action: 'NEW' });
   }
@@ -972,9 +1008,26 @@ export async function initCapMCPClient(options: CapInitOptions) {
       }
     }
 
-    const mutationKeys = sanitizeDraftKeys(draftEntity, resolvedKeys, {
+    let mutationKeys = sanitizeDraftKeys(draftEntity, resolvedKeys, {
       allowVirtual: ['IsActiveEntity', 'DraftAdministrativeData_DraftUUID']
     });
+
+    // Fallback: auto-resolve DraftUUID if missing (align with PATCH/SAVE handlers)
+    if (mutationKeys.DraftAdministrativeData_DraftUUID === undefined) {
+      try {
+        const autoKeys = await autoResolveDraftKeys(entityRef, draftEntity);
+        if (autoKeys?.DraftAdministrativeData_DraftUUID) {
+          mutationKeys = {
+            ...autoKeys,
+            ...mutationKeys,
+            IsActiveEntity: false
+          };
+          console.log('[cap.draft.addChild] autoResolved mutation keys', mutationKeys);
+        }
+      } catch (e) {
+        console.log('[cap.draft.addChild] autoResolveDraftKeys failed', formatError(e));
+      }
+    }
 
     const childColumns = Object.keys(childTarget.elements || {}).map((col) => ({ ref: [col] }));
     const expand = childColumns.length ? childColumns : [{ ref: ['*'] }];

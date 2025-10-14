@@ -9,6 +9,7 @@ import MarkdownConverter from '../utils/markdown-converter.js';
 import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
 import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
+import { analyzeImageAttachment } from '../utils/vision.js';
 
 const isTruthy = (value: string | undefined): boolean => {
   if (!value) return false;
@@ -79,14 +80,23 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       );
 
       const finalResponseParts: string[] = [];
+      let lastToolOutputText = '';
+      let lastImageDescription = '';
       this.logger.log('\n\n---- AGENT STREAM START ----\n');
 
       for await (const chunk of stream) {
         if (chunk.agent?.messages) {
           const message = chunk.agent.messages[chunk.agent.messages.length - 1];
           if (message && message.content) {
-            process.stdout.write(message.content);
-            finalResponseParts.push(message.content);
+            const c: any = message.content as any;
+            let text = '';
+            if (typeof c === 'string') text = c;
+            else if (Array.isArray(c)) text = c.map((p: any) => (typeof p === 'string' ? p : (p?.text || ''))).filter(Boolean).join('\n');
+            else if (c && typeof c === 'object') text = (c as any).text || '';
+            if (text) {
+              process.stdout.write(text);
+              finalResponseParts.push(text);
+            }
           }
           if (message.tool_calls && message.tool_calls.length > 0) {
             const toolCall = message.tool_calls[0];
@@ -103,18 +113,41 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         }
 
         if (chunk.tools?.messages) {
-          const toolMessage = chunk.tools.messages[0];
-          const toolOutputStr = `<TOOL_OUTPUT>
-  ${toolMessage.content}
-</TOOL_OUTPUT>
+          const toolMessage: any = chunk.tools.messages[0];
+          const content = toolMessage?.content;
+          let toolText = '';
+          if (typeof content === 'string') toolText = content;
+          else if (Array.isArray(content)) toolText = content.map((p: any) => (typeof p === 'string' ? p : (p?.text || ''))).filter(Boolean).join('\n');
+          else if (content) toolText = JSON.stringify(content);
 
-`;
+          const toolOutputStr = `<TOOL_OUTPUT>\n  ${toolText}\n</TOOL_OUTPUT>\n\n`;
           process.stdout.write(toolOutputStr);
+
+          if (toolText) lastToolOutputText = toolText;
+          try {
+            const trimmed = (toolText || '').trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+              const parsed = JSON.parse(trimmed);
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).description === 'string') {
+                lastImageDescription = (parsed as any).description as string;
+              }
+            }
+          } catch {}
         }
       }
       this.logger.log('\n---- AGENT STREAM END ----\n');
 
-      const rawResponse = finalResponseParts.join('');
+      let rawResponse = finalResponseParts.join('');
+      if (!rawResponse || !rawResponse.trim()) {
+        if (lastImageDescription) {
+          rawResponse = `Kurzbeschreibung zum Foto: ${lastImageDescription}`;
+        } else if (lastToolOutputText) {
+          const t = lastToolOutputText.length > 1600 ? `${lastToolOutputText.slice(0, 1599)}…` : lastToolOutputText;
+          rawResponse = `Werkzeug-Ergebnis:\n${t}`;
+        } else {
+          rawResponse = 'Die Aktion wurde ausgeführt, es wurde jedoch keine Antwort generiert.';
+        }
+      }
       return MarkdownConverter.convertForClaims(rawResponse);
     });
   }
@@ -175,10 +208,13 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       if (clients.m365) {
         this.logger.log('Loading Microsoft 365 tools...');
         const manifest = await clients.m365.listTools();
-        const blockedM365Tools = new Set([
-          'mail.message.reply',
-          'calendar.event.create'
-        ]);
+        const enableSendTools = isTruthy(process.env.ENABLE_M365_SEND);
+        const blockedM365Tools = enableSendTools
+          ? new Set<string>()
+          : new Set<string>([
+              'mail.message.reply',
+              'calendar.event.create',
+            ]);
         const filteredTools = manifest.tools.filter((toolDef) => {
           if (blockedM365Tools.has(toolDef.name)) {
             this.logger.log(`⛔️ Hiding Microsoft 365 tool from agent: ${toolDef.name}`);
@@ -200,7 +236,9 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           });
         });
         allTools.push(...m365Tools);
-        this.logger.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools (reply/send tools intentionally excluded)`);
+        this.logger.log(
+          `✅ Loaded ${m365Tools.length} Microsoft 365 tools${enableSendTools ? ' (send enabled)' : ' (reply/send tools excluded)'}`,
+        );
 
         const mailDraftTool = new DynamicStructuredTool({
           name: 'draft.mail.compose',
@@ -272,6 +310,22 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
         allTools.push(mailDraftTool, calendarDraftTool);
       }
+
+      // Local Vision tool to describe images (aligns with productive service behavior)
+      const imageDescribeTool = new DynamicStructuredTool({
+        name: 'image.describe',
+        description: 'Beschreibt eine lokale Bilddatei (png/jpg/jpeg/webp) und liefert EXIF-Metadaten.',
+        schema: z.object({
+          fileAbsolutePath: z.string().min(1).describe('Absoluter Pfad zur Bilddatei.'),
+          prompt: z.string().optional().describe('Optionaler Hinweis/Task für die Bildanalyse.'),
+        }),
+        func: async (input) => {
+          const { fileAbsolutePath, prompt } = input as { fileAbsolutePath: string; prompt?: string };
+          const result = await analyzeImageAttachment(fileAbsolutePath, { prompt });
+          return JSON.stringify(result);
+        }
+      });
+      allTools.push(imageDescribeTool);
 
       if (clients.cap) {
         const triageToolSchema = z.object({

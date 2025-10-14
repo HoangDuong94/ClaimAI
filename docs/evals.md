@@ -18,7 +18,7 @@ Commands
 
 What runs
 - Tools: Calls `mail.latestMessage.get`, downloads first attachment, reads the spreadsheet via Excel MCP, simulates a reply and event create.
-- Workflow: Builds a LangGraph agent with Filesystem, Excel, Time and Microsoft 365 tools, plus draft-only helpers. Executes a scripted scenario and prints an eval summary.
+- Workflow: Builds a LangGraph agent with Filesystem, Excel, Time and Microsoft 365 tools, plus draft-only helpers. Executes a scripted scenario and prints an eval summary. Additionally, it creates a draft for `kfz.claims.Claims`, maps values from the Excel `ClaimHeader` sheet into draft fields, verifies the values deterministically against Postgres, and finally discards the draft.
 
 Fixtures / Test Data
 - M365 fixtures at `srv/test/fixtures/m365/messages.json` reference repo files under `MockDaten/` for attachments (Excel and PNG).
@@ -26,6 +26,7 @@ Fixtures / Test Data
 
 Switches
 - `M365_AUTH_METHOD=mock` forces the in-process Microsoft 365 client to use fixtures (default in eval scripts).
+- Set `M365_AUTH_METHOD=real` to use a real Microsoft 365 account (requires valid local auth for the Graph client). The workflow will then send an actual reply and create a calendar event.
 - `LANGSMITH_TRACING=true` enables tracing; set `LANGSMITH_PROJECT` to group runs.
 - For AI Core locally, copy `.env.aicore.example` to `.env`, fill `AICORE_SERVICE_KEY` with your service key JSON, and run `npm run eval:aicore`. Optionally set `AICORE_DEPLOYMENT_ID` or `AICORE_RESOURCE_GROUP`.
 
