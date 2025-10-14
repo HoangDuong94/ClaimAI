@@ -15,7 +15,7 @@ import { initExcelMCPClient, initFilesystemMCPClient, initTimeMCPClient, initCds
 import { initM365InProcessClient } from '../../../gen/srv/m365-mcp/index.js';
 import { jsonSchemaToZod } from '../../../gen/srv/m365-mcp/mcp-jsonschema.js';
 import { section, kv, ok, warn, fail, info, colors, truncate, measure, hr } from './utils/format.mjs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +25,69 @@ function toolSpy() {
   return { events, record };
 }
 
+function readJson(envName) {
+  try { return JSON.parse(process.env[envName] || 'null'); } catch { return null; }
+}
+
+async function loadDotEnv() {
+  const envPath = path.resolve(process.cwd(), '.env');
+  try {
+    const raw = await readFile(envPath, 'utf8');
+    const lines = raw.split(/\r?\n/);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      i++;
+      if (!m) continue;
+      const key = m[1];
+      let val = m[2];
+      if (key === 'AICORE_SERVICE_KEY' && val.trim().startsWith('{') && !val.trim().endsWith('}')) {
+        const buf = [val];
+        let depth = 0;
+        const countBraces = (s) => (s.match(/\{/g)?.length || 0) - (s.match(/\}/g)?.length || 0);
+        depth += countBraces(val);
+        while (i < lines.length && depth > 0) {
+          const l = lines[i++];
+          buf.push(l);
+          depth += countBraces(l);
+          if (depth <= 0) break;
+        }
+        val = buf.join('\n');
+      }
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (!(key in process.env)) process.env[key] = val;
+    }
+    info(`Loaded .env (${envPath})`);
+  } catch {}
+}
+
+function hasAiCoreBinding() {
+  const vcap = readJson('VCAP_SERVICES');
+  const hasVcap = !!vcap && (Object.keys(vcap).some(k => k.toLowerCase().includes('aicore')) || Boolean(vcap?.aicore));
+  const hasKey = typeof process.env.AICORE_SERVICE_KEY === 'string' && process.env.AICORE_SERVICE_KEY.trim().startsWith('{');
+  return hasVcap || hasKey;
+}
+
+function getModelDeploymentFromArgs() {
+  const arg = (k) => process.argv.slice(2).find(a => a.startsWith(`--${k}=`))?.split('=')[1];
+  const modelName = (arg('model') || process.env.AICORE_MODEL || 'gpt-4.1').trim();
+  const resourceGroup = (arg('rg') || process.env.AICORE_RESOURCE_GROUP || '').trim() || undefined;
+  const deploymentId = (arg('deployment') || process.env.AICORE_DEPLOYMENT_ID || '').trim() || undefined;
+  return { modelName, resourceGroup, deploymentId };
+}
+
 async function buildAgent(spy) {
+  await loadDotEnv();
+  const { modelName, resourceGroup, deploymentId } = getModelDeploymentFromArgs();
+  section('AI Core (LLM)');
+  kv('Model', modelName);
+  kv('Resource group', resourceGroup || '—');
+  kv('Deployment ID', deploymentId || '—');
+  kv('AI Core binding detected', hasAiCoreBinding() ? colors.green('yes') : colors.red('no'));
+
   process.env.M365_AUTH_METHOD = process.env.M365_AUTH_METHOD || 'mock';
   process.env.M365_ATTACHMENT_BASE_PATH = process.env.M365_ATTACHMENT_BASE_PATH || path.resolve(process.cwd(), 'tmp', 'attachments');
   try { await mkdir(process.env.M365_ATTACHMENT_BASE_PATH, { recursive: true }); } catch {}
@@ -129,7 +191,9 @@ async function buildAgent(spy) {
   };
 
   const tools = await makeTools();
-  const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+  const llm = new AzureOpenAiChatClient(
+    deploymentId ? { deploymentId, resourceGroup } : { modelName, resourceGroup }
+  );
   const checkpointer = new MemorySaver();
   const agent = createReactAgent({ llm, tools, checkpointSaver: checkpointer });
   return agent;
