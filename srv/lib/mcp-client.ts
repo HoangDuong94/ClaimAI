@@ -19,7 +19,6 @@ interface InitAllClientOptions {
 interface InitAllClientsResult {
   cap: any;
   cdsModel: Client;
-  braveSearch: Client;
   filesystem: Client;
   excel: Client;
   m365: Awaited<ReturnType<typeof createInProcessM365Client>>;
@@ -43,7 +42,8 @@ function sanitizeEnv(overrides: Record<string, string | undefined> = {}): Record
   return sanitized;
 }
 
-let braveSearchClient: Client | null = null;
+// Brave MCP temporarily disabled
+// let braveSearchClient: Client | null = null;
 let filesystemClient: Client | null = null;
 let excelClient: Client | null = null;
 let m365Client: Awaited<ReturnType<typeof createInProcessM365Client>> | null = null;
@@ -51,21 +51,21 @@ let timeClient: Client | null = null;
 let capClient: any | null = null;
 let cdsModelClient: Client | null = null;
 
-export async function initBraveSearchMCPClient(): Promise<Client> {
-  if (braveSearchClient) return braveSearchClient;
-  const braveApiKey = process.env.BRAVE_API_KEY || (cds.env as any).BRAVE_API_KEY;
-  if (!braveApiKey) throw new Error('BRAVE_API_KEY is required but not provided');
-  console.log('Initializing Brave Search MCP client...');
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-brave-search'],
-    env: sanitizeEnv({ BRAVE_API_KEY: braveApiKey })
-  });
-  braveSearchClient = new Client({ name: 'brave-search-client', version: '1.0.0' }, {});
-  await braveSearchClient.connect(transport);
-  console.log('✅ Brave Search MCP Client initialized successfully.');
-  return braveSearchClient;
-}
+// export async function initBraveSearchMCPClient(): Promise<Client> {
+//   if (braveSearchClient) return braveSearchClient;
+//   const braveApiKey = process.env.BRAVE_API_KEY || (cds.env as any).BRAVE_API_KEY;
+//   if (!braveApiKey) throw new Error('BRAVE_API_KEY is required but not provided');
+//   console.log('Initializing Brave Search MCP client...');
+//   const transport = new StdioClientTransport({
+//     command: 'npx',
+//     args: ['-y', '@modelcontextprotocol/server-brave-search'],
+//     env: sanitizeEnv({ BRAVE_API_KEY: braveApiKey })
+//   });
+//   braveSearchClient = new Client({ name: 'brave-search-client', version: '1.0.0' }, {});
+//   await braveSearchClient.connect(transport);
+//   console.log('✅ Brave Search MCP Client initialized successfully.');
+//   return braveSearchClient;
+// }
 
 export async function initFilesystemMCPClient(): Promise<Client> {
   if (filesystemClient) return filesystemClient;
@@ -166,10 +166,9 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
   console.log('Initializing all MCP clients...');
 
   const { capService, logger } = options;
-  const [capInProcessClient, cdsModel, braveClient, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
+  const [capInProcessClient, cdsModel, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initCapInProcessClient({ capService, logger }),
     initCdsModelMCPClient(),
-    initBraveSearchMCPClient(),
     initFilesystemMCPClient(),
     initExcelMCPClient(),
     initM365Client(),
@@ -179,7 +178,7 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
   return {
     cap: capInProcessClient,
     cdsModel,
-    braveSearch: braveClient,
+    // braveSearch: braveClient,
     filesystem: fsClient,
     excel: xlsxClient,
     m365: microsoft365Client,
@@ -190,11 +189,11 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
 export async function closeMCPClients(): Promise<void> {
   const closePromises: Array<Promise<unknown>> = [];
 
-  if (braveSearchClient) {
-    console.log('Closing Brave Search MCP client connection');
-    closePromises.push(braveSearchClient.close());
-    braveSearchClient = null;
-  }
+  // if (braveSearchClient) {
+  //   console.log('Closing Brave Search MCP client connection');
+  //   closePromises.push(braveSearchClient.close());
+  //   braveSearchClient = null;
+  // }
   if (filesystemClient) {
     console.log('Closing Filesystem MCP client connection');
     closePromises.push(filesystemClient.close());

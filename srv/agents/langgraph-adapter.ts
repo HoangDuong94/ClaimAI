@@ -126,34 +126,47 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
     this.logLangSmithState();
     this.logger.log(
-      'Initializing Agent with CAP data access, Web Search, Filesystem, Excel, Microsoft 365, and Time capabilities...',
+      'Initializing Agent with CAP data access, Filesystem, Excel, Microsoft 365, and Time capabilities...',
     );
 
     const clients = await this.ensureMcpClients();
 
     try {
-      const [capTools, cdsModelTools, braveSearchTools, filesystemTools, excelTools, timeTools] =
-        await Promise.all([
-          loadMcpTools('cap', clients.cap),
-          loadMcpTools('search_model', clients.cdsModel),
-          loadMcpTools('brave_web_search,brave_local_search', clients.braveSearch),
-          loadMcpTools(
+      const loadSafely = async (names: string, client: unknown, label: string) => {
+        try {
+          const tools = await loadMcpTools(names, client as any);
+          // Some adapters may return a single tool; normalize to array
+          return Array.isArray(tools) ? (tools as StructuredToolInterface[]) : ([] as StructuredToolInterface[]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn?.(`Skipping ${label} tools: ${msg}`);
+          return [] as StructuredToolInterface[];
+        }
+      };
+
+      const [capTools, cdsModelTools, filesystemTools, excelTools, timeTools] =
+        await Promise.all<StructuredToolInterface[]>([
+          loadSafely('cap', clients.cap, 'CAP'),
+          loadSafely('search_model', clients.cdsModel, 'cds-mcp'),
+          loadSafely(
             'read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories',
             clients.filesystem,
+            'Filesystem',
           ),
-          loadMcpTools(
+          loadSafely(
             'excel_describe_sheets,excel_read_sheet,excel_screen_capture,excel_write_to_sheet,excel_create_table,excel_copy_sheet',
             clients.excel,
+            'Excel',
           ),
-          loadMcpTools('get_current_time,convert_time', clients.time),
-        ]) as StructuredToolInterface[][];
+          loadSafely('get_current_time,convert_time', clients.time, 'Time'),
+        ]) as unknown as StructuredToolInterface[][];
 
       const postgresTools: StructuredToolInterface[] = [];
       const allTools = [
         ...postgresTools,
         ...cdsModelTools,
         ...capTools,
-        ...braveSearchTools,
+        // ...braveSearchTools,
         ...filesystemTools,
         ...excelTools,
         ...timeTools,
@@ -162,7 +175,19 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       if (clients.m365) {
         this.logger.log('Loading Microsoft 365 tools...');
         const manifest = await clients.m365.listTools();
-        const m365Tools = manifest.tools.map((toolDef) => {
+        const blockedM365Tools = new Set([
+          'mail.message.reply',
+          'calendar.event.create'
+        ]);
+        const filteredTools = manifest.tools.filter((toolDef) => {
+          if (blockedM365Tools.has(toolDef.name)) {
+            this.logger.log(`⛔️ Hiding Microsoft 365 tool from agent: ${toolDef.name}`);
+            return false;
+          }
+          return true;
+        });
+
+        const m365Tools = filteredTools.map((toolDef) => {
           const schema = jsonSchemaToZod(toolDef.inputSchema, z);
           return new DynamicStructuredTool({
             name: toolDef.name,
@@ -175,7 +200,77 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           });
         });
         allTools.push(...m365Tools);
-        this.logger.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools`);
+        this.logger.log(`✅ Loaded ${m365Tools.length} Microsoft 365 tools (reply/send tools intentionally excluded)`);
+
+        const mailDraftTool = new DynamicStructuredTool({
+          name: 'draft.mail.compose',
+          description: 'Erstellt ausschließlich einen E-Mail-Entwurf (ohne Versand) und gibt eine strukturierte Vorschau zurück.',
+          schema: z.object({
+            to: z.array(z.string()).optional().describe('E-Mail-Adressen der Empfänger. Optional; kann leer bleiben.'),
+            cc: z.array(z.string()).optional().describe('CC-Empfänger (optional).'),
+            bcc: z.array(z.string()).optional().describe('BCC-Empfänger (optional).'),
+            subject: z.string().min(1).describe('Betreffzeile der E-Mail.'),
+            body: z.string().min(1).describe('Kompletter Nachrichtentext (Plain Text oder HTML).'),
+            contentType: z.enum(['Text', 'HTML']).default('Text').describe('Form des Inhalts. Standard: Text.')
+          }),
+          func: async (input) => {
+            const preview = {
+              to: input.to ?? [],
+              cc: input.cc ?? [],
+              bcc: input.bcc ?? [],
+              subject: input.subject,
+              contentType: input.contentType ?? 'Text',
+              bodyPreview: input.body.slice(0, 320),
+              body: input.body,
+              createdAt: new Date().toISOString()
+            };
+
+            return JSON.stringify({
+              status: 'draft-prepared',
+              channel: 'mail',
+              draft: preview
+            });
+          }
+        });
+
+        const calendarDraftTool = new DynamicStructuredTool({
+          name: 'draft.calendar.compose',
+          description: 'Bereitet einen Kalendereintrag als Entwurf vor (keine Einladung wird versendet).',
+          schema: z.object({
+            subject: z.string().min(1).describe('Betreff / Titel des Termins.'),
+            startDateTime: z.string().min(1).describe('Startzeit in ISO-8601. Beispiel: 2024-12-01T09:00:00.'),
+            endDateTime: z.string().min(1).describe('Endzeit in ISO-8601. Beispiel: 2024-12-01T10:00:00.'),
+            timezone: z.string().optional().describe('Zeitzone für Start/Ende, z. B. Europe/Berlin.'),
+            attendees: z.array(z.string()).optional().describe('E-Mail-Adressen der eingeladenen Teilnehmer (optional).'),
+            location: z.string().optional().describe('Ort oder Meeting-Link (optional).'),
+            body: z.string().optional().describe('Beschreibung / Agenda des Termins.'),
+            contentType: z.enum(['Text', 'HTML']).default('Text').describe('Beschreibung als Text oder HTML, Standard: Text.'),
+            reminderMinutesBeforeStart: z.number().optional().describe('Erinnerung in Minuten vor Start (optional).')
+          }),
+          func: async (input) => {
+            const preview = {
+              subject: input.subject,
+              startDateTime: input.startDateTime,
+              endDateTime: input.endDateTime,
+              timezone: input.timezone ?? 'UTC',
+              attendees: input.attendees ?? [],
+              location: input.location ?? null,
+              body: input.body ?? '',
+              contentType: input.contentType ?? 'Text',
+              reminderMinutesBeforeStart: input.reminderMinutesBeforeStart ?? null,
+              bodyPreview: (input.body ?? '').slice(0, 320),
+              createdAt: new Date().toISOString()
+            };
+
+            return JSON.stringify({
+              status: 'draft-prepared',
+              channel: 'calendar',
+              draft: preview
+            });
+          }
+        });
+
+        allTools.push(mailDraftTool, calendarDraftTool);
       }
 
       if (clients.cap) {
@@ -199,7 +294,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       }
 
       this.logger.log(
-        `✅ Loaded ${capTools.length} CAP, ${cdsModelTools.length} cds-mcp, ${braveSearchTools.length} Brave Search, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`,
+        `✅ Loaded ${capTools.length} CAP, ${cdsModelTools.length} cds-mcp, ${filesystemTools.length} Filesystem, ${excelTools.length} Excel, and ${timeTools.length} Time tools (${postgresTools.length} PostgreSQL tools currently disabled)`,
       );
       this.logger.log('Available tools:', allTools.map((tool) => tool.name));
 
@@ -213,7 +308,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       });
 
       this.logger.log(
-        '✅ Multi-Modal Agent is ready (Database + Web Search + Filesystem + Excel + M365 + Time).',
+        '✅ Multi-Modal Agent is ready (Database + Filesystem + Excel + M365 + Time).',
       );
       return this.agentExecutor;
     } catch (error) {
