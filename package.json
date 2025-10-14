@@ -44,7 +44,12 @@
     "ts:watch": "tsc -w -p tsconfig.cds.json",
     "watch-hybrid": "npm run ts:build && concurrently --names \"ts,cds\" --prefix-colors \"cyan,green\" \"npm run ts:watch\" \"cross-env CDS_TYPESCRIPT=false cds watch --profile hybrid\"",
     "watch-app": "npm run ts:build && concurrently --names \"ts,cds\" --prefix-colors \"cyan,green\" \"npm run ts:watch\" \"cross-env CDS_TYPESCRIPT=false cds watch --profile hybrid --open app/webapp/index.html?sap-ui-xx-viewCache=false\"",
-    "ci:verify": "npm run ts:check"
+    "ci:verify": "npm run ts:check",
+    "eval:tools": "npm run ts:build && node srv/test/evals/agent.tools.mjs",
+    "eval:workflow": "npm run ts:build && node srv/test/evals/agent.workflow.mjs",
+    "eval:excel": "npm run ts:build && node srv/test/evals/excel.read.mjs",
+    "eval:aicore": "node srv/test/evals/aicore.ping.mjs",
+    "eval:all": "npm run eval:tools && npm run eval:workflow"
   },
   "cds": {
     "requires": {

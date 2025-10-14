@@ -1,0 +1,35 @@
+{
+  "messages": [
+    {
+      "id": "msg_fixture_1",
+      "subject": "Schadensmeldung und Kalkulation",
+      "from": { "emailAddress": { "address": "kunde@example.com", "name": "M. Kunde" } },
+      "toRecipients": [ { "emailAddress": { "address": "claims@example.com", "name": "ClaimAI" } } ],
+      "receivedDateTime": "2025-10-10T20:00:00Z",
+      "isRead": false,
+      "webLink": "https://example.com/messages/msg_fixture_1",
+      "hasAttachments": true,
+      "bodyPreview": "Anbei die Kalkulation und zwei Fotos vom Schaden.",
+      "body": { "contentType": "html", "content": "<p>Bitte um Prüfung. Anbei sind Excel und Fotos.</p>" },
+      "attachments": [
+        {
+          "id": "att_xlsx_1",
+          "name": "Kalkulation.xlsx",
+          "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "size": 20504,
+          "isInline": false,
+          "fixturePath": "MockDaten/Kalkulation_CLM-CH-LU-2025-002 (1).xlsx"
+        },
+        {
+          "id": "att_img_1",
+          "name": "download.png",
+          "contentType": "image/png",
+          "size": 2208000,
+          "isInline": false,
+          "fixturePath": "MockDaten/download.png"
+        }
+      ]
+    }
+  ]
+}
+

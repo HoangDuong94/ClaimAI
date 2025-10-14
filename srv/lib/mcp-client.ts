@@ -1,6 +1,7 @@
 // srv/lib/mcp-client.ts
 
 import cds from '@sap/cds';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { initM365InProcessClient as createInProcessM365Client } from '../m365-mcp/index.js';
@@ -77,7 +78,7 @@ export async function initFilesystemMCPClient(): Promise<Client> {
     args: ['-y', '@modelcontextprotocol/server-filesystem', allowedDirectory]
   });
   filesystemClient = new Client({ name: 'filesystem-client', version: '1.0.0' }, {});
-  await filesystemClient.connect(transport);
+  await filesystemClient.connect(transport, { timeout: 180000 });
   console.log('✅ Filesystem MCP Client initialized successfully.');
   return filesystemClient;
 }
@@ -86,16 +87,32 @@ export async function initExcelMCPClient(): Promise<Client> {
   if (excelClient) return excelClient;
 
   console.log('Initializing Excel MCP client...');
-  const transport = new StdioClientTransport({
-    command: process.platform === 'win32' ? 'cmd' : 'npx',
-    args: process.platform === 'win32'
-      ? ['/c', 'npx', '--yes', '@negokaz/excel-mcp-server']
-      : ['--yes', '@negokaz/excel-mcp-server'],
-    env: sanitizeEnv({ EXCEL_MCP_PAGING_CELLS_LIMIT: '4000' })
-  });
+  // Prefer locally installed binary if available to avoid network 'npx' fetches
+  const localBin = process.platform === 'win32'
+    ? path.resolve(process.cwd(), 'node_modules', '.bin', 'excel-mcp-server.cmd')
+    : path.resolve(process.cwd(), 'node_modules', '.bin', 'excel-mcp-server');
+
+  const useLocal = (() => {
+    try {
+      const { existsSync } = require('node:fs') as typeof import('node:fs');
+      return existsSync(localBin);
+    } catch { return false; }
+  })();
+
+  const transport = new StdioClientTransport(
+    useLocal
+      ? { command: localBin, args: [], env: sanitizeEnv({ EXCEL_MCP_PAGING_CELLS_LIMIT: '4000' }) }
+      : {
+          command: process.platform === 'win32' ? 'cmd' : 'npx',
+          args: process.platform === 'win32'
+            ? ['/c', 'npx', '--yes', '@negokaz/excel-mcp-server']
+            : ['--yes', '@negokaz/excel-mcp-server'],
+          env: sanitizeEnv({ EXCEL_MCP_PAGING_CELLS_LIMIT: '4000' })
+        }
+  );
 
   excelClient = new Client({ name: 'excel-client', version: '1.0.0' }, {});
-  await excelClient.connect(transport);
+  await excelClient.connect(transport, { timeout: 240000 });
   console.log('✅ Excel MCP Client initialized successfully.');
   return excelClient;
 }
@@ -130,7 +147,7 @@ export async function initTimeMCPClient(): Promise<Client> {
   });
 
   timeClient = new Client({ name: 'time-client', version: '1.0.0' }, {});
-  await timeClient.connect(transport);
+  await timeClient.connect(transport, { timeout: 180000 });
   console.log('✅ Time MCP Client initialized successfully.');
 
   return timeClient;
@@ -146,7 +163,7 @@ export async function initCdsModelMCPClient(): Promise<Client> {
   });
 
   cdsModelClient = new Client({ name: 'cds-mcp-client', version: '1.0.0' }, {});
-  await cdsModelClient.connect(transport);
+  await cdsModelClient.connect(transport, { timeout: 120000 });
   console.log('✅ cds-mcp client initialized successfully.');
   return cdsModelClient;
 }

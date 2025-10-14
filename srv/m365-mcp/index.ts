@@ -3,6 +3,7 @@
 
 import { createM365ToolManifest, toolDefinitions } from './mcp-tool-manifest.js';
 import { GraphClient, type GraphClientOptions } from './graph-client.js';
+import { GraphClientMock } from './graph-client.mock.js';
 import { getToolHandler, listSupportedTools } from './tools/index.js';
 import { safeJson } from './helpers/logging.js';
 
@@ -24,8 +25,11 @@ export async function initM365InProcessClient(options: InitOptions = {}) {
     bootstrapScopes = ['Mail.Read']
   } = options;
 
-  const graphClient = new GraphClient({ ...options, logger });
-  await graphClient.bootstrap(bootstrapScopes);
+  const useMock = String(options.authMethod || process.env.M365_AUTH_METHOD || '').trim().toLowerCase() === 'mock';
+  const graphClient = useMock
+    ? new GraphClientMock({ logger })
+    : new GraphClient({ ...options, logger });
+  await (graphClient as any).bootstrap(bootstrapScopes);
 
   async function listTools() {
     return createM365ToolManifest();

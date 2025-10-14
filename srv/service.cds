@@ -9,7 +9,6 @@ service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
         documents : redirected to ClaimDocuments
     };
 
-    @odata.draft.enabled
     entity ClaimDocuments as projection on ClaimsModel.ClaimDocuments {
         *,
         claim : redirected to Claims

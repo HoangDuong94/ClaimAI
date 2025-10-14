@@ -1010,12 +1010,19 @@ export async function initCapMCPClient(options: CapInitOptions) {
       if (childTarget.elements?.HasDraftEntity && normalized.HasDraftEntity === undefined) {
         normalized.HasDraftEntity = false;
       }
-      if (
-        mutationKeys.DraftAdministrativeData_DraftUUID !== undefined &&
-        childTarget.elements?.DraftAdministrativeData_DraftUUID &&
-        normalized.DraftAdministrativeData_DraftUUID === undefined
-      ) {
-        normalized.DraftAdministrativeData_DraftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
+      // Ensure Draft UUID is present for draft child rows
+      if (mutationKeys.DraftAdministrativeData_DraftUUID !== undefined) {
+        const draftUUID = mutationKeys.DraftAdministrativeData_DraftUUID;
+        // Prefer explicit flattened column when available
+        if (childTarget.elements?.DraftAdministrativeData_DraftUUID && normalized.DraftAdministrativeData_DraftUUID === undefined) {
+          normalized.DraftAdministrativeData_DraftUUID = draftUUID;
+        } else if (childTarget.elements?.draftAdministrativeData_DraftUUID && normalized.draftAdministrativeData_DraftUUID === undefined) {
+          // Some environments might expose a differently cased element name
+          (normalized as any).draftAdministrativeData_DraftUUID = draftUUID;
+        } else if (childTarget.elements?.DraftAdministrativeData && normalized.DraftAdministrativeData === undefined) {
+          // Fallback: nested DraftAdministrativeData association with DraftUUID
+          normalized.DraftAdministrativeData = { DraftUUID: draftUUID } as any;
+        }
       }
 
       return normalized;
