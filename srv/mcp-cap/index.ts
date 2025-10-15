@@ -5,6 +5,10 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchema } from '../m365-mcp/mcp-jsonschema.js';
+import path from 'node:path';
+import os from 'node:os';
+import { readFile, stat as statAsync } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 type AnyRecord = Record<string, any>;
 
@@ -88,6 +92,46 @@ const formatError = (error: unknown): string => {
   }
 };
 
+// --- Helpers used by uploadLocalFile MCP tool ---
+const TMP_DIR = path.resolve(process.cwd(), 'tmp');
+
+const normalizeAttachmentsBasePath = (raw?: string): string => {
+  let base = (raw && raw.trim()) || path.resolve(process.cwd(), 'tmp', 'attachments');
+  const isWSL = process.platform === 'linux' && (
+    os.release().toLowerCase().includes('microsoft') || !!process.env.WSL_DISTRO_NAME
+  );
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(base);
+  if (isWSL && isWindowsPath) {
+    const drive = base[0].toLowerCase();
+    const rest = base.slice(2).replace(/\\/g, '/');
+    base = `/mnt/${drive}${rest.startsWith('/') ? '' : '/'}${rest}`;
+  }
+  return path.resolve(base);
+};
+
+const ATTACHMENTS_DIR = normalizeAttachmentsBasePath(process.env.M365_ATTACHMENT_BASE_PATH);
+
+const isUnder = (base: string, target: string): boolean => {
+  const rel = path.relative(base, target);
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+};
+
+const detectMimeType = (fileName = ''): string => {
+  const ext = path.extname(fileName).toLowerCase();
+  switch (ext) {
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.webp': return 'image/webp';
+    case '.csv': return 'text/csv';
+    case '.xls': return 'application/vnd.ms-excel';
+    case '.xlsx':
+    case '.xlsm':
+    case '.xlsb': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    default: return 'application/octet-stream';
+  }
+};
+
 function normalizePatchData(data: unknown): AnyRecord | null {
   if (data === null || data === undefined) {
     return null;
@@ -119,26 +163,17 @@ function normalizePatchData(data: unknown): AnyRecord | null {
 
 const toolDefinitions: Array<{ name: string; description: string; inputSchema: JsonSchema; metadata?: AnyRecord }> = [
   {
-    name: 'cap.sql.execute',
-    description: 'Execute a SQL statement through the CAP database connection. Defaults to read-only unless allowWrite is true.',
+    name: 'cap.claim.uploadLocalFile',
+    description: 'Upload a local file from tmp/attachments and link it to a Claim (supports draft).',
     inputSchema: {
       type: 'object',
       properties: {
-        sql: { type: 'string', description: 'Complete SQL statement to execute.' },
-        params: {
-          description: 'Optional positional or named parameters passed to the statement.',
-          anyOf: [
-            { type: 'array', items: {} },
-            { type: 'object', additionalProperties: true }
-          ]
-        },
-        allowWrite: {
-          type: 'boolean',
-          description: 'Set to true to allow INSERT/UPDATE/DELETE/DDL statements.',
-          default: false
-        }
+        ID: { type: 'string', description: 'Claim ID (UUID) to link the attachment to.' },
+        path: { type: 'string', description: 'Server path to file, e.g. tmp/attachments/unfall1.png' },
+        draft: { type: 'boolean', description: 'If true, upload to draft of the parent claim. Default: true' },
+        note: { type: 'string', description: 'Optional note stored with the attachment.' }
       },
-      required: ['sql'],
+      required: ['ID', 'path'],
       additionalProperties: false
     }
   },
@@ -585,23 +620,82 @@ export async function initCapMCPClient(options: CapInitOptions) {
     return { result, metadata };
   }
 
-  async function handleSqlExecute(input: AnyRecord = {}) {
-    const { sql, params, allowWrite = false } = input;
-    if (typeof sql !== 'string' || !sql.trim()) {
-      throw new Error('The "sql" property must be a non-empty string.');
+  async function handleClaimUploadLocalFile(input: AnyRecord = {}) {
+    const { ID, path: inputPath, draft = true, note } = input || {};
+    if (!ID || typeof ID !== 'string' || !ID.trim()) {
+      throw new Error('ID (Claim-ID) is required and must be a non-empty string.');
     }
-    const trimmed = sql.trim();
-    const firstWordMatch = trimmed.match(/^([A-Za-z]+)/);
-    const firstWord = firstWordMatch ? firstWordMatch[1].toUpperCase() : '';
-    const readOnlyCommands = new Set(['SELECT', 'WITH', 'SHOW', 'EXPLAIN']);
-    const isReadOnly = readOnlyCommands.has(firstWord);
-    if (!allowWrite && !isReadOnly) {
-      throw new Error('Write operations are disabled. Set allowWrite=true to enable this statement.');
+    if (!inputPath || typeof inputPath !== 'string' || !inputPath.trim()) {
+      throw new Error('path is required and must be a non-empty string (e.g. tmp/attachments/unfall1.png).');
     }
-    const statement = cds.raw(trimmed);
-    const result = await db.run(statement, params);
-    return toResultPayload(result, { command: firstWord || 'RAW' });
+
+    const absPath = path.resolve(process.cwd(), inputPath);
+    const allowed = isUnder(TMP_DIR, absPath) || isUnder(ATTACHMENTS_DIR, absPath);
+    if (!allowed) {
+      const tmpRel = path.relative(process.cwd(), TMP_DIR);
+      const attRel = path.relative(process.cwd(), ATTACHMENTS_DIR);
+      throw new Error(`File path must reside under "${tmpRel}" or "${attRel}".`);
+    }
+
+    // Prepare file record
+    const st = await statAsync(absPath);
+    if (!st.isFile()) {
+      throw new Error('The provided path is not a file.');
+    }
+    const buffer = await readFile(absPath);
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    const fileName = path.basename(absPath);
+    const mediaType = detectMimeType(fileName);
+    const relSource = path.relative(process.cwd(), absPath);
+    const attachmentId = cds.utils.uuid();
+
+    const row: AnyRecord = {
+      ID: attachmentId,
+      fileName,
+      mediaType,
+      size: st.size,
+      sha256: hash,
+      sourcePath: relSource,
+      note: typeof note === 'string' && note.trim() ? note : null,
+      content: buffer,
+      refClaim_ID: ID
+    };
+
+    const { Attachments, Claims } = (service.entities ?? {}) as any;
+    if (!Attachments) {
+      throw new Error('Attachments entity not found on service.');
+    }
+
+    const doInsertDraft = async () => {
+      if (!Claims?.drafts || !Attachments?.drafts) {
+        throw new Error('Draft targets not available for Attachments/Claims.');
+      }
+      const parent = await withServiceContext(
+        async () => service.run(
+          cds.ql.SELECT.one.from(Claims.drafts)
+            .columns('DraftAdministrativeData_DraftUUID')
+            .where({ ID })
+        )
+      );
+      if (!parent?.DraftAdministrativeData_DraftUUID) {
+        throw new Error('Parent claim draft not found. Open the claim in draft mode first (cap.draft.edit or cap.draft.new).');
+      }
+      row.IsActiveEntity = false;
+      row.DraftAdministrativeData_DraftUUID = parent.DraftAdministrativeData_DraftUUID;
+      await withServiceContext(async () => service.run(cds.ql.INSERT.into(Attachments.drafts).entries(row)), { event: 'CREATE', data: row });
+      return { attachmentId, isDraft: true };
+    };
+
+    const doInsertActive = async () => {
+      await withServiceContext(async () => service.run(cds.ql.INSERT.into(Attachments).entries(row)), { event: 'CREATE', data: row });
+      return { attachmentId, isDraft: false };
+    };
+
+    const result = draft ? await doInsertDraft() : await doInsertActive();
+    return toResultPayload(result, { action: 'UPLOAD_ATTACHMENT', entity: 'Attachments' });
   }
+
+  // removed: cap.sql.execute — prefer CQN reads and draft.* updates
 
   async function handleCqnRead(input: AnyRecord = {}) {
     const { entity, columns, where, limit, offset, draft = 'merged' } = input;
@@ -649,11 +743,19 @@ export async function initCapMCPClient(options: CapInitOptions) {
     const payload = { ...basePayload, ...extraFields, ...rawData };
     const result = await withServiceContext(
       async (req) => {
+        // Use an explicit transaction and make sure to close it to avoid leaking pool connections
         const tx = await (service as any).tx(req);
-        if (tx && typeof tx.new === 'function') {
-          return tx.new(draftEntity, payload);
+        try {
+          const out = typeof tx?.new === 'function'
+            ? await tx.new(draftEntity, payload)
+            : await (service as any).new(draftEntity, payload);
+          // Explicitly commit when using an explicit tx
+          if (tx?.commit) await tx.commit();
+          return out;
+        } catch (e) {
+          try { if (tx?.rollback) await tx.rollback(); } catch {}
+          throw e;
         }
-        return (service as any).new(draftEntity, payload);
       },
       { event: 'NEW' }
     );
@@ -1126,11 +1228,18 @@ export async function initCapMCPClient(options: CapInitOptions) {
 
     const result = await withServiceContext(
       async (req) => {
+        // Ensure the transaction is properly closed to prevent pool exhaustion
         const tx = await (service as any).tx(req);
-        if (tx && typeof tx.call === 'function') {
-          return tx.call('triageLatestMail', payload);
+        try {
+          const out = typeof tx?.call === 'function'
+            ? await tx.call('triageLatestMail', payload)
+            : await (service as any).call('triageLatestMail', payload);
+          if (tx?.commit) await tx.commit();
+          return out;
+        } catch (e) {
+          try { if (tx?.rollback) await tx.rollback(); } catch {}
+          throw e;
         }
-        return (service as any).call('triageLatestMail', payload);
       },
       { event: 'triageLatestMail', data: payload }
     );
@@ -1139,7 +1248,7 @@ export async function initCapMCPClient(options: CapInitOptions) {
   }
 
   const handlers: Record<string, (input: AnyRecord) => Promise<any> | any> = {
-    'cap.sql.execute': handleSqlExecute,
+    'cap.claim.uploadLocalFile': handleClaimUploadLocalFile,
     'cap.cqn.read': handleCqnRead,
     'cap.draft.new': handleDraftNew,
     'cap.draft.edit': handleDraftEdit,
@@ -1169,15 +1278,17 @@ export async function initCapMCPClient(options: CapInitOptions) {
     version: '1.0.0',
     tools: [
       tool(
-        'cap.sql.execute',
-        'Execute a SQL statement through the CAP database connection. Defaults to read-only unless allowWrite is true.',
+        'cap.claim.uploadLocalFile',
+        'Upload a local file from tmp/attachments and link it to a Claim (supports draft).',
         {
-          sql: z.string(),
-          params: z.union([z.array(z.any()), recordAny]).optional(),
-          allowWrite: z.boolean().optional()
+          ID: z.string(),
+          path: z.string(),
+          draft: z.boolean().optional(),
+          note: z.string().optional()
         },
-        async (args) => invokeHandler('cap.sql.execute', args)
+        async (args) => invokeHandler('cap.claim.uploadLocalFile', args)
       ),
+      
       tool(
         'cap.cqn.read',
         'Run a CAP SELECT query using CQN primitives and return the resulting rows.',

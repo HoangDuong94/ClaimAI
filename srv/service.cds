@@ -24,7 +24,10 @@ service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
     entity Attachments as projection on ClaimsModel.Attachments;
     entity ExcelImports as projection on ClaimsModel.ExcelImports;
 
-    action callLLM (prompt: String) returns { response: String };
+    action callLLM (
+        prompt: String,
+        sessionId: String
+    ) returns { response: String };
 
     action triageLatestMail(
         folder   : String,

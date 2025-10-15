@@ -173,6 +173,11 @@
                       "text": "Anhang hochladen",
                       "press": "kfz.claims.ui.app.ext.UploadActions.onUploadAttachment",
                       "visible": "{= !${IsActiveEntity} }"
+                    },
+                    "DownloadAttachment": {
+                      "text": "Download",
+                      "press": "kfz.claims.ui.app.ext.DownloadActions.onDownloadAttachment",
+                      "requiresSelection": true
                     }
                   }
                 }

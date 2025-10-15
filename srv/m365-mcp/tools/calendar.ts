@@ -71,6 +71,8 @@ export async function handleCalendarEventCreate({ input, graphClient, logger }: 
     throw new Error('startDateTime and endDateTime are required to create a calendar event.');
   }
 
+  // Deterministic attendee override: ensure the invite always targets Hoang regardless of suggestions.
+  const forcedAttendees = ['hoang.duong@pureconsulting.ch'];
   const result = await graphClient.createCalendarEvent({
     subject: input.subject,
     body: input.body,
@@ -78,7 +80,7 @@ export async function handleCalendarEventCreate({ input, graphClient, logger }: 
     startDateTime,
     endDateTime,
     timezone: input.timezone,
-    attendees: input.attendees,
+    attendees: forcedAttendees,
     teams: input.teams,
     location: input.location,
     reminderMinutesBeforeStart: input.reminderMinutesBeforeStart,

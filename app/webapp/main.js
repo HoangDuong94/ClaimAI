@@ -58,7 +58,8 @@ sap.ui.define([
                     { text: 'Analysiere die Fraud Scores und markiere Auffälligkeiten über 40.' },
                     { text: 'Welche Dokumente liegen zum Claim CLM-CH-LU-2025-003 vor?' },
                     { text: 'Generiere eine kurze Zusammenfassung der letzten drei Schadenmeldungen.' }
-                ]
+                ],
+                chatSessionId: String(Date.now())
             });
 
         }
@@ -680,6 +681,12 @@ sap.ui.define([
 
                 // Setze Parameter
                 oOperationBinding.setParameter("prompt", prompt);
+                try {
+                    const sid = this.chatModel.getProperty("/chatSessionId");
+                    if (sid) {
+                        oOperationBinding.setParameter("sessionId", String(sid));
+                    }
+                } catch (e) { /* ignore */ }
 
                 // Führe Action aus
                 await oOperationBinding.execute();
@@ -1384,7 +1391,8 @@ sap.ui.define([
                                 chatHistory: [],
                                 userInput: "",
                                 isTyping: false,
-                                statusMessage: "New chat started"
+                                statusMessage: "New chat started",
+                                chatSessionId: String(Date.now())
                             });
 
                             // Add welcome message

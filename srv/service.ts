@@ -98,7 +98,13 @@ const describeAgentBackend = (backend: AgentBackend): string => {
   }
 };
 
-const CLAUDE_APPEND_PROMPT = `Keep replies focused, note every tool you invoke, and highlight critical findings in **bold**.`;
+const CLAUDE_APPEND_PROMPT = `Keep replies focused, note every tool you invoke, and highlight critical findings in **bold**.
+
+Filesystem & attachments policy:
+- Always read/write attachments under the project folder tmp/attachments (server ensures this path exists).
+- Do not attempt to create directories yourself; avoid any create_directory calls.
+- When downloading mail attachments, set targetPath to tmp/attachments/<filename>.
+- Before downloading, prefer idempotent behavior (skip when the target file already exists and is non-empty).`;
 
 export default class ClaimsService extends cds.ApplicationService {
   async init() {
@@ -906,7 +912,7 @@ ${safeContent}`;
     }
 
     this.on('callLLM', async (req) => {
-      const { prompt: userPrompt } = (req.data ?? {}) as { prompt?: string };
+      const { prompt: userPrompt, sessionId } = (req.data ?? {}) as { prompt?: string; sessionId?: string };
       if (!userPrompt) {
         req.error(400, 'Prompt is required');
         return;
@@ -920,12 +926,15 @@ ${safeContent}`;
         return;
       }
       const userId = getUserId(req as CapRequestContext);
+      const effectiveUserKey = sessionId && String(sessionId).trim().length
+        ? `${userId}:${String(sessionId).trim()}`
+        : userId;
       const capContext = buildCapContext(req as CapRequestContext);
 
       try {
         const response = await adapter.call({
           prompt: userPrompt,
-          userId,
+          userId: effectiveUserKey,
           capContext,
           request: req,
         });

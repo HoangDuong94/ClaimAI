@@ -182,7 +182,9 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           loadSafely('cap', clients.cap, 'CAP'),
           loadSafely('search_model', clients.cdsModel, 'cds-mcp'),
           loadSafely(
-            'read_file,write_file,edit_file,create_directory,list_directory,move_file,search_files,get_file_info,list_allowed_directories',
+            // Intentionally exclude create_directory to prevent agents from writing outside the
+            // sanctioned temp directory. Directory creation is handled by server-side helpers.
+            'read_file,write_file,edit_file,list_directory,move_file,search_files,get_file_info,list_allowed_directories',
             clients.filesystem,
             'Filesystem',
           ),
@@ -352,7 +354,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       );
       this.logger.log('Available tools:', allTools.map((tool) => tool.name));
 
-      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5-mini_automatisch erstellt' });
+      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5-mini' });
       const checkpointer = new MemorySaver();
 
       this.agentExecutor = createReactAgent({

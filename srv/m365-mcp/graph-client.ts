@@ -255,6 +255,22 @@ export class GraphClient {
     return Buffer.from(await response.arrayBuffer()) as T;
   }
 
+  async getMessageById(messageId: string): Promise<{ id: string; subject?: string } | null> {
+    if (!messageId) return null;
+    const data = await this.request<any>(
+      'GET',
+      `/me/messages/${encodeURIComponent(messageId)}`,
+      {
+        query: {
+          '$select': 'id,subject'
+        },
+        scopes: ['Mail.Read']
+      }
+    );
+    if (!data || !data.id) return null;
+    return { id: data.id, subject: data.subject };
+  }
+
   async getLatestMessage({ folderId = 'inbox' }: LatestMessageInput = {}) {
     const data = await this.request<any>(
       'GET',
@@ -582,6 +598,30 @@ export class GraphClient {
     });
 
     return response;
+  }
+
+  async sendMail({ to, subject, body = '', contentType = 'Text', saveToSentItems = true }: { to: string | string[]; subject: string; body?: string; contentType?: string; saveToSentItems?: boolean }): Promise<any> {
+    const recipients = (Array.isArray(to) ? to : [to])
+      .filter(Boolean)
+      .map((addr) => ({ emailAddress: { address: String(addr) } }));
+    if (!recipients.length) {
+      throw new Error('At least one recipient is required to send a mail.');
+    }
+    const normalizedType = (contentType || 'Text').toUpperCase() === 'HTML' ? 'HTML' : 'Text';
+    const payload = {
+      message: {
+        subject: subject || '',
+        body: {
+          contentType: normalizedType,
+          content: body || ''
+        },
+        toRecipients: recipients
+      },
+      saveToSentItems: Boolean(saveToSentItems)
+    };
+
+    await this.request('POST', '/me/sendMail', { body: payload, scopes: ['Mail.Send'] });
+    return { status: 'sent', to: recipients.map(r => r.emailAddress.address), subject };
   }
 
   async close(): Promise<void> {
