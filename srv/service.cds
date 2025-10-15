@@ -21,7 +21,11 @@ service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
     entity ClaimStatusTexts as projection on ClaimsModel.ClaimStatusTexts;
 
     // Binary attachments and Excel import jobs
-    entity Attachments as projection on ClaimsModel.Attachments;
+    entity Attachments as projection on ClaimsModel.Attachments {
+        *,
+        // URL for UI preview of images (virtual, computed in handler)
+        contentUrl : String @Core.IsURL : true;
+    };
     entity ExcelImports as projection on ClaimsModel.ExcelImports;
 
     action callLLM (

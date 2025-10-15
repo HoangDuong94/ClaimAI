@@ -189,7 +189,7 @@ annotate model.ClaimDocuments with {
  * =======================================================*/
 annotate service.Attachments with @(
     UI.LineItem : [
-        { $Type : 'UI.DataField', Value : content },
+        { $Type : 'UI.DataField', Value : contentUrl, @HTML5.CssDefaults : { width : '12em' } },
         { Value : fileName,  Label : 'Dateiname' },
         { Value : mediaType, Label : 'MIME-Typ' },
         { Value : size,      Label : 'Dateigröße' }
@@ -206,3 +206,8 @@ annotate service.Attachments with @(
         TargetProperties : ['size','sha256']
     }
 );
+
+// Mark preview URL as image
+annotate service.Attachments with {
+    contentUrl @UI.IsImageUrl : true;
+};
