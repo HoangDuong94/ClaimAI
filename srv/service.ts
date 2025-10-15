@@ -6,7 +6,9 @@ import type { Request, Response } from 'express';
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { initAllMCPClients, closeMCPClients } from './lib/mcp-client.js';
 import { GraphClient } from './m365-mcp/graph-client.js';
 import { LangGraphAgentAdapter } from './agents/langgraph-adapter.js';
@@ -167,9 +169,6 @@ export default class ClaimsService extends cds.ApplicationService {
     const SUMMARY_FALLBACK = 'Keine Zusammenfassung verfügbar.';
     const SUMMARY_CATEGORIES = ['To Respond', 'Notification', 'FYI', 'Meeting Update', 'Action needed', 'Completed'];
     const DEFAULT_CATEGORY = 'Notification';
-    const ATTACHMENTS_DIR = process.env.M365_ATTACHMENT_BASE_PATH
-      ? path.resolve(process.env.M365_ATTACHMENT_BASE_PATH)
-      : path.resolve(process.cwd(), 'tmp', 'attachments');
     const EXCEL_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm', '.xlsb', '.csv']);
     const EXCEL_MIME_PREFIXES = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml',
@@ -178,6 +177,52 @@ export default class ClaimsService extends cds.ApplicationService {
       'application/vnd.ms-excel.sheet'
     ];
     const IMAGE_MIME_PREFIXES = ['image/png', 'image/jpeg', 'image/webp'];
+
+    const TMP_DIR = path.resolve(process.cwd(), 'tmp');
+
+    const normalizeAttachmentsBasePath = (raw?: string): string => {
+      // 1) Start with env or fallback to ./tmp/attachments relative to CWD
+      let base = (raw && raw.trim()) || path.resolve(process.cwd(), 'tmp', 'attachments');
+
+      // 2) Detect WSL and convert Windows paths like C:\\Users\\... to /mnt/c/Users/...
+      const isWSL = process.platform === 'linux' && (
+        os.release().toLowerCase().includes('microsoft') || !!process.env.WSL_DISTRO_NAME
+      );
+      const isWindowsPath = /^[A-Za-z]:[\\/]/.test(base);
+      if (isWSL && isWindowsPath) {
+        const drive = base[0].toLowerCase();
+        const rest = base.slice(2).replace(/\\/g, '/');
+        base = `/mnt/${drive}${rest.startsWith('/') ? '' : '/'}${rest}`;
+      }
+
+      // 3) Normalize and return
+      return path.resolve(base);
+    };
+
+    const ATTACHMENTS_DIR = normalizeAttachmentsBasePath(process.env.M365_ATTACHMENT_BASE_PATH);
+    // Ensure MCP Filesystem server sees a valid, normalized base path as well
+    process.env.M365_ATTACHMENT_BASE_PATH = ATTACHMENTS_DIR;
+
+    const isUnder = (base: string, target: string): boolean => {
+      const rel = path.relative(base, target);
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+
+    const detectMimeType = (fileName = ''): string => {
+      const ext = path.extname(fileName).toLowerCase();
+      switch (ext) {
+        case '.png': return 'image/png';
+        case '.jpg':
+        case '.jpeg': return 'image/jpeg';
+        case '.webp': return 'image/webp';
+        case '.csv': return 'text/csv';
+        case '.xls': return 'application/vnd.ms-excel';
+        case '.xlsx':
+        case '.xlsm':
+        case '.xlsb': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        default: return 'application/octet-stream';
+      }
+    };
 
     let attachmentDirReadyPromise: AttachmentDirPromise = null;
 
@@ -935,6 +980,205 @@ ${safeContent}`;
       } catch (error) {
         console.error('triageLatestMail failed:', error);
         req.error(500, `Mail-Triage fehlgeschlagen: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // Persist a local file from tmp/ as an attachment
+    this.on('uploadLocalFile', async (req) => {
+      const data = (req.data ?? {}) as { path?: string; note?: string; claimId?: string };
+      const inputPath = (data.path || '').trim();
+      if (!inputPath) {
+        req.error(400, 'Parameter "path" ist erforderlich.');
+        return;
+      }
+
+      // Resolve to absolute path and ensure it is under allowed base dirs
+      const absPath = path.resolve(process.cwd(), inputPath);
+      const allowed = isUnder(TMP_DIR, absPath) || isUnder(ATTACHMENTS_DIR, absPath);
+      if (!allowed) {
+        const tmpRel = path.relative(process.cwd(), TMP_DIR);
+        const attRel = path.relative(process.cwd(), ATTACHMENTS_DIR);
+        req.error(400, `Die Datei muss unter "${tmpRel}" oder "${attRel}" liegen.`);
+        return;
+      }
+
+      try {
+        const st = await stat(absPath);
+        if (!st.isFile()) {
+          req.error(400, 'Der angegebene Pfad ist keine Datei.');
+          return;
+        }
+        const buffer = await readFile(absPath);
+        const hash = createHash('sha256').update(buffer).digest('hex');
+        const fileName = path.basename(absPath);
+        const mediaType = detectMimeType(fileName);
+        const id = cds.utils.uuid();
+        const relSource = path.relative(process.cwd(), absPath);
+
+        const row: Record<string, unknown> = {
+          ID: id,
+          fileName,
+          mediaType,
+          size: st.size,
+          sha256: hash,
+          sourcePath: relSource,
+          note: data.note || null,
+          content: buffer
+        };
+        if (data.claimId) {
+          (row as any).refClaim_ID = data.claimId;
+        }
+
+        await INSERT.into('kfz.claims.Attachments').entries(row);
+        return id;
+      } catch (error) {
+        console.error('uploadLocalFile failed:', error);
+        req.error(500, `Upload fehlgeschlagen: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // Bound variant: Persist a local file to the bound Claim (draft-aware)
+    this.on('uploadLocalFileToClaim', async (req) => {
+      // Expect bound keys including ID and IsActiveEntity for draft context
+      const bound = (Array.isArray(req.params) && req.params.length > 0) ? (req.params[0] as any) : {};
+      const claimId = (bound && typeof bound.ID === 'string') ? bound.ID : null;
+      const isDraftTarget = (bound && Object.prototype.hasOwnProperty.call(bound, 'IsActiveEntity')) ? (bound.IsActiveEntity === false) : false;
+
+      const data = (req.data ?? {}) as { path?: string; note?: string };
+      const inputPath = (data.path || '').trim();
+      if (!claimId) {
+        req.error(400, 'Bound Claim ID fehlt.');
+        return;
+      }
+      if (!inputPath) {
+        req.error(400, 'Parameter "path" ist erforderlich.');
+        return;
+      }
+
+      const absPath = path.resolve(process.cwd(), inputPath);
+      const allowed = isUnder(TMP_DIR, absPath) || isUnder(ATTACHMENTS_DIR, absPath);
+      if (!allowed) {
+        const tmpRel = path.relative(process.cwd(), TMP_DIR);
+        const attRel = path.relative(process.cwd(), ATTACHMENTS_DIR);
+        req.error(400, `Die Datei muss unter "${tmpRel}" oder "${attRel}" liegen.`);
+        return;
+      }
+
+      try {
+        const st = await stat(absPath);
+        if (!st.isFile()) {
+          req.error(400, 'Der angegebene Pfad ist keine Datei.');
+          return;
+        }
+        const buffer = await readFile(absPath);
+        const hash = createHash('sha256').update(buffer).digest('hex');
+        const fileName = path.basename(absPath);
+        const mediaType = detectMimeType(fileName);
+        const id = cds.utils.uuid();
+        const relSource = path.relative(process.cwd(), absPath);
+
+        const row: Record<string, unknown> = {
+          ID: id,
+          fileName,
+          mediaType,
+          size: st.size,
+          sha256: hash,
+          sourcePath: relSource,
+          note: data.note || null,
+          content: buffer,
+          refClaim_ID: claimId,
+        };
+
+        const { Attachments, Claims } = this.entities as any;
+        if (isDraftTarget && Attachments?.drafts && Claims?.drafts) {
+          // Fetch parent draft UUID and attach it
+          const parent = await SELECT.one.from(Claims.drafts)
+            .columns('DraftAdministrativeData_DraftUUID')
+            .where({ ID: claimId });
+          if (!parent || !parent.DraftAdministrativeData_DraftUUID) {
+            req.error(404, 'Zugehöriger Claim‑Entwurf nicht gefunden.');
+            return;
+          }
+          (row as any).IsActiveEntity = false;
+          (row as any).DraftAdministrativeData_DraftUUID = parent.DraftAdministrativeData_DraftUUID;
+          await INSERT.into(Attachments.drafts).entries(row);
+        } else {
+          await INSERT.into(Attachments).entries(row);
+        }
+        return id;
+      } catch (error) {
+        console.error('uploadLocalFileToClaim failed:', error);
+        req.error(500, `Upload (gebunden) fehlgeschlagen: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // Queue an excel import; stores a job referencing the attachment
+    this.on('importExcel', async (req) => {
+      const data = (req.data ?? {}) as { fileId?: string; target?: string };
+      const fileId = (data.fileId || '').trim();
+      if (!fileId) {
+        req.error(400, 'Parameter "fileId" ist erforderlich.');
+        return;
+      }
+      try {
+        const att = await SELECT.one.from('kfz.claims.Attachments')
+          .columns('ID', 'fileName', 'mediaType', 'size', 'sha256', 'sourcePath')
+          .where({ ID: fileId });
+        if (!att) {
+          req.error(404, `Attachment ${fileId} nicht gefunden.`);
+          return;
+        }
+        const importId = cds.utils.uuid();
+        const logText = `Queued excel import${data.target ? ` for target=${data.target}` : ''} at ${new Date().toISOString()}`;
+        await INSERT.into('kfz.claims.ExcelImports').entries({
+          ID: importId,
+          fileName: att.fileName,
+          mediaType: att.mediaType,
+          size: att.size,
+          sha256: att.sha256,
+          sourcePath: att.sourcePath,
+          attachment_ID: fileId,
+          status: 'NEW',
+          rowsImported: 0,
+          log: logText
+        });
+        return importId;
+      } catch (error) {
+        console.error('importExcel failed:', error);
+        req.error(500, `importExcel fehlgeschlagen: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // Before updating media stream: buffer it and compute size/sha256 (avoid overlapping DB ops)
+    const toBuffer = async (streamOrBuf: any): Promise<Buffer> => {
+      if (Buffer.isBuffer(streamOrBuf)) return streamOrBuf as Buffer;
+      if (streamOrBuf && typeof streamOrBuf === 'object' && typeof streamOrBuf.on === 'function') {
+        const chunks: Buffer[] = [];
+        await new Promise<void>((resolve, reject) => {
+          streamOrBuf.on('data', (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+          streamOrBuf.on('end', () => resolve());
+          streamOrBuf.on('error', (err: unknown) => reject(err));
+        });
+        return Buffer.concat(chunks);
+      }
+      // Fallback: attempt to coerce
+      try { return Buffer.from(streamOrBuf); } catch { return Buffer.alloc(0); }
+    };
+
+    this.before('UPDATE', 'Attachments', async (req) => {
+      try {
+        const hasContent = req.data && Object.prototype.hasOwnProperty.call(req.data, 'content');
+        if (!hasContent) return;
+        const buf = await toBuffer((req.data as any).content);
+        const size = buf.length;
+        const sha = createHash('sha256').update(buf).digest('hex');
+        const mt = (req.data as any).mediaType || detectMimeType((req.data as any).fileName || '');
+        (req.data as any).content = buf;
+        (req.data as any).size = size;
+        (req.data as any).sha256 = sha;
+        if (!(req.data as any).mediaType) (req.data as any).mediaType = mt;
+      } catch (e) {
+        console.warn('before UPDATE Attachments: failed to buffer stream', getErrorMessage(e));
       }
     });
 

@@ -48,6 +48,7 @@
     "eval:tools": "npm run ts:build && node srv/test/evals/agent.tools.mjs",
     "eval:workflow": "npm run ts:build && node srv/test/evals/agent.workflow.mjs",
     "eval:excel": "npm run ts:build && node srv/test/evals/excel.read.mjs",
+    "eval:attachments": "npm run ts:build && node srv/test/evals/attachments.persist.mjs",
     "eval:aicore": "node srv/test/evals/aicore.ping.mjs",
     "eval:all": "npm run eval:tools && npm run eval:workflow"
   },

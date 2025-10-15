@@ -3,6 +3,7 @@
 import cds from '@sap/cds';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import os from 'node:os';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { initM365InProcessClient as createInProcessM365Client } from '../m365-mcp/index.js';
 import { initCapMCPClient as createInProcessCapClient } from '../mcp-cap/index.js';
@@ -71,11 +72,36 @@ let cdsModelClient: Client | null = null;
 export async function initFilesystemMCPClient(): Promise<Client> {
   if (filesystemClient) return filesystemClient;
   console.log('Initializing Filesystem MCP client...');
-  const allowedDirectory = process.env.M365_ATTACHMENT_BASE_PATH || process.cwd();
+  const normalizeBase = (raw?: string): string => {
+    let base = (raw && raw.trim()) || process.cwd();
+    const isWSL = process.platform === 'linux' && (
+      os.release().toLowerCase().includes('microsoft') || !!process.env.WSL_DISTRO_NAME
+    );
+    const isWindowsPath = /^[A-Za-z]:[\\/]/.test(base);
+    if (isWSL && isWindowsPath) {
+      const drive = base[0].toLowerCase();
+      const rest = base.slice(2).replace(/\\/g, '/');
+      base = `/mnt/${drive}${rest.startsWith('/') ? '' : '/'}${rest}`;
+    }
+    return path.resolve(base);
+  };
+
+  const allowedDirectory = normalizeBase(process.env.M365_ATTACHMENT_BASE_PATH);
   console.log(`Filesystem access is sandboxed to: ${allowedDirectory}`);
+  // Avoid Windows-only env confusing the server when running in WSL
+  const env = sanitizeEnv({
+    M365_ATTACHMENT_BASE_PATH: allowedDirectory,
+    MCP_FS_ALLOWED_DIRS: allowedDirectory,
+    USERPROFILE: undefined,
+    HOMEDRIVE: undefined,
+    HOMEPATH: undefined,
+    APPDATA: undefined,
+    LOCALAPPDATA: undefined
+  });
   const transport = new StdioClientTransport({
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem', allowedDirectory]
+    args: ['-y', '@modelcontextprotocol/server-filesystem', allowedDirectory],
+    env
   });
   filesystemClient = new Client({ name: 'filesystem-client', version: '1.0.0' }, {});
   await filesystemClient.connect(transport, { timeout: 180000 });
@@ -183,10 +209,13 @@ export async function initAllMCPClients(options: InitAllClientOptions = {}): Pro
   console.log('Initializing all MCP clients...');
 
   const { capService, logger } = options;
+  const disableFs = String(process.env.CLAIMAI_DISABLE_MCP_FILESYSTEM || '').toLowerCase() === 'true';
+  const fsClientPromise = disableFs ? Promise.resolve(null as unknown as Client) : initFilesystemMCPClient();
+
   const [capInProcessClient, cdsModel, fsClient, xlsxClient, microsoft365Client, timeMcpClient] = await Promise.all([
     initCapInProcessClient({ capService, logger }),
     initCdsModelMCPClient(),
-    initFilesystemMCPClient(),
+    fsClientPromise,
     initExcelMCPClient(),
     initM365Client(),
     initTimeMCPClient()

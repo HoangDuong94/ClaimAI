@@ -38,6 +38,25 @@ annotate service.Claims with @(
             Target: 'documents/@UI.LineItem'
         },
         {
+            $Type : 'UI.CollectionFacet',
+            ID    : 'AttachmentsFacet',
+            Label : 'Anhänge',
+            Facets: [
+                {
+                    $Type : 'UI.ReferenceFacet',
+                    ID    : 'AttachmentsTable',
+                    Label : 'Anhänge',
+                    Target: 'attachments/@UI.LineItem'
+                },
+                {
+                    $Type : 'UI.ReferenceFacet',
+                    ID    : 'AttachmentActions',
+                    Label : 'Upload',
+                    Target: '@UI.FieldGroup#AttachmentActions'
+                }
+            ]
+        },
+        {
             $Type : 'UI.ReferenceFacet',
             ID    : 'NotesFacet',
             Label : '{i18n>claims.facet.notes}',
@@ -73,6 +92,28 @@ annotate service.Claims with @(
         ]
     }
 );
+
+// Action Section to upload attachment (bound to Claim) – appears on Object Page
+annotate service.Claims with @(
+    UI.FieldGroup #AttachmentActions : {
+        $Type : 'UI.FieldGroupType',
+        Data  : [
+            {
+                $Type  : 'UI.DataFieldForAction',
+                Action : 'ClaimsService.uploadLocalFileToClaim',
+                Label  : 'Anhang (Server-Pfad) hochladen'
+            }
+        ]
+    }
+);
+
+// Make action available only in Draft mode (UI hides it for active)
+annotate service.Claims with actions {
+    uploadLocalFileToClaim @(
+        Core.OperationAvailable : { $edmJson: { $Not: { $Path: 'IsActiveEntity' } } },
+        Common.SideEffects      : { TargetEntities: [ 'attachments' ] }
+    );
+};
 
 annotate service.Claims with {
     status      @Common.Text : status_text.name
@@ -142,3 +183,24 @@ annotate model.ClaimDocuments with {
     extracted_text @Common.Label : '{i18n>claimDocuments.field.extractedText}'
                    @UI.MultiLineText : true;
 };
+
+/* =========================================================
+ * Attachments (Composition of Claims)
+ * =======================================================*/
+annotate service.Attachments with @(
+    UI.LineItem : [
+        { Value : fileName,  Label : 'Dateiname' },
+        { Value : mediaType, Label : 'MIME-Typ' },
+        { Value : size,      Label : 'Dateigröße' }
+    ],
+    UI.HeaderInfo : {
+        TypeName       : 'Anhang',
+        TypeNamePlural : 'Anhänge',
+        Title          : { Value : fileName },
+        Description    : { Value : mediaType }
+    },
+    Common.SideEffects : {
+        SourceProperties : ['content'],
+        TargetProperties : ['size','sha256']
+    }
+);

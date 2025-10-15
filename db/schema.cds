@@ -37,6 +37,10 @@ entity Claims : cuid, managed {
 
   documents              : Composition of many ClaimDocuments
                              on documents.claim = $self;
+
+  // Attachments participate in the Claim draft lifecycle via composition
+  attachments            : Composition of many Attachments
+                              on attachments.refClaim = $self;
 }
 
 entity ClaimDocuments : cuid, managed {
@@ -46,4 +50,41 @@ entity ClaimDocuments : cuid, managed {
   doc_type         : DocumentType;
   parsed_meta      : LargeString;
   extracted_text   : LargeString;
+}
+
+/**
+ * Binary attachments persisted in the DB with media stream support.
+ * Images, spreadsheets, and other files are stored in `content` with
+ * MIME type in `mediaType` so OData can serve `$value` correctly.
+ */
+entity Attachments : cuid, managed {
+  key ID        : UUID @(Core.Computed: true);
+  fileName      : String(255);
+  mediaType     : String @Core.IsMediaType;
+  size          : Integer;
+  sha256        : String(128);
+  sourcePath    : String(500);
+  note          : String(500);
+  refClaim      : Association to Claims; // optional link to a claim
+
+  content       : LargeBinary
+                   @Core.MediaType: mediaType
+                   @Core.ContentDisposition.Filename: fileName;
+}
+
+/**
+ * Excel import jobs referencing an attachment. Content is not duplicated; the
+ * import process reads the attachment and maps rows into domain entities later.
+ */
+entity ExcelImports : cuid, managed {
+  key ID         : UUID @(Core.Computed: true);
+  fileName       : String(255);
+  mediaType      : String @Core.IsMediaType;
+  size           : Integer;
+  sha256         : String(128);
+  sourcePath     : String(500);
+  attachment     : Association to Attachments;
+  status         : String enum { NEW; PROCESSING; DONE; ERROR; };
+  rowsImported   : Integer;
+  log            : LargeString;
 }

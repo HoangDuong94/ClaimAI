@@ -99,7 +99,8 @@ export class GraphClient {
   constructor(options: GraphClientOptions = {}) {
     const {
       authMethod = process.env.M365_AUTH_METHOD || 'cli',
-      cliCommand = process.env.M365_CLI_COMMAND || 'm365',
+      // On Windows, the CLI executable is a CMD shim. Prefer it by default.
+      cliCommand = process.env.M365_CLI_COMMAND || (process.platform === 'win32' ? 'm365.cmd' : 'm365'),
       logger = console,
       tokenTtlMs = DEFAULT_TOKEN_TTL_MS
     } = options;
@@ -176,7 +177,35 @@ export class GraphClient {
         this.scopesOptionSupported = false;
         return this.getAccessToken([]);
       }
+      // Windows fallback: if "m365" wasn't found, retry with "m365.cmd" via cmd.exe
       if (err?.code === 'ENOENT') {
+        if (process.platform === 'win32') {
+          const lower = this.cliCommand.toLowerCase();
+          const looksBare = !/[.](cmd|bat|exe)$/.test(lower);
+          if (looksBare) {
+            const retryCommand = `${this.cliCommand}.cmd`;
+            try {
+              const { stdout } = await execFileAsync(
+                retryCommand,
+                cliArgs,
+                { env: process.env, maxBuffer: 1024 * 1024, shell: process.env.Comspec || process.env.ComSpec || 'cmd.exe' }
+              );
+              const token = stdout.trim();
+              if (!token) {
+                throw new Error('m365 CLI returned an empty access token. Ensure you are logged in with "m365 login".');
+              }
+              this.tokenCache.set(cacheKey, {
+                token,
+                expiresAt: Date.now() + this.tokenTtlMs
+              });
+              return token;
+            } catch (retryErr) {
+              // Fall through to unified error below
+              const re = retryErr as NodeJS.ErrnoException & { message?: string };
+              throw new Error(`Could not find or execute the m365 CLI (tried: ${this.cliCommand}, ${retryCommand}). ${re?.message || re}`);
+            }
+          }
+        }
         throw new Error(`Could not find the m365 CLI (${this.cliCommand}). Install it via "npm i -g @pnp/cli-microsoft365".`);
       }
       throw new Error(`Failed to acquire Microsoft Graph token via m365 CLI: ${err?.message}`);

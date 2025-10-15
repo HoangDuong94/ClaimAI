@@ -1,0 +1,16 @@
+<core:FragmentDefinition xmlns="sap.m" xmlns:core="sap.ui.core">
+  <VBox class="sapUiSmallMargin">
+    <Toolbar design="Transparent">
+      <Title text="Upload" level="H6" />
+      <ToolbarSpacer />
+      <Button id="attachmentsUploadButton"
+              text="Anhang hochladen"
+              icon="sap-icon://upload"
+              type="Transparent"
+              visible="{= !${IsActiveEntity} }"
+              press=".onUploadAttachment"/>
+    </Toolbar>
+    <Text text="Wählen Sie eine Datei aus und laden Sie sie als Anhang hoch." wrapping="true"/>
+  </VBox>
+</core:FragmentDefinition>
+

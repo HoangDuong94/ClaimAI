@@ -17,7 +17,7 @@
     },
     "dataSources": {
       "mainService": {
-        "uri": "/service/claims/",
+        "uri": "/service/claims/?cb=1",
         "type": "OData",
         "settings": {
           "annotations": [],
@@ -75,7 +75,32 @@
       },
       "@i18n": {
         "type": "sap.ui.model.resource.ResourceModel",
-        "uri": "i18n/i18n.properties"
+        "settings": {
+          "bundleName": "kfz.claims.ui.app.i18n.i18n"
+        }
+      }
+    },
+    "extends": {
+      "extensions": {
+        "sap.ui.controllerExtensions": {
+          "sap.fe.templates.ObjectPage.ObjectPageController": {
+            "controllerName": "kfz.claims.ui.app.ext.ClaimsOP"
+          }
+        },
+        "sap.ui.viewExtensions": {
+        "sap.fe.templates.ObjectPage.ObjectPage": {
+            "HeaderContent": {
+              "className": "sap.ui.core.Fragment",
+              "fragmentName": "kfz.claims.ui.app.ext.HeaderUpload",
+              "type": "XML"
+            },
+            "AfterFacet|AttachmentsTable": {
+              "className": "sap.ui.core.Fragment",
+              "fragmentName": "kfz.claims.ui.app.ext.AttachmentsUploadSection",
+              "type": "XML"
+            }
+          }
+        }
       }
     },
     "resources": {
@@ -141,6 +166,17 @@
             "settings": {
               "contextPath": "/Claims",
               "editableHeaderContent": false,
+              "controlConfiguration": {
+                "attachments/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "actions": {
+                    "UploadFilePicker": {
+                      "text": "Anhang hochladen",
+                      "press": "kfz.claims.ui.app.ext.UploadActions.onUploadAttachment",
+                      "visible": "{= !${IsActiveEntity} }"
+                    }
+                  }
+                }
+              },
               "navigation": {
                 "documents": {
                   "detail": {
