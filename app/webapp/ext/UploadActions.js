@@ -110,43 +110,68 @@ sap.ui.define([
         dbg("create: attId=", attId);
         if (!attId) throw new Error("Attachment ID fehlt nach CREATE");
 
-        const putUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)/content`;
-        dbg("put: url=", putUrl);
-        const putRes = await fetch(putUrl, { method: "PUT", headers: { "content-type": file.type || "application/octet-stream" }, body: file });
-        dbg("put: status=", putRes.status);
-        if (!putRes.ok) throw new Error(`PUT content failed: ${putRes.status}`);
-
-        // Best-effort: update derived metadata if the backend didn't compute it (DB adapters differ)
-        try {
-          const patchUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)`;
-          dbg("patch: url=", patchUrl, "payload:", { size: file.size, mediaType: file.type || "application/octet-stream" });
-          const patchRes = await fetch(patchUrl, {
-            method: "PATCH",
-            headers: { "content-type": "application/json", "accept": "application/json" },
-            body: JSON.stringify({ size: file.size, mediaType: file.type || "application/octet-stream" })
-          });
-          dbg("patch: status=", patchRes.status);
-          // Ignore non-2xx; server-side hooks may already have set fields
-        } catch (metaErr) {
-          dbg("patch: meta update failed (ignored)", metaErr && metaErr.message);
-        }
+        // Upload content via JSON (base64) to avoid DB streaming issues
+        const toDataUrl = (file) => new Promise((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result);
+          fr.onerror = (e) => reject(e);
+          fr.readAsDataURL(file);
+        });
+        const dataUrl = await toDataUrl(file);
+        const patchUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)`;
+        dbg("patch: url=", patchUrl, "payload: content(dataUrl), fileName, mediaType");
+        const patchRes = await fetch(patchUrl, {
+          method: "PATCH",
+          headers: { "content-type": "application/json", "accept": "application/json" },
+          body: JSON.stringify({ content: dataUrl, fileName: file.name, mediaType: file.type || "application/octet-stream" })
+        });
+        dbg("patch: status=", patchRes.status);
+        if (!patchRes.ok) throw new Error(`PATCH content failed: ${patchRes.status}`);
 
         // Try to refresh via view's controller extension API if available
         const extAPI = oExtensionAPI && (oExtensionAPI.requestSideEffects || oExtensionAPI.refresh) ? oExtensionAPI : null;
+        let refreshed = false;
         if (extAPI && extAPI.requestSideEffects) {
           try {
-            dbg("sideEffects: via ExtensionAPI.requestSideEffects");
-            await extAPI.requestSideEffects({ sourceProperties: ["content"], navigationProperties: ["attachments"] });
-          } catch (e) {
-            dbg("sideEffects: requestSideEffects failed, fallback to refresh", e && e.message);
-            await extAPI.refresh();
+            dbg("sideEffects: via ExtensionAPI.requestSideEffects(ctx,m)");
+            await extAPI.requestSideEffects && extAPI.requestSideEffects(ctx, { sourceProperties: ["content"], navigationProperties: ["attachments"] });
+            refreshed = true;
+          } catch (e1) {
+            try {
+              dbg("sideEffects: alt signature requestSideEffects(m)");
+              await extAPI.requestSideEffects({ sourceProperties: ["content"], navigationProperties: ["attachments"] });
+              refreshed = true;
+            } catch (e2) {
+              dbg("sideEffects: requestSideEffects failed, fallback to refresh", e2 && e2.message);
+            }
           }
-        } else if (extAPI && extAPI.refresh) {
+        }
+        if (!refreshed && extAPI && extAPI.refresh) {
           dbg("refresh: via ExtensionAPI.refresh");
           await extAPI.refresh();
-        } else if (model && model.refresh) {
+          refreshed = true;
+        }
+        if (!refreshed && model && model.refresh) {
           dbg("refresh: via model.refresh");
           model.refresh(true);
+          refreshed = true;
+        }
+        if (!refreshed) {
+          // Fallback: re-navigate to current object to force rebind
+          try {
+            const src = oEvent && oEvent.getSource && oEvent.getSource();
+            const comp = src && sap && sap.ui && sap.ui.core && sap.ui.core.Component.getOwnerComponentFor(src);
+            const router = comp && comp.getRouter && comp.getRouter();
+            const path = ctx && ctx.getPath && ctx.getPath();
+            const keyMatch = path && path.match(/\((.*)\)$/);
+            if (router && keyMatch && keyMatch[1]) {
+              dbg("nav: rebind same object with replace");
+              router.navTo("ClaimsObjectPage", { key: keyMatch[1] }, { replace: true });
+              refreshed = true;
+            }
+          } catch (navErr) {
+            dbg("nav: failed (ignored)", navErr && navErr.message);
+          }
         }
         MessageToast.show("Anhang hochgeladen", { my: Popup.Dock.CenterCenter, at: Popup.Dock.CenterCenter });
       } catch (err) {

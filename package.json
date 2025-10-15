@@ -53,6 +53,11 @@
     "eval:all": "npm run eval:tools && npm run eval:workflow"
   },
   "cds": {
+    "server": {
+      "body_parser": {
+        "limit": "10mb"
+      }
+    },
     "requires": {
       "db": {
         "kind": "postgres",
@@ -99,7 +104,8 @@
       }
     },
     "features": {
-      "fetch_csrf": true
+      "fetch_csrf": true,
+      "stream_compat": true
     },
     "serve": {
       "host": "localhost",

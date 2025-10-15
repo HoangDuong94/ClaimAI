@@ -352,7 +352,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       );
       this.logger.log('Available tools:', allTools.map((tool) => tool.name));
 
-      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1' });
+      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5-mini_automatisch erstellt' });
       const checkpointer = new MemorySaver();
 
       this.agentExecutor = createReactAgent({

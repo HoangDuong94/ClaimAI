@@ -1150,9 +1150,20 @@ ${safeContent}`;
     });
 
     // Before updating media stream: buffer it and compute size/sha256 (avoid overlapping DB ops)
+    const isReadableStream = (obj: any): boolean => Boolean(obj && typeof obj === 'object' && typeof obj.on === 'function' && typeof obj.read === 'function');
+
     const toBuffer = async (streamOrBuf: any): Promise<Buffer> => {
       if (Buffer.isBuffer(streamOrBuf)) return streamOrBuf as Buffer;
-      if (streamOrBuf && typeof streamOrBuf === 'object' && typeof streamOrBuf.on === 'function') {
+      if (typeof streamOrBuf === 'string') {
+        const s = streamOrBuf.trim();
+        const m = s.match(/^data:[^;]*;base64,(.*)$/);
+        if (m && m[1]) {
+          try { return Buffer.from(m[1], 'base64'); } catch {}
+        }
+        // try base64 by default, fallback to utf8
+        try { return Buffer.from(s, 'base64'); } catch { return Buffer.from(s, 'utf8'); }
+      }
+      if (isReadableStream(streamOrBuf)) {
         const chunks: Buffer[] = [];
         await new Promise<void>((resolve, reject) => {
           streamOrBuf.on('data', (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
@@ -1169,7 +1180,18 @@ ${safeContent}`;
       try {
         const hasContent = req.data && Object.prototype.hasOwnProperty.call(req.data, 'content');
         if (!hasContent) return;
-        const buf = await toBuffer((req.data as any).content);
+        const content = (req.data as any).content;
+
+        // Avoid consuming Node streams here to prevent DB driver protocol issues.
+        if (isReadableStream(content)) {
+          const mt = (req.data as any).mediaType || detectMimeType((req.data as any).fileName || '');
+          if (!(req.data as any).mediaType) (req.data as any).mediaType = mt;
+          // Do not touch size/sha256; UI may patch size after upload.
+          return;
+        }
+
+        // Compute when we already have a Buffer or coercible content
+        const buf = await toBuffer(content);
         const size = buf.length;
         const sha = createHash('sha256').update(buf).digest('hex');
         const mt = (req.data as any).mediaType || detectMimeType((req.data as any).fileName || '');

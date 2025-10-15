@@ -41,33 +41,56 @@ sap.ui.define([
           const attId = created && (created.ID || created.id || created.value || (created.d && (created.d.ID || created.d.id)));
           if (!attId) throw new Error("Attachment ID fehlt nach CREATE");
 
-          // 2) PUT stream to named stream property
-          const putUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)/content`;
-          const putRes = await fetch(putUrl, { method: "PUT", headers: { "content-type": file.type || "application/octet-stream" }, body: file });
-          if (!putRes.ok) throw new Error(`PUT content failed: ${putRes.status}`);
-
-          // 2b) Best-effort: ensure derived metadata is present
-          try {
-            const patchUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)`;
-            const patchRes = await fetch(patchUrl, {
-              method: "PATCH",
-              headers: { "content-type": "application/json", "accept": "application/json" },
-              body: JSON.stringify({ size: file.size, mediaType: file.type || "application/octet-stream" })
-            });
-            // ignore status; server may have derived already
-          } catch (_) {}
+          // 2) PATCH JSON with base64 to avoid DB streaming issues
+          const toDataUrl = (file) => new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(fr.result);
+            fr.onerror = (e) => reject(e);
+            fr.readAsDataURL(file);
+          });
+          const dataUrl = await toDataUrl(file);
+          const patchUrl = `${serviceUrl}/Attachments(ID=${attId},IsActiveEntity=false)`;
+          const patchRes = await fetch(patchUrl, {
+            method: "PATCH",
+            headers: { "content-type": "application/json", "accept": "application/json" },
+            body: JSON.stringify({ content: dataUrl, fileName: file.name, mediaType: file.type || "application/octet-stream" })
+          });
+          if (!patchRes.ok) throw new Error(`PATCH content failed: ${patchRes.status}`);
 
           // 3) Side effects / Refresh
-          if (this.base.getExtensionAPI && this.base.getExtensionAPI().requestSideEffects) {
+          const extAPI = this.base.getExtensionAPI && this.base.getExtensionAPI();
+          let refreshed = false;
+          if (extAPI && extAPI.requestSideEffects) {
             try {
-              await this.base.getExtensionAPI().requestSideEffects({ sourceProperties: ["content"], navigationProperties: ["attachments"] });
-            } catch (e) {
-              await this.base.getExtensionAPI().refresh();
+              await extAPI.requestSideEffects(view.getBindingContext(), { sourceProperties: ["content"], navigationProperties: ["attachments"] });
+              refreshed = true;
+            } catch (e1) {
+              try {
+                await extAPI.requestSideEffects({ sourceProperties: ["content"], navigationProperties: ["attachments"] });
+                refreshed = true;
+              } catch (_) {}
             }
-          } else if (this.base.getExtensionAPI && this.base.getExtensionAPI().refresh) {
-            await this.base.getExtensionAPI().refresh();
-          } else if (model && model.refresh) {
+          }
+          if (!refreshed && extAPI && extAPI.refresh) {
+            await extAPI.refresh();
+            refreshed = true;
+          }
+          if (!refreshed && model && model.refresh) {
             model.refresh(true);
+            refreshed = true;
+          }
+          if (!refreshed) {
+            // Fallback: navigate to same object to force rebind
+            try {
+              const comp = sap && sap.ui && sap.ui.core && sap.ui.core.Component.getOwnerComponentFor(view);
+              const router = comp && comp.getRouter && comp.getRouter();
+              const path = view.getBindingContext() && view.getBindingContext().getPath();
+              const keyMatch = path && path.match(/\((.*)\)$/);
+              if (router && keyMatch && keyMatch[1]) {
+                router.navTo("ClaimsObjectPage", { key: keyMatch[1] }, { replace: true });
+                refreshed = true;
+              }
+            } catch (_) {}
           }
           MessageToast.show("Anhang hochgeladen", { my: Popup.Dock.CenterCenter, at: Popup.Dock.CenterCenter });
         } catch (err) {
