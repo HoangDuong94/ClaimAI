@@ -189,6 +189,7 @@ annotate model.ClaimDocuments with {
  * =======================================================*/
 annotate service.Attachments with @(
     UI.LineItem : [
+        { $Type : 'UI.DataField', Value : content },
         { Value : fileName,  Label : 'Dateiname' },
         { Value : mediaType, Label : 'MIME-Typ' },
         { Value : size,      Label : 'Dateigröße' }
@@ -199,6 +200,7 @@ annotate service.Attachments with @(
         Title          : { Value : fileName },
         Description    : { Value : mediaType }
     },
+    UI.MediaResource : { Stream : content },
     Common.SideEffects : {
         SourceProperties : ['content'],
         TargetProperties : ['size','sha256']
