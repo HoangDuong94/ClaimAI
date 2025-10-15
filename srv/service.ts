@@ -1160,7 +1160,12 @@ ${safeContent}`;
       for (const r of arr) {
         if (!r || !r.ID) continue;
         const isActive = (r as any).IsActiveEntity !== false;
-        (r as any).contentUrl = `${svcRoot}/Attachments(ID=${r.ID},IsActiveEntity=${isActive ? 'true' : 'false'})/content/$value`;
+        const mt = String((r as any).mediaType || '').toLowerCase();
+        if (mt.startsWith('image/')) {
+          (r as any).contentUrl = `${svcRoot}/Attachments(ID=${r.ID},IsActiveEntity=${isActive ? 'true' : 'false'})/content/$value`;
+        } else {
+          (r as any).contentUrl = null;
+        }
       }
     });
         return importId;
