@@ -179,6 +179,21 @@
                       "press": "kfz.claims.ui.app.ext.DownloadActions.onDownloadAttachment",
                       "requiresSelection": true
                     }
+                  },
+                  "columns": {
+                    "CustomColumn_AttachmentThumbnail": {
+                      "header": "Vorschau",
+                      "width": "12em",
+                      "importance": "High",
+                      "horizontalAlign": "Center",
+                      "position": {
+                        "placement": "Before",
+                        "anchor": "DataField::fileName"
+                      },
+                      "template": "kfz.claims.ui.app.ext.AttachmentsThumbnailCell",
+                      "availability": "Default",
+                      "properties": ["fileName", "mediaType"]
+                    }
                   }
                 }
               },

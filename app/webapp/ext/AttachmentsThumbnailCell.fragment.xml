@@ -1,0 +1,11 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <Image
+    src="{contentUrl}"
+    width="10rem"
+    height="6rem"
+    densityAware="false"
+    decorative="true"
+    visible="{= !!${contentUrl} }"
+    alt="{fileName}"/>
+</core:FragmentDefinition>
+
