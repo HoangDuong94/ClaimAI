@@ -207,7 +207,8 @@ annotate service.Attachments with @(
     }
 );
 
-// Mark preview URL as image
+// Mark preview URL as image and specify media type for FE V4 rendering
 annotate service.Attachments with {
     contentUrl @UI.IsImageUrl : true;
+    contentUrl @Core.MediaType : 'image/png';
 };
