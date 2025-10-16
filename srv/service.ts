@@ -1121,8 +1121,24 @@ ${safeContent}`;
       }
     });
 
+    // Populate virtual contentUrl for preview images (relative to service root)
+    this.after('READ', 'Attachments', (rows, req) => {
+      const arr = Array.isArray(rows) ? rows : [rows];
+      const svcRoot = '/service/claims';
+      for (const r of arr) {
+        if (!r || !(r as any).ID) continue;
+        const isActive = (r as any).IsActiveEntity !== false;
+        const mt = String((r as any).mediaType || '').toLowerCase();
+        if (mt.startsWith('image/')) {
+          (r as any).contentUrl = `${svcRoot}/Attachments(ID=${(r as any).ID},IsActiveEntity=${isActive ? 'true' : 'false'})/content/$value`;
+        } else {
+          (r as any).contentUrl = null;
+        }
+      }
+    });
+
     // Queue an excel import; stores a job referencing the attachment
-  this.on('importExcel', async (req) => {
+    this.on('importExcel', async (req) => {
       const data = (req.data ?? {}) as { fileId?: string; target?: string };
       const fileId = (data.fileId || '').trim();
       if (!fileId) {
@@ -1150,24 +1166,7 @@ ${safeContent}`;
           status: 'NEW',
           rowsImported: 0,
           log: logText
-  });
-
-    // Populate virtual contentUrl for preview images (relative to service root)
-    this.after('READ', 'Attachments', (rows, req) => {
-      const arr = Array.isArray(rows) ? rows : [rows];
-      // Service root is fixed by service path in service.cds
-      const svcRoot = '/service/claims';
-      for (const r of arr) {
-        if (!r || !r.ID) continue;
-        const isActive = (r as any).IsActiveEntity !== false;
-        const mt = String((r as any).mediaType || '').toLowerCase();
-        if (mt.startsWith('image/')) {
-          (r as any).contentUrl = `${svcRoot}/Attachments(ID=${r.ID},IsActiveEntity=${isActive ? 'true' : 'false'})/content/$value`;
-        } else {
-          (r as any).contentUrl = null;
-        }
-      }
-    });
+        });
         return importId;
       } catch (error) {
         console.error('importExcel failed:', error);
