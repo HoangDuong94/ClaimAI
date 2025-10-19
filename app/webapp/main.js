@@ -740,27 +740,6 @@ sap.ui.define([
                 const oContext = oOperationBinding.getBoundContext();
                 const result = oContext.getObject();
 
-                // Quick win: UI-Refresh nach Agent-Änderungen
-                try {
-                    if (oDataModel && typeof oDataModel.refresh === 'function') {
-                        // true = force update
-                        oDataModel.refresh(true);
-                    }
-                    // Fallback: re-navigate to the same object to force rebind
-                    try {
-                        const comp = this.feAppComponentInstance;
-                        const router = comp && typeof comp.getRouter === 'function' ? comp.getRouter() : null;
-                        const hash = String((window.location && window.location.hash) || "");
-                        // Expect like: #/Claims(ID=...,IsActiveEntity=false)
-                        const m = hash.match(/Claims\(([^)]+)\)/i);
-                        if (router && m && m[1]) {
-                            router.navTo('ClaimsObjectPage', { key: m[1] }, { replace: true });
-                        }
-                    } catch (_) { /* ignore */ }
-                } catch (e) {
-                    // ignore refresh errors
-                }
-
                 console.log("Claude operation result:", result);
                 return result.response || "No response received";
 
