@@ -95,12 +95,29 @@ Wenn der Benutzer um einen Import bittet (z. B. „Kannst du die Daten bitte i
    - Falls aus einer E‑Mail: `mail.attachment.download` zuerst aufrufen und in `tmp/attachments` speichern.
    - Lade den Anhang für den Claim‑Draft hoch (geplanter MCP‑Toolaufruf, siehe unten):
      - `cap.claim.uploadLocalFile` → `{ ID: '<claim-id>', draft: true, path: 'tmp/attachments/unfall1.png', note: 'optional' }`
-6. Draft speichern:
-   - `cap.draft.save`.
+6. Draft speichern (nur bei Aktivierung):
+   - Führe `cap.draft.save` nur aus, wenn der Benutzer die Aktivierung wünscht. Änderungen im Draft werden bereits durch `cap.draft.new`/`cap.draft.patch`/`cap.draft.addChild` persistiert.
 7. Verifikation:
    - `cap.cqn.read` (`draft: 'active'`) → Felder/Anhänge prüfen.
 
 > Hinweis: Verwende ausschließlich Pfade unter `tmp/attachments` (Policy). Verzeichnisse nicht selbst erzeugen; Downloads sind idempotent.
+
+#### **Composition‑Kinder (ClaimDocuments)**
+
+*   Für Kompositionen eines Claims (z. B. `documents`) verwende `cap.draft.addChild` statt `cap.draft.edit` + Einzelinserts.
+*   Übergebe neue Einträge immer unter `entries: [ { … } ]` (Array).
+*   Verwende die exakten Feldnamen aus dem Modell (meist snake_case). Prüfe sie vorher mit `search_model` auf Service‑Ebene.
+*   Für `kfz.claims.ClaimDocuments` verwende u. a.:
+    - `filename`
+    - `doc_type` (Enum: `foto | kalkulation | polizeibericht | sonstiges`)
+    - optional `parsed_meta` (JSON‑String) und `extracted_text`
+*   Excel‑Mapping (Beispiel): „Teile“/„Arbeit“ → `doc_type: 'kalkulation'`; Bilder → `doc_type: 'foto'`.
+*   Beim Anlegen direkt Metadaten mitschicken: Gib `parsed_meta` und – falls sinnvoll – `extracted_text` bereits im `entries`‑Array von `cap.draft.addChild` mit.
+*   `parsed_meta` als kompakter JSON‑String ohne Zeilenumbrüche.
+*   Beispiel: `entries: [ { "filename": "claims_excel_anhang.xlsx", "doc_type": "kalkulation", "parsed_meta": "{\"sheet\":\"ClaimHeader\",\"fields\":{\"policy_number\":\"ACME-P-993412\",\"total\":13100,\"currency\":\"CHF\"}}", "extracted_text": "PolicyNumber=ACME-P-993412; Total=13100; CHF" } ]`
+*   Beispiel (Fotos, zwei Einträge): `entries: [ { "filename": "unfall1.png", "doc_type": "foto", "parsed_meta": "{\"vision_description\":\"...\"}" }, { "filename": "unfall2.png", "doc_type": "foto", "parsed_meta": "{\"vision_description\":\"...\"}" } ]`
+*   Wichtiger Unterschied: `ClaimDocuments` (strukturierte Einträge) ≠ `Attachments` (binäre Dateien). Lade für jede Datei zusätzlich ein Attachment über `cap.claim.uploadLocalFile` (z. B. `{ ID, draft: true, path: 'tmp/attachments/unfall1.png' }`).
+*   Aktiviere den Draft nur auf ausdrückliche Anweisung des Benutzers.
 
 #### **MCP‑Tool: cap.claim.uploadLocalFile (Anhänge hochladen)**
 
