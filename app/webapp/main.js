@@ -742,8 +742,11 @@ sap.ui.define([
 
                 // Quick win: UI-Refresh nach Agent-Änderungen
                 try {
-                    if (oDataModel && typeof oDataModel.refresh === 'function') {
-                        // true = force update
+                    // Prefer targeted SideEffects via FE ExtensionAPI (if exposed)
+                    if (typeof window !== 'undefined' && typeof window.requestClaimSideEffects === 'function') {
+                        try { await window.requestClaimSideEffects(); } catch (_) {}
+                    } else if (oDataModel && typeof oDataModel.refresh === 'function') {
+                        // Fallback: force model refresh
                         oDataModel.refresh(true);
                     }
                     // Fallback: re-navigate to the same object to force rebind

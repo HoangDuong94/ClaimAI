@@ -6,6 +6,48 @@ sap.ui.define([
   "use strict";
 
   return ControllerExtension.extend("kfz.claims.ui.app.ext.ClaimsOP", {
+    onInit: function () {
+      var that = this;
+      try {
+        // Expose a global helper for targeted side-effects from outside FE controllers
+        window.requestClaimSideEffects = async function () {
+          try {
+            var view = that.base && that.base.getView && that.base.getView();
+            var extAPI = that.base && that.base.getExtensionAPI && that.base.getExtensionAPI();
+            var model = view && view.getModel && view.getModel();
+            var refreshed = false;
+            if (extAPI && extAPI.requestSideEffects) {
+              try {
+                await extAPI.requestSideEffects(view && view.getBindingContext && view.getBindingContext(), {
+                  sourceProperties: ["content"],
+                  navigationProperties: ["attachments", "documents"]
+                });
+                refreshed = true;
+              } catch (e1) {
+                try {
+                  await extAPI.requestSideEffects({
+                    sourceProperties: ["content"],
+                    navigationProperties: ["attachments", "documents"]
+                  });
+                  refreshed = true;
+                } catch (e2) { /* ignore */ }
+              }
+            }
+            if (!refreshed && extAPI && extAPI.refresh) {
+              await extAPI.refresh();
+              refreshed = true;
+            }
+            if (!refreshed && model && model.refresh) {
+              model.refresh(true);
+              refreshed = true;
+            }
+            return refreshed;
+          } catch (e) {
+            return false;
+          }
+        };
+      } catch (e) { /* ignore */ }
+    },
     onUploadAttachment: function () {
       const view = this.base.getView();
       const ctx = view.getBindingContext();
