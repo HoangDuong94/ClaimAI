@@ -155,7 +155,7 @@
                             <VBox visible="{= ${chat>type} === 'system' }" class="modernSystemMessageContainer">
                                 <HBox justifyContent="Center" class="modernMessageRow">
                                     <VBox class="modernSystemMessage">
-                                        <Text text="{chat>text}" class="modernSystemText"/>
+                                        <Text text="{chat>text}" class="modernSystemText" renderWhitespace="true"/>
                                     </VBox>
                                 </HBox>
                             </VBox>
@@ -165,7 +165,7 @@
                                 <HBox justifyContent="Center" class="modernMessageRow">
                                     <HBox class="modernInfoMessage" alignItems="Center">
                                         <core:Icon src="sap-icon://information" class="modernInfoIcon"/>
-                                        <Text text="{chat>text}" class="modernInfoText"/>
+                                        <Text text="{chat>text}" class="modernInfoText" renderWhitespace="true"/>
                                     </HBox>
                                 </HBox>
                             </VBox>
@@ -175,7 +175,7 @@
                                 <HBox justifyContent="Center" class="modernMessageRow">
                                     <HBox class="modernWarningMessage" alignItems="Center">
                                         <core:Icon src="sap-icon://warning" class="modernWarningIcon"/>
-                                        <Text text="{chat>text}" class="modernWarningText"/>
+                                        <Text text="{chat>text}" class="modernWarningText" renderWhitespace="true"/>
                                     </HBox>
                                 </HBox>
                             </VBox>

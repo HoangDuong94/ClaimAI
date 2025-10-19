@@ -279,7 +279,7 @@ export class GraphClient {
         query: {
           '$top': '1',
           '$orderby': 'receivedDateTime desc',
-          '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
+          '$select': 'id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
           '$expand': 'attachments($select=id,name,contentType,size,isInline)'
         },
         scopes: ['Mail.Read']
@@ -294,6 +294,12 @@ export class GraphClient {
       subject: message.subject,
       from: message.from?.emailAddress || null,
       toRecipients: (message.toRecipients || []).map((entry: any) => entry.emailAddress),
+      ccRecipients: Array.isArray(message.ccRecipients)
+        ? message.ccRecipients.map((entry: any) => entry.emailAddress)
+        : [],
+      bccRecipients: Array.isArray(message.bccRecipients)
+        ? message.bccRecipients.map((entry: any) => entry.emailAddress)
+        : [],
       receivedDateTime: message.receivedDateTime,
       isRead: Boolean(message.isRead),
       webLink: message.webLink,
@@ -414,7 +420,7 @@ export class GraphClient {
     const query: Record<string, string> = {
       '$orderby': 'receivedDateTime desc',
       '$top': String(safeTop),
-      '$select': 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
+      '$select': 'id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,bodyPreview,body,isRead,webLink',
       '$expand': 'attachments($select=id,name,contentType,size,isInline)'
     };
 
@@ -436,11 +442,23 @@ export class GraphClient {
       subject: message.subject,
       from: message.from?.emailAddress || null,
       toRecipients: (message.toRecipients || []).map((entry: any) => entry.emailAddress),
+      ccRecipients: Array.isArray(message.ccRecipients)
+        ? message.ccRecipients.map((entry: any) => entry.emailAddress)
+        : [],
+      bccRecipients: Array.isArray(message.bccRecipients)
+        ? message.bccRecipients.map((entry: any) => entry.emailAddress)
+        : [],
       receivedDateTime: message.receivedDateTime,
       isRead: Boolean(message.isRead),
       webLink: message.webLink,
       hasAttachments: Boolean(message.hasAttachments),
       bodyPreview: message.bodyPreview || null,
+      body: message.body
+        ? {
+            contentType: message.body.contentType,
+            content: message.body.content
+          }
+        : null,
       attachments: Array.isArray(message.attachments)
         ? message.attachments.map((attachment: any) => ({
             id: attachment.id,

@@ -72,19 +72,66 @@ sap.ui.define([
             });
         }
 
+        normalizeSenderInfo(rawSender) {
+            const sender = rawSender && typeof rawSender === 'object' ? rawSender : {};
+            const normalize = (value) => (typeof value === 'string' ? value.trim() : '');
+
+            const nestedEmail = sender.emailAddress && typeof sender.emailAddress === 'object'
+                ? {
+                    address: normalize(sender.emailAddress.address),
+                    name: normalize(sender.emailAddress.name)
+                }
+                : { address: normalize(sender.emailAddress), name: '' };
+
+            const candidateEmails = [
+                normalize(sender.address),
+                nestedEmail.address,
+                normalize(sender.mail),
+                normalize(sender.userPrincipalName),
+                normalize(sender.email),
+                normalize(sender.user && sender.user.mail),
+                normalize(sender.user && sender.user.userPrincipalName)
+            ].filter(Boolean);
+
+            const candidateNames = [
+                normalize(sender.name),
+                normalize(sender.displayName),
+                nestedEmail.name,
+                normalize(sender.user && sender.user.displayName)
+            ].filter(Boolean);
+
+            const email = candidateEmails.length > 0 ? candidateEmails[0] : '';
+            const name = candidateNames.length > 0 ? candidateNames[0] : '';
+
+            const display = name && email
+                ? `${name} <${email}>`
+                : name || email || '';
+
+            return {
+                name,
+                email,
+                display
+            };
+        }
+
         formatNotificationForDisplay(item) {
-            if (!item) return item;
+            if (!item) {
+                return item;
+            }
             const formatted = { ...item };
-            const fromEntry = item.from || {};
-            const nameCandidate = fromEntry.name || fromEntry.displayName;
-            const addressCandidate = fromEntry.address || fromEntry.emailAddress;
-            formatted.fromDisplay = nameCandidate || addressCandidate || 'Unbekannter Absender';
+            const fromEntry = item.from || item.sender || {};
+            const senderInfo = this.normalizeSenderInfo(fromEntry);
+            formatted.fromDisplay = senderInfo.display || 'Unbekannter Absender';
+            formatted.fromName = senderInfo.name || '';
+            formatted.fromEmail = senderInfo.email || '';
 
             if (item.agentContext) {
                 formatted.agentContext = item.agentContext;
             }
 
-            formatted.hasAttachments = Boolean(item.hasAttachments);
+            const attachmentNames = this.collectAttachmentNames(item);
+            formatted.hasAttachments = Boolean(item.hasAttachments) || attachmentNames.length > 0;
+            formatted.attachmentNames = attachmentNames;
 
             const categoryRaw = typeof item.category === 'string' ? item.category.trim() : '';
             const category = categoryRaw || 'Notification';
@@ -237,81 +284,12 @@ sap.ui.define([
             return rawBody || '';
         }
 
-        truncateTextForDisplay(text, maxChars = 1200, maxLines = 25) {
-            if (!text) {
-                return '';
-            }
-
-            const normalizedLines = text
-                .replace(/\r\n/g, '\n')
-                .split('\n')
-                .map((line) => line.replace(/\s+$/g, ''));
-
-            let truncatedLines = normalizedLines;
-            let truncatedByLines = false;
-            if (normalizedLines.length > maxLines) {
-                truncatedLines = normalizedLines.slice(0, maxLines);
-                truncatedByLines = true;
-            }
-
-            let result = truncatedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-
-            if (truncatedByLines) {
-                result = `${result}\n...`;
-            }
-
-            if (result.length > maxChars) {
-                const trimmedResult = result.slice(0, maxChars - 3).trimEnd();
-                result = trimmedResult.endsWith('...') ? trimmedResult : `${trimmedResult}...`;
-            }
-
-            return result;
-        }
-
         buildEmailTextForDisplay(mailItem) {
             const primaryText = this.getMailBodyString(mailItem);
             const summary = typeof mailItem?.summary === 'string' ? mailItem.summary.trim() : '';
             const preview = typeof mailItem?.bodyPreview === 'string' ? mailItem.bodyPreview.trim() : '';
             const candidate = primaryText || summary || preview || '';
-            return this.truncateTextForDisplay(candidate);
-        }
-
-        buildQuickActionSuggestions(mailItem) {
-            const suggestions = [];
-
-            suggestions.push('Nutze den Button "An Agent senden", um eine detaillierte Analyse zu starten.');
-
-            if (mailItem.hasAttachments) {
-                suggestions.push('Öffne die Anhänge und prüfe sie auf wichtige Informationen.');
-            }
-
-            const category = typeof mailItem.category === 'string' ? mailItem.category.toLowerCase() : '';
-            if (category === 'to respond' || category === 'action needed') {
-                suggestions.push('Formuliere eine zeitnahe Antwort oder plane konkrete Folgeaktionen.');
-            } else if (category === 'meeting update') {
-                suggestions.push('Aktualisiere deinen Kalender und bestätige den Termin bei Bedarf.');
-            } else if (category === 'fyi') {
-                suggestions.push('Teile die wichtigsten Punkte mit den relevanten Personen oder notiere sie.');
-            }
-
-            const sender = mailItem.fromDisplay || 'dem Absender';
-            if (suggestions.length < 3) {
-                suggestions.push(`Notiere wichtige Punkte und stimme dich bei Bedarf mit ${sender} ab.`);
-            }
-
-            if (suggestions.length < 3) {
-                suggestions.push('Lege eine Aufgabe oder Erinnerung für die nächsten Schritte an.');
-            }
-
-            // Entferne Duplikate und reduziere auf drei Einträge
-            const unique = [];
-            suggestions.forEach((entry) => {
-                if (!unique.includes(entry)) {
-                    unique.push(entry);
-                }
-            });
-
-            return unique.slice(0, 3);
+            return typeof candidate === 'string' ? candidate.trim() : '';
         }
 
         escapeHtml(text) {
@@ -326,43 +304,120 @@ sap.ui.define([
                 .replace(/'/g, '&#39;');
         }
 
+        decodeHtmlEntities(text) {
+            if (!text) {
+                return '';
+            }
+
+            if (typeof document !== 'undefined' && document.createElement) {
+                const textarea = document.createElement('textarea');
+                textarea.innerHTML = text;
+                const decoded = textarea.value || '';
+                return decoded.replace(/\u00a0/g, ' ');
+            }
+
+            return String(text)
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/&amp;/gi, '&')
+                .replace(/&lt;/gi, '<')
+                .replace(/&gt;/gi, '>')
+                .replace(/&quot;/gi, '"')
+                .replace(/&#39;/gi, "'")
+                .replace(/&#96;/gi, '`');
+        }
+
+        normalizeMailText(text) {
+            return String(text || '')
+                .replace(/\u00a0/g, ' ')
+                .replace(/\r\n/g, '\n')
+                .replace(/[ \t]+\n/g, '\n')
+                .replace(/\n[ \t]+/g, '\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        }
+
         renderParagraphs(text) {
             if (!text) {
                 return '';
             }
-            const escaped = this.escapeHtml(text)
-                .replace(/\r\n/g, '\n')
+            const decoded = this.decodeHtmlEntities(text);
+            const normalized = this.normalizeMailText(decoded);
+            const paragraphs = normalized
                 .split(/\n{2,}/)
-                .map((block) => block.split('\n').map((line) => line.trim()).filter(Boolean).join('<br/>'))
+                .map((block) => block.trim())
                 .filter(Boolean);
 
-            return escaped
-                .map((paragraph) => `<p style="margin: 0 0 8px 0;">${paragraph}</p>`)
+            return paragraphs
+                .map((paragraph) => {
+                    const safe = this.escapeHtml(paragraph).replace(/\n/g, '<br/>');
+                    return `<p style="margin: 0 0 8px 0;">${safe}</p>`;
+                })
                 .join('');
         }
 
-        highlightKeywords(text) {
-            if (!text) {
+        extractAttachmentName(attachment) {
+            if (!attachment || typeof attachment !== 'object') {
                 return '';
             }
 
-            const keywordPatterns = [
-                'Agent',
-                'Analyse',
-                'Anhänge',
-                'Antwort',
-                'Aufgabe',
-                'Folgeaktionen',
-                'Kalender'
+            const candidateKeys = [
+                'fileName',
+                'filename',
+                'name',
+                'displayName',
+                'originalFileName',
+                'title',
+                'Title'
             ];
 
-            let highlighted = text;
-            keywordPatterns.forEach((keyword) => {
-                const pattern = new RegExp(`(\\b${keyword}\\b)`, 'gi');
-                highlighted = highlighted.replace(pattern, '<strong>$1</strong>');
+            for (let i = 0; i < candidateKeys.length; i += 1) {
+                const key = candidateKeys[i];
+                const value = attachment[key];
+                if (typeof value === 'string' && value.trim()) {
+                    return value.trim();
+                }
+            }
+
+            if (typeof attachment.id === 'string' && attachment.id.trim()) {
+                return attachment.id.trim();
+            }
+
+            return '';
+        }
+
+        collectAttachmentNames(mailItem) {
+            if (!mailItem) {
+                return [];
+            }
+
+            const seen = new Set();
+            const names = [];
+            const addName = (value) => {
+                if (!value) {
+                    return;
+                }
+                const trimmed = String(value).trim();
+                if (!trimmed) {
+                    return;
+                }
+                const key = trimmed.toLowerCase();
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    names.push(trimmed);
+                }
+            };
+
+            const agentContext = this.ensureAgentContextObject(mailItem.agentContext);
+            const contextAttachments = Array.isArray(agentContext?.attachments) ? agentContext.attachments : [];
+            const rawAttachments = Array.isArray(mailItem.attachments) ? mailItem.attachments : [];
+            const combined = [...contextAttachments, ...rawAttachments];
+
+            combined.forEach((attachment) => {
+                const name = this.extractAttachmentName(attachment);
+                addName(name);
             });
 
-            return highlighted;
+            return names;
         }
 
         buildMailAnnouncementHtml(mailItem) {
@@ -370,18 +425,20 @@ sap.ui.define([
             const bodyExcerpt = this.buildEmailTextForDisplay(displayMail);
             const subject = displayMail.subject || 'Ohne Betreff';
             const sender = displayMail.fromDisplay || 'Unbekannter Absender';
-            const received = displayMail.receivedLabel || null;
-            const category = displayMail.category || null;
-            const attachments = displayMail.hasAttachments ? 'vorhanden' : null;
-            const suggestions = this.buildQuickActionSuggestions(displayMail);
+            const received = displayMail.receivedLabel || '';
+            const category = displayMail.category || '';
+            const attachmentNames = this.collectAttachmentNames(mailItem);
+            const attachmentsValue = attachmentNames.length
+                ? attachmentNames.join(', ')
+                : 'Keine Anhänge';
 
             const metaEntries = [
                 { label: 'Von', value: sender },
                 { label: 'Betreff', value: subject },
-                { label: 'Empfangen', value: received },
-                { label: 'Kategorie', value: category },
-                { label: 'Anhänge', value: attachments }
-            ].filter((entry) => entry.value);
+                received ? { label: 'Empfangen', value: received } : null,
+                category ? { label: 'Kategorie', value: category } : null,
+                { label: 'Anhänge', value: attachmentsValue }
+            ].filter(Boolean);
 
             const metaHtml = metaEntries.map((entry) => {
                 const safeValue = this.escapeHtml(entry.value);
@@ -393,23 +450,11 @@ sap.ui.define([
 
             const bodyHtml = this.renderParagraphs(bodyExcerpt || 'Kein E-Mail-Text verfügbar.');
 
-            const suggestionsHtml = suggestions.length
-                ? `<ul style="margin: 0; padding-left: 18px;">
-                        ${suggestions.map((entry) => {
-                            const safeText = this.escapeHtml(entry);
-                            const highlighted = this.highlightKeywords(safeText);
-                            return `<li style="margin-bottom: 6px; line-height: 1.45;">${highlighted}</li>`;
-                        }).join('')}
-                   </ul>`
-                : '<ul style="margin: 0; padding-left: 18px;"><li>Keine Vorschläge verfügbar.</li></ul>';
-
             return `
-                <p style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700;">Hallo Hoang 👋 neue E-Mail eingetroffen</p>
+                <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: 700;">Neue E-Mail eingetroffen</p>
                 ${metaHtml}
-                <p style="margin: 12px 0 4px 0; font-weight: 700; color: #1a2a3b;">Inhalt (Auszug)</p>
+                <p style="margin: 12px 0 4px 0; font-weight: 700; color: #1a2a3b;">Inhalt</p>
                 ${bodyHtml || '<p style="margin: 0;">Kein E-Mail-Text verfügbar.</p>'}
-                <p style="margin: 12px 0 4px 0; font-weight: 700; color: #1a2a3b;">Mögliche nächste Schritte</p>
-                ${suggestionsHtml}
             `;
         }
 
@@ -712,17 +757,19 @@ sap.ui.define([
             }
         }
 
-        // Prepare content for HTML control depending on message type
+        // Prepare content for chat message rendering depending on type
         prepareMessageContent(type, text) {
             const value = typeof text === "string" ? text : String(text ?? "");
             if (type === "assistant") {
-                // const sanitized = this.sanitizeHTMLContent(value);
                 return `<div class="ai-response-container">${value}</div>`;
             }
-            return this.escapePlainText(value);
+            if (type === "user") {
+                return this.formatPlainTextAsHtmlSpan(value);
+            }
+            return this.formatPlainTextForTextControl(value);
         }
 
-        escapePlainText(text) {
+        formatPlainTextAsHtmlSpan(text) {
             const escaped = text
                 .replace(/&/g, "&amp;")
                 .replace(/</g, "&lt;")
@@ -731,6 +778,13 @@ sap.ui.define([
                 .replace(/'/g, "&#39;")
                 .replace(/\r?\n/g, "<br/>");
             return `<span class="ai-plain-text">${escaped}</span>`;
+        }
+
+        formatPlainTextForTextControl(text) {
+            if (typeof text !== "string") {
+                return String(text ?? "");
+            }
+            return text.replace(/\r\n/g, "\n");
         }
 
         // Add message to chat history

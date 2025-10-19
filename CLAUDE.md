@@ -144,7 +144,7 @@ Dieser MCP‑Tool erlaubt dem Agenten, eine lokale Datei (Server‑Pfad) als Anh
 #### **Excel-Zugriff**
 
 *   **Struktur verstehen:** Beginnen Sie **immer** mit `excel_describe_sheets`, um die Namen der Tabellenblätter zu ermitteln.
-*   **Dateipfad:** Geben Sie für alle Excel-Operationen den `fileAbsolutePath` an.
+*   **Dateipfad (wichtig):** `fileAbsolutePath` **muss absolut** sein. Verwenden Sie nach `mail.attachment.download` immer den zurückgegebenen `targetPath` (bereits absolut). Falls Sie nur einen relativen Pfad wie `tmp/attachments/<dateiname>` haben, wandeln Sie ihn zuvor mit `path.resolve(process.cwd(), 'tmp', 'attachments', '<dateiname>')` in einen absoluten Pfad um und verwenden diesen für Excel-Tools. Bei einer Fehlermeldung wie "Path is not absolute" normalisieren Sie den Pfad automatisch und wiederholen den Aufruf genau einmal.
 *   **Paginierung:** Achten Sie beim Lesen großer Blätter auf das Argument `knownPagingRanges`, um nachfolgende Teile zu lesen.
 *   **Schreiben:** Seien Sie vorsichtig, da Schreibvorgänge Dateien dauerhaft verändern können. Verwenden Sie `newSheet: true`, um ein neues Blatt zu erstellen.
 

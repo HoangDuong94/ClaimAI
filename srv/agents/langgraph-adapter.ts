@@ -1,6 +1,7 @@
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { AzureOpenAiChatClient } from '@sap-ai-sdk/langchain';
+import { OrchestrationClient } from '@sap-ai-sdk/langchain';
 import { MemorySaver } from '@langchain/langgraph-checkpoint';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -132,7 +133,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
                 lastImageDescription = (parsed as any).description as string;
               }
             }
-          } catch {}
+          } catch { }
         }
       }
       this.logger.log('\n---- AGENT STREAM END ----\n');
@@ -214,9 +215,9 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         const blockedM365Tools = enableSendTools
           ? new Set<string>()
           : new Set<string>([
-              'mail.message.reply',
-              'calendar.event.create',
-            ]);
+            'mail.message.reply',
+            'calendar.event.create',
+          ]);
         const filteredTools = manifest.tools.filter((toolDef) => {
           if (blockedM365Tools.has(toolDef.name)) {
             this.logger.log(`⛔️ Hiding Microsoft 365 tool from agent: ${toolDef.name}`);
@@ -354,7 +355,15 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       );
       this.logger.log('Available tools:', allTools.map((tool) => tool.name));
 
-      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5-mini' });
+      // const llm = new AzureOpenAiChatClient({ modelName: 'gpt-5-mini' });
+      const llm = new AzureOpenAiChatClient({ modelName: 'gpt-4.1', temperature: 0 });
+      // const llm = new OrchestrationClient({
+      //   promptTemplating: {
+      //     model: {
+      //       name: 'gpt-4.1'
+      //     }
+      //   }
+      // });
       const checkpointer = new MemorySaver();
 
       this.agentExecutor = createReactAgent({
