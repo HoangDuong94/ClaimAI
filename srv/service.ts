@@ -1136,11 +1136,91 @@ ${safeContent}`;
           console.log('[MCP-UI] email.discard requested via UI action', params);
           return res.json({ status: 'handled', action: toolName });
         }
+        if (toolName === 'calendar.create') {
+          console.log('[MCP-UI] calendar.create requested via UI action', params);
+          const enableSend = ['1', 'true', 'yes', 'on'].includes(String(process.env.ENABLE_M365_SEND || '').trim().toLowerCase());
+
+          const normalizeAttendees = (v: unknown): string[] => {
+            const list: string[] = [];
+            const push = (s: string) => {
+              const trimmed = String(s || '').trim();
+              if (!trimmed) return;
+              // Support "Name <email@domain>" and stray brackets/parentheses
+              const m = trimmed.match(/<([^>]+)>/);
+              let addr = m && m[1] ? m[1] : trimmed;
+              addr = addr.replace(/[()]/g, '');
+              addr = addr.replace(/^"|"$/g, '');
+              addr = addr.replace(/,$/, '');
+              addr = addr.trim();
+              if (addr) list.push(addr);
+            };
+            if (Array.isArray(v)) {
+              v.forEach(x => push(String(x)));
+            } else if (typeof v === 'string') {
+              String(v).split(/[;,]/g).forEach(x => push(x));
+            }
+            return list.filter(Boolean);
+          };
+
+          const subject = (params && typeof params.subject === 'string') ? params.subject : '';
+          const startDateTime = (params && typeof params.startDateTime === 'string') ? params.startDateTime : '';
+          const endDateTime = (params && typeof params.endDateTime === 'string') ? params.endDateTime : '';
+          const timezone = (params && typeof params.timezone === 'string') ? params.timezone : 'UTC';
+          const attendees = normalizeAttendees(params?.attendees);
+          const location = (params && typeof params.location === 'string') ? params.location : undefined;
+          const body = (params && typeof params.body === 'string') ? params.body : '';
+          const contentType = 'Text';
+          const teams = Boolean(params && (params.teams === true || String(params.teams).toLowerCase() === 'true'));
+          const reminderMinutesBeforeStart = typeof params?.reminderMinutesBeforeStart === 'number' ? params.reminderMinutesBeforeStart : undefined;
+
+          if (enableSend) {
+            try {
+              const out = await graph.createCalendarEvent({ subject, body, contentType, startDateTime, endDateTime, timezone, attendees, location, reminderMinutesBeforeStart, teams });
+              const webLink = (out && (out as any).webLink) || null;
+              return res.json({ status: 'created', id: (out as any)?.id, webLink, subject, attendees });
+            } catch (e) {
+              console.error('calendar.create failed:', e);
+              return res.status(500).json({ status: 'error', error: getErrorMessage(e) });
+            }
+          }
+          // Dry run path
+          return res.json({ status: 'handled', action: toolName, subject, attendees, startDateTime, endDateTime, timezone });
+        }
+        if (toolName === 'calendar.discard') {
+          console.log('[MCP-UI] calendar.discard requested via UI action', params);
+          return res.json({ status: 'handled', action: toolName });
+        }
         console.log('[MCP-UI] unhandled tool action', toolName, params);
         return res.json({ status: 'ignored', action: toolName });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return res.status(500).json({ error: msg });
+      }
+    });
+
+    // Serve attachments (images) via URL to avoid embedding base64 in UI resources
+    app.get('/service/claims/ui/attachment', async (req: ClaimsRequest, res: Response) => {
+      try {
+        const fileParam = String((req.query as any).file || '').trim();
+        if (!fileParam) return res.status(400).send('Missing file parameter');
+        await ensureAttachmentDir();
+
+        // Only allow serving files from ATTACHMENTS_DIR or its subfolders
+        const rel = path.normalize(fileParam).replace(/^([/\\])+/, '');
+        const abs = path.resolve(ATTACHMENTS_DIR, rel);
+        if (!isUnder(ATTACHMENTS_DIR, abs)) {
+          return res.status(403).send('Forbidden');
+        }
+        const st = await stat(abs).catch(() => null);
+        if (!st || !st.isFile()) return res.status(404).send('Not Found');
+
+        // Basic caching headers
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        res.setHeader('Content-Type', detectMimeType(abs));
+        return res.sendFile(abs);
+      } catch (e) {
+        console.error('attachment serve failed:', e);
+        return res.status(500).send('Internal Server Error');
       }
     });
 

@@ -12,6 +12,8 @@ import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
 import type { AgentAdapter, AgentCallOptions, AgentCallResult } from './agent-adapter.js';
 import { analyzeImageAttachment } from '../utils/vision.js';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 const isTruthy = (value: string | undefined): boolean => {
   if (!value) return false;
@@ -710,6 +712,157 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
         allTools.push(mailDraftTool, calendarDraftTool);
       }
+
+      // Attachments gallery UI tool (image preview card)
+      const attachmentsGalleryTool = new DynamicStructuredTool({
+        name: 'attachments.gallery.compose',
+        description: 'Erzeugt eine UI-Karte mit Bildvorschau der Anhänge (Dateien werden als Base64 eingebettet).',
+        schema: z.object({
+          directory: z.string().optional().describe('Basisverzeichnis der Anhänge (Standard: tmp/attachments).'),
+          files: z.array(z.string()).optional().describe('Optionale Liste konkreter Dateipfade relativ zum Verzeichnis oder absolut.'),
+          maxItems: z.number().int().min(1).max(48).optional().describe('Maximale Anzahl Bilder (Standard: 12).'),
+          title: z.string().optional().describe('Titel der Karte (Standard: Anhänge – Bilder).'),
+        }),
+        func: async (input) => {
+          const directory = (input.directory && input.directory.trim()) || 'tmp/attachments';
+          const title = (input.title && input.title.trim()) || 'Anhänge – Bilder';
+          const maxItems = Number.isFinite(input.maxItems as number) ? Math.max(1, Math.min(48, Number(input.maxItems))) : 12;
+          const allowedExt = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+          const toAbs = (p0: string) => (path.isAbsolute(p0) ? p0 : path.join(process.cwd(), p0));
+          const baseDir = toAbs(directory);
+
+          const guessMime = (file: string) => {
+            const ext = path.extname(file).toLowerCase();
+            if (ext === '.png') return 'image/png';
+            if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+            if (ext === '.webp') return 'image/webp';
+            if (ext === '.gif') return 'image/gif';
+            return 'application/octet-stream';
+          };
+
+          let candidates: string[] = [];
+          try {
+            if (Array.isArray(input.files) && input.files.length) {
+              candidates = input.files.map((f) => (path.isAbsolute(f) ? f : path.join(baseDir, f)));
+            } else {
+              const entries = await fs.readdir(baseDir, { withFileTypes: true });
+              candidates = entries
+                .filter((e) => e.isFile() && allowedExt.has(path.extname(e.name).toLowerCase()))
+                .map((e) => path.join(baseDir, e.name));
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const ui = createUIResource({
+              uri: `ui://attachments/gallery/${Date.now()}`,
+              content: { type: 'rawHtml', htmlString: `<div style="font-family: Arial, sans-serif; padding:12px; color:#b00020">Fehler beim Lesen der Anhänge: ${msg}</div>` },
+              encoding: 'text',
+              metadata: { title: 'Anhänge – Fehler', 'mcpui.dev/ui-preferred-frame-size': ['100%', '120px'] },
+            });
+            return JSON.stringify({ status: 'error', message: msg, uiResource: ui.resource });
+          }
+
+          const attachmentsRoot = path.resolve(process.cwd(), 'tmp', 'attachments');
+          const images: { name: string; mime: string; rel: string }[] = [];
+          for (const file of candidates.slice(0, maxItems)) {
+            const ext = path.extname(file).toLowerCase();
+            if (!allowedExt.has(ext)) continue;
+            const abs = path.resolve(file);
+            const rel = path.relative(attachmentsRoot, abs);
+            if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+            const mime = guessMime(abs);
+            images.push({ name: path.basename(abs), mime, rel: rel.split(path.sep).join('/') });
+          }
+
+          // Vision descriptions for each image (compact)
+          const descriptions: string[] = [];
+          for (const img of images) {
+            try {
+              const abs = path.resolve(attachmentsRoot, img.rel);
+              const vr = await analyzeImageAttachment(abs, { maxTokens: 120 });
+              descriptions.push(vr?.description ? String(vr.description) : '');
+            } catch (_) {
+              descriptions.push('');
+            }
+          }
+
+          const itemHtml = images
+            .map((img, idx) => {
+              const safeAlt = img.name.replace(/\"/g, '&quot;');
+              const src = `/service/claims/ui/attachment?file=${encodeURIComponent(img.rel)}`;
+              return `<ui5-media-gallery-item data-name=\"${safeAlt}\" data-path=\"${img.rel}\" data-index=\"${idx}\"><img src=\"${src}\" alt=\"${safeAlt}\" loading=\"lazy\" style=\"max-width:100%;height:auto;display:block\" /></ui5-media-gallery-item>`;
+            })
+            .join('\n');
+
+          const emptyHtml = images.length === 0 ? `<div style="padding: 16px; color: var(--sapContent_LabelColor, #556b82);">Keine Bilder gefunden in <code>${directory}</code>.</div>` : '';
+
+          const html = `
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            .card-shell { font-family: var(--sapFontFamily, Arial, sans-serif); font-size: var(--sapFontSize, 14px); color: var(--sapTextColor, #1d2d3e); padding: 0; margin: 0; }
+            ui5-card { width: 100%; box-sizing: border-box; }
+            #captionArea { padding: 6px 2px 8px; color: var(--sapContent_LabelColor, #556b82); font-size: 12px; line-height: 1.35; }
+          </style>
+          <div class="card-shell">
+            <ui5-card id="attCard" accessible-name="Attachments gallery">
+              <div style="padding: 8px 12px; display:flex; align-items:center; gap:8px;">
+                <span style="font-weight:600; color: var(--sapTitleColor, #1d2d3e);">${title}</span>
+                <span style="color: var(--sapContent_LabelColor, #556b82); font-size:12px;">(${images.length})</span>
+              </div>
+              ${images.length ? `<ui5-media-gallery id="gallery" show-all-thumbnails layout="Vertical">${itemHtml}</ui5-media-gallery><div id="captionArea" ></div>` : emptyHtml}
+            </ui5-card>
+            <script type="module">
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+              import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/MediaGallery.js';
+              import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/MediaGalleryItem.js';
+              const descriptions = ${JSON.stringify(descriptions)};
+              const post = (type, payload) => { try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {} };
+              const gallery = document.getElementById('gallery');
+              const captionArea = document.getElementById('captionArea');
+              const updateCaption = (idx) => { try { if (captionArea) captionArea.textContent = (descriptions[idx] || ''); } catch(_) {} };
+              if (descriptions && descriptions.length) updateCaption(0);
+              if (gallery) {
+                gallery.addEventListener('click', (e) => {
+                  const item = e.target?.closest?.('ui5-media-gallery-item');
+                  if (item) {
+                    const name = item.getAttribute('data-name');
+                    const path = item.getAttribute('data-path');
+                    post('tool', { toolName: 'attachment.open', params: { name, path } });
+                    const items = Array.from(gallery.querySelectorAll('ui5-media-gallery-item'));
+                    const idx = items.indexOf(item);
+                    if (idx >= 0) updateCaption(idx);
+                  }
+                });
+                gallery.addEventListener('selection-change', (e) => {
+                  const d = e?.detail || {};
+                  const idx = (typeof d.selectedIndex === 'number') ? d.selectedIndex : (typeof d.itemIndex === 'number' ? d.itemIndex : 0);
+                  updateCaption(idx);
+                });
+              }
+              try {
+                const ro = new ResizeObserver((entries) => {
+                  for (const entry of entries) {
+                    const h = Math.ceil(entry.contentRect.height);
+                    window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+                  }
+                });
+                ro.observe(document.documentElement);
+              } catch (_) {}
+            </script>
+          </div>`;
+
+          const ui = createUIResource({
+            uri: `ui://attachments/gallery/${Date.now()}`,
+            content: { type: 'rawHtml', htmlString: html },
+            encoding: 'text',
+            metadata: { title: 'Anhänge – Galerie', 'mcpui.dev/ui-preferred-frame-size': ['100%', '480px'] },
+          });
+
+          return JSON.stringify({ status: 'ok', count: images.length, uiResource: ui.resource });
+        },
+      });
+      allTools.push(attachmentsGalleryTool);
 
       // Local Vision tool to describe images (aligns with productive service behavior)
       const imageDescribeTool = new DynamicStructuredTool({
