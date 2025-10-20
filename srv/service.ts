@@ -939,25 +939,46 @@ ${safeContent}`;
       }
     });
 
-    // PoC endpoint to render UI5 Web Components inside the MCP-UI iframe
+    // PoC endpoint to render a draft email composer using UI5 Web Components inside the MCP-UI iframe
     app.get('/service/claims/ui/webc', async (_req: ClaimsRequest, res: Response) => {
       try {
         const html = `
           <style>
             html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            .card-shell { font-family: Arial, sans-serif; padding: 0; margin: 0; }
+            .grid { display: grid; grid-template-columns: 88px 1fr; gap: 12px; width: 100%; box-sizing: border-box; }
+            .row { display: contents; }
+            .label { color: #64748b; font-size: 12px; font-weight: 600; align-self: center; text-transform: uppercase; letter-spacing: .4px; padding: 12px 0; }
+            .value { padding: 8px 0; }
+            .divider { grid-column: 1 / -1; height: 1px; background: #e5e7eb; }
+            ui5-card { width: 100%; }
+            ui5-input, ui5-textarea { width: 100%; }
+            .actions { display: flex; gap: 8px; padding-top: 12px; }
           </style>
-          <div style=\"font-family: Arial, sans-serif; padding: 0; margin: 0;\">\n
-            <ui5-card style=\"width:100%;\" id=\"demoCard\" accessible-name=\"Contacts\"> 
-              <ui5-card-header slot=\"header\" title-text=\"Contacts\" subtitle-text=\"Top people\" interactive>
-                <ui5-button slot=\"action\" id=\"viewAllBtn\" design=\"Transparent\">View All</ui5-button>
-              </ui5-card-header>
+          <div class=\"card-shell\">\n
+            <ui5-card id=\"emailCard\" accessible-name=\"Email draft\"> 
+              <div class=\"grid\">
+                <div class=\"label\">VON<\/div>
+                <div class=\"value\" id=\"fromValue\">zj@openai.com<\/div>
+                <div class=\"divider\"><\/div>
 
-              <ui5-list separators=\"None\"> 
-                <ui5-li>Richard Wilson</ui5-li>
-                <ui5-li>Elena Petrova</ui5-li>
-                <ui5-li>John Miller</ui5-li>
-              </ui5-list>
+                <div class=\"label\">AN<\/div>
+                <div class=\"value\"><ui5-input id=\"toInput\" placeholder=\"name@example.com\" required><\/ui5-input><\/div>
+                <div class=\"divider\"><\/div>
+
+                <div class=\"label\">BETREFF<\/div>
+                <div class=\"value\"><ui5-input id=\"subjectInput\" placeholder=\"Email subject\" required><\/ui5-input><\/div>
+                <div class=\"divider\"><\/div>
+
+                <div class=\"label\"><\/div>
+                <div class=\"value\"><ui5-textarea id=\"bodyInput\" rows=\"9\" placeholder=\"Write your message…\"><\/ui5-textarea><\/div>
+              </div>
             </ui5-card>
+
+            <div class=\"actions\">
+              <ui5-button id=\"sendBtn\" design=\"Emphasized\" disabled>Send email<\/ui5-button>
+              <ui5-button id=\"discardBtn\" design=\"Transparent\">Discard<\/ui5-button>
+            </div>
 
             <script type=\"module\">\n
               // Theme & CLDR assets
@@ -965,18 +986,65 @@ ${safeContent}`;
 
               // Components used on the page
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
-              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
-              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/List.js';
-              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/StandardListItem.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Input.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TextArea.js';
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
 
-              // Wire sample interactions
-              const viewAll = document.getElementById('viewAllBtn');
-              viewAll?.addEventListener('click', () => {
-                try {
-                  window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'ui5-card-view-all' } }, '*');
-                } catch (_) {}
+              const q = new URLSearchParams(window.location.search);
+              const from = q.get('from') || 'hoang.duong@purecons.net';
+              const to = q.get('to') || '';
+              const subject = q.get('subject') || '';
+              const body = q.get('body') || '';
+
+              const fromValue = document.getElementById('fromValue');
+              const toInput = document.getElementById('toInput');
+              const subjectInput = document.getElementById('subjectInput');
+              const bodyInput = document.getElementById('bodyInput');
+              const sendBtn = document.getElementById('sendBtn');
+              const discardBtn = document.getElementById('discardBtn');
+
+              fromValue.textContent = from;
+              toInput.value = to;
+              subjectInput.value = subject;
+              bodyInput.value = body;
+
+              const isEmail = (v) => /.+@.+\..+/.test(String(v).trim());
+              const isValid = () => {
+                const okTo = isEmail(toInput.value);
+                const okSub = String(subjectInput.value).trim().length > 0;
+                const okBody = String(bodyInput.value).trim().length > 0;
+                toInput.valueState = okTo ? 'None' : 'Negative';
+                subjectInput.valueState = okSub ? 'None' : 'Negative';
+                bodyInput.valueState = okBody ? 'None' : 'Negative';
+                return okTo && okSub && okBody;
+              };
+
+              const currentDraft = () => ({
+                from: fromValue.textContent || '',
+                to: toInput.value,
+                subject: subjectInput.value,
+                body: bodyInput.value,
               });
+
+              const post = (type, payload) => {
+                try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {}
+              };
+
+              const onChange = () => {
+                sendBtn.disabled = !isValid();
+                post('ui-state-change', currentDraft());
+              };
+
+              toInput.addEventListener('input', onChange);
+              subjectInput.addEventListener('input', onChange);
+              bodyInput.addEventListener('input', onChange);
+              onChange(); // initialize state + button
+
+              sendBtn.addEventListener('click', () => {
+                if (!isValid()) return;
+                post('email.send', currentDraft());
+              });
+              discardBtn.addEventListener('click', () => post('email.discard', { draft: currentDraft() }));
 
               // Auto-resize: notify host about height changes
               try {
@@ -997,8 +1065,8 @@ ${safeContent}`;
           content: { type: 'rawHtml', htmlString: html },
           encoding: 'text',
           metadata: {
-            title: 'UI5 Web Components – PoC',
-            'mcpui.dev/ui-preferred-frame-size': ['100%', '280px']
+            title: 'Draft Email – UI5 Web Components',
+            'mcpui.dev/ui-preferred-frame-size': ['100%', '480px']
           }
         });
         return res.json({ type: 'resource', resource: ui.resource });
