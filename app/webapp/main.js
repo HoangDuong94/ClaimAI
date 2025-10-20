@@ -1579,6 +1579,7 @@ sap.ui.define([
                                 nodes.forEach((node) => {
                                     try {
                                         // Always ensure native-feel: no border/scrollbar + auto-height
+                                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
                                         node.htmlProps = {
                                             autoResizeIframe: { height: true },
                                             style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
