@@ -7,6 +7,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import * as z from 'zod';
 import MarkdownConverter from '../utils/markdown-converter.js';
+import { createUIResource } from '@mcp-ui/server';
 import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
 import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
@@ -149,6 +150,23 @@ export class LangGraphAgentAdapter implements AgentAdapter {
           rawResponse = 'Die Aktion wurde ausgeführt, es wurde jedoch keine Antwort generiert.';
         }
       }
+
+      // Best practice: surface important tool output (e.g., draft-prepared with UIResource)
+      // Embed a Base64 carrier that survives Markdown/linkification.
+      try {
+        const trimmed = (lastToolOutputText || '').trim();
+        if (trimmed.startsWith('{')) {
+          const parsed = JSON.parse(trimmed);
+          if (parsed && parsed.status === 'draft-prepared') {
+            const carrier = JSON.stringify({
+              draft: parsed.draft || null,
+              resource: parsed.uiResource || parsed.resource || null
+            });
+            const b64 = Buffer.from(carrier, 'utf8').toString('base64');
+            rawResponse += `\n\n<!--MCP-UI-RESOURCE:BASE64:${b64}-->\n[MCP-UI-RESOURCE-B64:${b64}]`;
+          }
+        }
+      } catch { /* ignore */ }
       return MarkdownConverter.convertForClaims(rawResponse);
     });
   }
@@ -266,10 +284,127 @@ export class LangGraphAgentAdapter implements AgentAdapter {
               createdAt: new Date().toISOString()
             };
 
+            // Best practice (mcp-ui): include a UIResource in the tool output
+            // We reference the same-origin PoC endpoint and prefill values via query params
+            const to0 = Array.isArray(preview.to) && preview.to.length ? String(preview.to[0]) : 'hoang.duong@pureconsulting.ch';
+            const from0 = 'hoang.duong@purecons.net';
+            const subject0 = preview.subject || '';
+            const body0 = preview.body || '';
+            const jsFrom = JSON.stringify(from0);
+            const jsTo = JSON.stringify(to0);
+            const jsSubject = JSON.stringify(subject0);
+            const jsBody = JSON.stringify(body0);
+            const html = `
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            .card-shell { font-family: Arial, sans-serif; padding: 0; margin: 0; }
+            .grid { display: grid; grid-template-columns: 88px 1fr; gap: 12px; width: 100%; box-sizing: border-box; }
+            .row { display: contents; }
+            .label { color: #64748b; font-size: 12px; font-weight: 600; align-self: center; text-transform: uppercase; letter-spacing: .4px; padding: 12px 0; }
+            .value { padding: 8px 0; }
+            .divider { grid-column: 1 / -1; height: 1px; background: #e5e7eb; }
+            ui5-card { width: 100%; }
+            ui5-input, ui5-textarea { width: 100%; }
+            .actions { display: flex; gap: 8px; padding-top: 12px; }
+          </style>
+          <div class="card-shell">
+            <ui5-card id="emailCard" accessible-name="Email draft">
+              <div class="grid">
+                <div class="label">VON</div>
+                <div class="value" id="fromValue"></div>
+                <div class="divider"></div>
+
+                <div class="label">AN</div>
+                <div class="value"><ui5-input id="toInput" placeholder="name@example.com" required></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label">BETREFF</div>
+                <div class="value"><ui5-input id="subjectInput" placeholder="Email subject" required></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label"></div>
+                <div class="value"><ui5-textarea id="bodyInput" rows="9" placeholder="Write your message…"></ui5-textarea></div>
+              </div>
+            </ui5-card>
+
+            <div class="actions">
+              <ui5-button id="sendBtn" design="Emphasized" disabled>E-Mail senden</ui5-button>
+              <ui5-button id="discardBtn" design="Transparent">Verwerfen</ui5-button>
+            </div>
+
+            <script type="module">
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Input.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TextArea.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
+
+              const from = ${jsFrom};
+              const to = ${jsTo};
+              const subject = ${jsSubject};
+              const body = ${jsBody};
+
+              const fromValue = document.getElementById('fromValue');
+              const toInput = document.getElementById('toInput');
+              const subjectInput = document.getElementById('subjectInput');
+              const bodyInput = document.getElementById('bodyInput');
+              const sendBtn = document.getElementById('sendBtn');
+              const discardBtn = document.getElementById('discardBtn');
+
+              fromValue.textContent = from;
+              toInput.value = to;
+              subjectInput.value = subject;
+              bodyInput.value = body;
+
+              const isEmail = (v) => /.+@.+\..+/.test(String(v).trim());
+              const isValid = () => {
+                const okTo = isEmail(toInput.value);
+                const okSub = String(subjectInput.value).trim().length > 0;
+                const okBody = String(bodyInput.value).trim().length > 0;
+                toInput.valueState = okTo ? 'None' : 'Negative';
+                subjectInput.valueState = okSub ? 'None' : 'Negative';
+                bodyInput.valueState = okBody ? 'None' : 'Negative';
+                return okTo && okSub && okBody;
+              };
+
+              const currentDraft = () => ({ from: fromValue.textContent || '', to: toInput.value, subject: subjectInput.value, body: bodyInput.value });
+              const post = (type, payload) => { try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {} };
+              const onChange = () => { sendBtn.disabled = !isValid(); post('ui-state-change', currentDraft()); };
+              toInput.addEventListener('input', onChange);
+              subjectInput.addEventListener('input', onChange);
+              bodyInput.addEventListener('input', onChange);
+              onChange();
+
+              sendBtn.addEventListener('click', () => { if (!isValid()) return; post('tool', { toolName: 'email.send', params: currentDraft() }); });
+              discardBtn.addEventListener('click', () => post('tool', { toolName: 'email.discard', params: { draft: currentDraft() } }));
+
+              try {
+                const ro = new ResizeObserver((entries) => {
+                  for (const entry of entries) {
+                    const h = Math.ceil(entry.contentRect.height);
+                    window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+                  }
+                });
+                ro.observe(document.documentElement);
+              } catch (_) {}
+            </script>
+          </div>`;
+            const ui = createUIResource({
+              uri: `ui://draft/email/${Date.now()}`,
+              content: { type: 'rawHtml', htmlString: html },
+              encoding: 'text',
+              metadata: {
+                title: 'Draft Email – Composer',
+                'mcpui.dev/ui-preferred-frame-size': ['100%', '520px']
+              }
+            });
+
             return JSON.stringify({
               status: 'draft-prepared',
               channel: 'mail',
-              draft: preview
+              draft: preview,
+              // Provide the resource object for hosts to render directly
+              uiResource: ui.resource
             });
           }
         });

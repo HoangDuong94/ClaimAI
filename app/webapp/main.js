@@ -757,6 +757,132 @@ sap.ui.define([
             }
         }
 
+        // Extract a mail draft JSON from an agent response string
+        extractMailDraftFromResponse(responseText) {
+            try {
+                if (!responseText || typeof responseText !== 'string') return null;
+                const cleaned = responseText
+                    .replace(/```json/gi, '```')
+                    .replace(/```/g, '')
+                    .replace(/<TOOL_OUTPUT>/g, '')
+                    .replace(/<\/TOOL_OUTPUT>/g, '');
+                const matches = cleaned.match(/\{[\s\S]*?\}/g) || [];
+                for (const m of matches) {
+                    try {
+                        const obj = JSON.parse(m);
+                        if (obj && obj.status === 'draft-prepared' && obj.channel === 'mail' && obj.draft) {
+                            return obj.draft;
+                        }
+                    } catch (_) { /* try next */ }
+                }
+                return null;
+            } catch (_) { return null; }
+        }
+
+        // Render a given MCP-UI resource in the chat
+        async renderMcpUiResource(resource) {
+            try {
+                // Normalize relative URL to absolute for uri-list resources (per mcp-ui, http(s) required)
+                try {
+                    if (resource && resource.mimeType === 'text/uri-list') {
+                        let urlText = resource.text || '';
+                        if (typeof urlText === 'string' && urlText.trim().startsWith('/')) {
+                            const origin = window.location.origin || '';
+                            resource = { ...resource, text: origin + urlText };
+                        }
+                    }
+                } catch (_) {}
+                const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
+                const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;border:0;"></ui-resource-renderer>`;
+                this.addMessage("assistant", html);
+                setTimeout(async () => {
+                    try { if (!window.__mcpUiResources) window.__mcpUiResources = {}; window.__mcpUiResources[uiId] = resource; } catch (_) {}
+                    const ensureComponentLoaded = async () => {
+                        if (window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer')) return true;
+                        const tryLoad = (src) => new Promise((res) => { const s = document.createElement('script'); s.type='module'; s.src=src; s.onload=()=>res(true); s.onerror=()=>res(false); document.head.appendChild(s); });
+                        try { if (!window.process || !window.process.env) { await new Promise((resolve)=>{ const shim=document.createElement('script'); shim.src='thirdparty/process-shim.js'; shim.onload=resolve; document.head.appendChild(shim); }); } } catch(_){ }
+                        const ok = await tryLoad('https://unpkg.com/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+                        if (!ok) { await tryLoad('https://cdn.jsdelivr.net/npm/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js'); }
+                        return true;
+                    };
+                    await ensureComponentLoaded();
+                    this.attachMcpUiMutationObserver?.();
+                    this.rebindAllMcpUiRenderers?.();
+                }, 200);
+            } catch (e) {
+                console.error('renderMcpUiResource failed:', e);
+            }
+        }
+
+        // Try to render the draft email composer UI for a detected draft or a provided UIResource
+        async maybeRenderDraftComposerFromResponse(responseText) {
+            try {
+                if (!responseText || typeof responseText !== 'string') return;
+                // 1) Look for Base64 carrier markers that survive Markdown conversion
+                const b64Markers = [];
+                const re1 = /<!--MCP-UI-RESOURCE:BASE64:([A-Za-z0-9+/=]+)-->/g;
+                const re2 = /\[MCP-UI-RESOURCE-B64:([A-Za-z0-9+/=]+)\]/g;
+                let m;
+                while ((m = re1.exec(responseText)) !== null) b64Markers.push(m[1]);
+                while ((m = re2.exec(responseText)) !== null) b64Markers.push(m[1]);
+                for (const b64 of b64Markers) {
+                    try {
+                        // Robust UTF-8 Base64 decode
+                        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                        const json = new TextDecoder('utf-8').decode(bytes);
+                        const obj = JSON.parse(json);
+                        const resObj = obj && (obj.resource || obj.uiResource);
+                        if (resObj && resObj.uri) {
+                            await this.renderMcpUiResource(resObj);
+                            return; // stop after first
+                        }
+                    } catch (_) { /* ignore and continue */ }
+                }
+                // 2) Scan for explicit JSON objects in the HTML text (best-effort)
+                // Find all JSON blocks in the response
+                const cleaned = responseText
+                    .replace(/```json/gi, '```')
+                    .replace(/```/g, '')
+                    .replace(/<TOOL_OUTPUT>/g, '')
+                    .replace(/<\/TOOL_OUTPUT>/g, '');
+                const matches = cleaned.match(/\{[\s\S]*?\}/g) || [];
+                let foundResource = false;
+                for (const m of matches) {
+                    try {
+                        const obj = JSON.parse(m);
+                        // If a UIResource is present directly
+                        if (obj && obj.type === 'resource' && obj.resource && obj.resource.uri) {
+                            await this.renderMcpUiResource(obj.resource);
+                            foundResource = true; break;
+                        }
+                        if (obj && obj.uiResource && obj.uiResource.uri) {
+                            await this.renderMcpUiResource(obj.uiResource);
+                            foundResource = true; break;
+                        }
+                    } catch (_) { /* continue */ }
+                }
+                if (foundResource) return;
+                // Fallback: if only a draft-prepared is present, fetch server PoC UI with query params
+                const draft = this.extractMailDraftFromResponse(responseText);
+                if (!draft) return;
+                const params = new URLSearchParams({
+                    from: 'hoang.duong@purecons.net',
+                    to: (Array.isArray(draft.to) && draft.to[0]) || 'hoang.duong@pureconsulting.ch',
+                    subject: draft.subject || '',
+                    body: draft.body || draft.bodyPreview || ''
+                });
+                const res = await fetch(`/service/claims/ui/webc?${params.toString()}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.resource) {
+                        await this.renderMcpUiResource(data.resource);
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to render draft composer:', e);
+            }
+        }
+
         // Prepare content for chat message rendering depending on type
         prepareMessageContent(type, text) {
             const value = typeof text === "string" ? text : String(text ?? "");
@@ -812,11 +938,13 @@ sap.ui.define([
         }
 
         // Handle AI response
-        handleAIResponse(responseText) {
+        async handleAIResponse(responseText) {
             this.removeThinkingMessage();
             this.addMessage("assistant", responseText);
             this.chatModel.setProperty("/isTyping", false);
             this.chatModel.setProperty("/statusMessage", "");
+            // Attempt to render a draft email composer if a draft-prepared JSON is present
+            try { await this.maybeRenderDraftComposerFromResponse(responseText); } catch (_) {}
         }
 
         // Handle AI errors
@@ -1863,7 +1991,7 @@ sap.ui.define([
         },
 
         // Erweiterte AI Response Handler
-        handleAIResponseEnhanced(responseText) {
+        async handleAIResponseEnhanced(responseText) {
             this.removeThinkingMessage();
 
             // Verwende enhanced addMessage für HTML-Content
@@ -1874,6 +2002,8 @@ sap.ui.define([
 
             // Zusätzliche UI-Updates für HTML-Content
             this.enhanceRenderedHTMLContent();
+            // Try composer as well
+            try { await this.maybeRenderDraftComposerFromResponse(responseText); } catch (_) {}
         },
 
         // Post-Processing für gerenderten HTML-Content
