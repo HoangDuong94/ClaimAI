@@ -159,6 +159,9 @@ export default class ClaimsService extends cds.ApplicationService {
       return notificationSessions.get(userId)!;
     };
 
+    // Lightweight in-memory agent event log (per-user) to carry host-side actions into the next agent prompt
+    // (removed) previous host-event injection logic
+
     const ensureMcpClients = async (): Promise<MCPClients> => {
       if (!mcpInfrastructureEnabled) {
         throw new Error('MCP clients are disabled for the Codex backend.');
@@ -976,7 +979,7 @@ ${safeContent}`;
             </ui5-card>
 
             <div class=\"actions\">
-              <ui5-button id=\"sendBtn\" design=\"Emphasized\" disabled>E-Mail senden<\/ui5-button>
+              <ui5-button id=\"sendBtn\" design=\"Emphasized\">E-Mail senden<\/ui5-button>
               <ui5-button id=\"discardBtn\" design=\"Transparent\">Verwerfen<\/ui5-button>
             </div>
 
@@ -1031,7 +1034,6 @@ ${safeContent}`;
               };
 
               const onChange = () => {
-                sendBtn.disabled = !isValid();
                 post('ui-state-change', currentDraft());
               };
 
@@ -1101,7 +1103,34 @@ ${safeContent}`;
         const { toolName, params } = action;
         if (toolName === 'email.send') {
           console.log('[MCP-UI] email.send requested via UI action', params);
-          return res.json({ status: 'handled', action: toolName });
+          const enableSend = ['1', 'true', 'yes', 'on'].includes(String(process.env.ENABLE_M365_SEND || '').trim().toLowerCase());
+
+          // Normalize recipients
+          const normalizeRecipients = (v: unknown): string[] => {
+            if (Array.isArray(v)) return v.map((x) => String(x || '').trim()).filter(Boolean);
+            if (typeof v === 'string') {
+              const raw = v.trim();
+              if (!raw) return [];
+              return raw.split(/[;,]/g).map((x) => x.trim()).filter(Boolean);
+            }
+            return [];
+          };
+
+          const toList = normalizeRecipients((params && (params.to as unknown)) ?? null);
+          const subject = (params && typeof params.subject === 'string') ? params.subject : '';
+          const bodyText = (params && typeof params.body === 'string') ? params.body : '';
+
+          if (enableSend) {
+            try {
+              const sendRes = await graph.sendMail({ to: toList, subject, body: bodyText, contentType: 'Text' });
+              return res.json({ status: 'sent', to: sendRes.to || toList, subject: sendRes.subject || subject });
+            } catch (e) {
+              console.error('email.send failed:', e);
+              return res.status(500).json({ status: 'error', error: getErrorMessage(e) });
+            }
+          }
+          // Dry run path
+          return res.json({ status: 'handled', action: toolName, to: toList, subject });
         }
         if (toolName === 'email.discard') {
           console.log('[MCP-UI] email.discard requested via UI action', params);
@@ -1128,14 +1157,13 @@ ${safeContent}`;
     }
 
     this.on('callLLM', async (req) => {
-      const { prompt: userPrompt, sessionId } = (req.data ?? {}) as { prompt?: string; sessionId?: string };
-      if (!userPrompt) {
+      const { prompt: rawPrompt, sessionId } = (req.data ?? {}) as { prompt?: string; sessionId?: string };
+      if (!rawPrompt) {
         req.error(400, 'Prompt is required');
         return;
       }
 
       const backend = resolveAgentBackend();
-      console.log(`🚀 Received prompt for ${describeAgentBackend(backend)}:`, userPrompt);
       const adapter = agentAdapters[backend];
       if (!adapter) {
         req.error(500, `No adapter configured for backend ${backend}.`);
@@ -1146,6 +1174,8 @@ ${safeContent}`;
         ? `${userId}:${String(sessionId).trim()}`
         : userId;
       const capContext = buildCapContext(req as CapRequestContext);
+      const userPrompt = rawPrompt;
+      console.log(`🚀 Received prompt for ${describeAgentBackend(backend)}:`, userPrompt);
 
       try {
         const result: any = await adapter.call({

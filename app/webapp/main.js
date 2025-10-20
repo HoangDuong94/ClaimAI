@@ -1055,11 +1055,59 @@ sap.ui.define([
                         const a = evt?.detail || {};
                         if (a.type === 'tool' && a.payload && a.payload.toolName) {
                             const pl = (a && a.toolName) ? a : (a && a.payload && a.payload.toolName ? a.payload : a);
-                            await fetch('/service/claims/ui/action', {
+                            const resp = await fetch('/service/claims/ui/action', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(pl)
                             });
+                            let j = null;
+                            try { j = await resp.json(); } catch(_) {}
+                            // Show a brief confirmation in chat
+                            if (pl.toolName === 'email.send') {
+                                if (j && j.status === 'sent') {
+                                    const list = Array.isArray(j.to) ? j.to.join(', ') : (pl.params && pl.params.to ? String(pl.params.to) : '');
+                                    const subj = j.subject || (pl.params && pl.params.subject) || '';
+                                    this.addMessage('assistant', `E‑Mail gesendet an ${list}${subj ? ` (Betreff: ${subj})` : ''}.`);
+                                    // Option A: Trigger follow-up agent turn to update context deterministically
+                                    try {
+                                        this.chatModel.setProperty('/isTyping', true);
+                                        this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                        const followUp = `Kontext: Die E‑Mail wurde soeben versendet an ${list}${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                        const followRes = await this.callLLMViaOperationBinding(followUp);
+                                        await this.handleAIResponse(followRes);
+                                    } catch (e) {
+                                        console.warn('Follow-up LLM call failed', e);
+                                    }
+                                } else if (j && j.status === 'handled') {
+                                    const subj = (pl.params && pl.params.subject) || '';
+                                    this.addMessage('assistant', `E‑Mail (Testmodus) verarbeitet${subj ? `: ${subj}` : ''}.`);
+                                    try {
+                                        this.chatModel.setProperty('/isTyping', true);
+                                        this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                        const list = (pl.params && pl.params.to) ? String(pl.params.to) : '';
+                                        const followUp = `Kontext: Die E‑Mail wurde soeben (Testmodus) verarbeitet${list ? ` an ${list}` : ''}${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                        const followRes = await this.callLLMViaOperationBinding(followUp);
+                                        await this.handleAIResponse(followRes);
+                                    } catch (e) {
+                                        console.warn('Follow-up LLM call failed', e);
+                                    }
+                                } else if (j && j.status === 'error') {
+                                    this.addMessage('assistant', `E‑Mail-Versand fehlgeschlagen: ${j.error || 'Unbekannter Fehler'}`);
+                                }
+                            } else if (pl.toolName === 'email.discard') {
+                                this.addMessage('assistant', 'Entwurf verworfen.');
+                                try {
+                                    this.chatModel.setProperty('/isTyping', true);
+                                    this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                    const draft = (pl.params && pl.params.draft) || {};
+                                    const subj = draft.subject || '';
+                                    const followUp = `Kontext: Der Entwurf wurde verworfen${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                    const followRes = await this.callLLMViaOperationBinding(followUp);
+                                    await this.handleAIResponse(followRes);
+                                } catch (e) {
+                                    console.warn('Follow-up LLM call failed', e);
+                                }
+                            }
                         }
                     } catch (e) { console.error('MCP-UI action failed', e); }
                 };

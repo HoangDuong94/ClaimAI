@@ -222,12 +222,14 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         this.logger.log('Loading Microsoft 365 tools...');
         const manifest = await clients.m365.listTools();
         const enableSendTools = isTruthy(process.env.ENABLE_M365_SEND);
-        const blockedM365Tools = enableSendTools
-          ? new Set<string>()
-          : new Set<string>([
-            'mail.message.reply',
-            'calendar.event.create',
-          ]);
+        // Always hide reply tools – sending happens via UI flow, not via MCP reply
+        const blockedM365Tools = new Set<string>([
+          'mail.message.reply',
+        ]);
+        // Optionally block calendar sending when not enabled
+        if (!enableSendTools) {
+          blockedM365Tools.add('calendar.event.create');
+        }
         const filteredTools = manifest.tools.filter((toolDef) => {
           if (blockedM365Tools.has(toolDef.name)) {
             this.logger.log(`⛔️ Hiding Microsoft 365 tool from agent: ${toolDef.name}`);
@@ -320,7 +322,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
             </ui5-card>
 
             <div class="actions">
-              <ui5-button id="sendBtn" design="Emphasized" disabled>E-Mail senden</ui5-button>
+              <ui5-button id="sendBtn" design="Emphasized">E-Mail senden</ui5-button>
               <ui5-button id="discardBtn" design="Transparent">Verwerfen</ui5-button>
             </div>
 
@@ -361,7 +363,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
               const currentDraft = () => ({ from: fromValue.textContent || '', to: toInput.value, subject: subjectInput.value, body: bodyInput.value });
               const post = (type, payload) => { try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {} };
-              const onChange = () => { sendBtn.disabled = !isValid(); post('ui-state-change', currentDraft()); };
+              const onChange = () => { /* Keep valueState highlighting; do not disable the button */ post('ui-state-change', currentDraft()); };
               toInput.addEventListener('input', onChange);
               subjectInput.addEventListener('input', onChange);
               bodyInput.addEventListener('input', onChange);

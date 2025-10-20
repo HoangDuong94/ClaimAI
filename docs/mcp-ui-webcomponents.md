@@ -228,3 +228,182 @@ Der Composer sendet standardisierte mcp‑ui Events:
 - `ENABLE_M365_SEND=true` → realer Versand über Microsoft Graph möglich (Guard im Backend‑Endpoint).
 - `CLAIMAI_BASE_URL` → Basis‑URL für absolute Links (z. B. `https://localhost:4004`).
 
+---
+
+## Best Practices (ClaimAI) – vollständige Integration Tool ↔ UI ↔ Backend
+
+Dieser Abschnitt beschreibt den in ClaimAI produktiv genutzten, robusten Integrationsfluss auf Basis der mcp‑ui Empfehlungen. Ziel: Entwürfe kommen als UIResource, Aktionen laufen deterministisch im Backend, und der Chat zeigt eine kurze Bestätigung ohne doppelte Inhalte.
+
+### Architekturüberblick
+
+- Tool (Agent) liefert eine UIResource als strukturiertes Objekt (bevorzugt `rawHtml`).
+- Host (UI5‑App) rendert die Resource per `<ui-resource-renderer>` und fängt `onUIAction` ab.
+- Backend‑Endpoint `/service/claims/ui/action` verarbeitet Button‑Klicks deterministisch.
+- Versand erfolgt nicht via MCP‑Reply‑Tool, sondern über den Backend‑Endpoint (Microsoft Graph). Der Agent muss nicht „nochmals“ senden.
+- Optional: Nach erfolgreichem Versand startet die UI automatisch eine Folge‑Runde im Chat (Option A), um den Kontext zu aktualisieren.
+
+### Server – Tool gibt UIResource zurück (CDS: callLLM → { response, uiResource })
+
+Wir geben der OData‑Action `callLLM` eine strukturierte Antwort: Text + optionale UIResource. Das ist stabiler als Freitext‑Marker.
+
+TypeScript (verkürzt, ClaimAI‑Stil):
+
+```ts
+// srv/service.ts (Ausschnitt)
+this.on('callLLM', async (req) => {
+  const { prompt, sessionId } = req.data || {};
+  const backend = resolveAgentBackend();
+  const adapter = agentAdapters[backend];
+  const userId = getUserId(req);
+  const effectiveUserKey = sessionId ? `${userId}:${String(sessionId).trim()}` : userId;
+  const result = await adapter.call({ prompt, userId: effectiveUserKey, capContext: buildCapContext(req), request: req });
+
+  // Adapter liefert { response, uiResource? }
+  const responseText = typeof result.response === 'string' ? result.response : '';
+  const uiResource = result.uiResource && {
+    uri: result.uiResource.uri,
+    mimeType: result.uiResource.mimeType,
+    text: result.uiResource.text,
+  };
+  return { response: responseText, uiResource };
+});
+```
+
+LangGraph‑Adapter (Tool‑Seite) erzeugt für `draft.mail.compose` die UIResource direkt mit `createUIResource({ content: { type: 'rawHtml', htmlString } })`. Keine Base64‑Marker im Antworttext einbetten.
+
+### UI – UIResource bevorzugt rendern, Text nur als Fallback
+
+ClaimAI zeigt die Card exklusiv, wenn `uiResource` vorhanden ist, und blendet lange Textpassagen aus:
+
+```js
+// Ergebnis der OData-Action
+const result = await callLLMViaOperationBinding(prompt); // => { response, uiResource? }
+if (result.uiResource && result.uiResource.uri) {
+  await renderMcpUiResource(result.uiResource); // bindet <ui-resource-renderer>
+} else {
+  addMessage('assistant', result.response || '');
+}
+```
+
+Renderer‑Binden (vereinfacht):
+
+```js
+const html = `<ui-resource-renderer id="res1" style="display:block;width:100%"></ui-resource-renderer>`;
+addMessage('assistant', html);
+setTimeout(() => {
+  const el = document.getElementById('res1');
+  el.htmlProps = { autoResizeIframe: { height: true }, iframeProps: { scrolling: 'no' } };
+  el.resource = resource;
+  el.addEventListener('onUIAction', handleAction);
+}, 150);
+```
+
+### UI → Backend – onUIAction deterministisch verarbeiten
+
+Wir leiten `tool`‑Aktionen 1:1 an `/service/claims/ui/action` weiter. Der Endpoint akzeptiert sowohl `{ type:'tool', payload:{ toolName, params } }` als auch `{ toolName, params }` – für maximale Kompatibilität.
+
+```js
+async function handleAction(evt) {
+  const a = evt?.detail || {};
+  if (a.type === 'tool' && a.payload?.toolName) {
+    const pl = a.toolName ? a : a.payload; // normalisieren
+    const r = await fetch('/service/claims/ui/action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pl)
+    });
+    const j = await r.json().catch(() => null);
+    if (pl.toolName === 'email.send') {
+      if (j?.status === 'sent') addMessage('assistant', `E‑Mail gesendet an ${arrToList(j.to)}${j.subject ? ` (Betreff: ${j.subject})` : ''}.`);
+      else if (j?.status === 'handled') addMessage('assistant', `E‑Mail (Testmodus) verarbeitet${pl.params?.subject ? `: ${pl.params.subject}` : ''}.`);
+      else if (j?.status === 'error') addMessage('assistant', `E‑Mail‑Versand fehlgeschlagen: ${j.error || 'Unbekannter Fehler'}`);
+
+      // Option A: Nach erfolgreichem Versand eine Folge‑Runde starten, damit der Agent den Kontext kennt.
+      if (j?.status === 'sent' || j?.status === 'handled') {
+        const list = j?.to ? arrToList(j.to) : String(pl.params?.to || '');
+        const subj = j?.subject || pl.params?.subject || '';
+        const followUp = `Kontext: Die E‑Mail wurde soeben versendet an ${list}${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+        const followRes = await callLLMViaOperationBinding(followUp);
+        await handleAIResponse(followRes);
+      }
+    }
+    if (pl.toolName === 'email.discard') {
+      addMessage('assistant', 'Entwurf verworfen.');
+      const subj = pl.params?.draft?.subject || '';
+      const follow = `Kontext: Der Entwurf wurde verworfen${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+      const res2 = await callLLMViaOperationBinding(follow);
+      await handleAIResponse(res2);
+    }
+  }
+}
+```
+
+Hinweis: Dies ist mcp‑ui‑konform. Die UI triggert gezielt die nächste Runde (Option A), statt den Agenten State intern zu modifizieren.
+
+### Backend – deterministische Aktionen (E‑Mail senden/verwerfen)
+
+Der Endpoint verarbeitet Tool‑Namen deterministisch. Versand erfolgt via Microsoft Graph, optional per Feature‑Flag.
+
+```ts
+// srv/service.ts (Ausschnitt)
+app.post('/service/claims/ui/action', express.json(), async (req, res) => {
+  const b = req.body || {};
+  let action = b.toolName ? b : (b.payload?.toolName ? b.payload : null);
+  if (!action?.toolName) return res.status(400).json({ error: 'Invalid payload' });
+  const { toolName, params } = action;
+
+  if (toolName === 'email.send') {
+    const enableSend = process.env.ENABLE_M365_SEND?.trim().toLowerCase() === 'true';
+    const to = normalizeRecipients(params?.to);
+    const subject = String(params?.subject || '');
+    const body = String(params?.body || '');
+    if (enableSend) {
+      try {
+        const out = await graph.sendMail({ to, subject, body, contentType: 'Text' });
+        return res.json({ status: 'sent', to: out.to || to, subject: out.subject || subject });
+      } catch (e) {
+        return res.status(500).json({ status: 'error', error: String(e.message || e) });
+      }
+    }
+    return res.json({ status: 'handled', action: toolName, to, subject });
+  }
+
+  if (toolName === 'email.discard') return res.json({ status: 'handled', action: toolName });
+  return res.json({ status: 'ignored', action: toolName });
+});
+```
+
+Empfängernormalisierung (robuster): Strings wie `"Name <mail@example.com>"` auf reine Adresse extrahieren, Klammern/Kommas entfernen und Semikolon/Komma‑Listen splitten.
+
+### UI5 Composer – Validierung
+
+- E‑Mail‑Feld mit strengerer Validierung (z. B. `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`) und `valueState='Negative'` bei Fehler.
+- Button “Senden” bleibt klickbar; Klick‑Handler prüft `isValid()` und sendet nur, wenn alles ok ist – so bleibt die UX flüssig und Fehler sind sichtbar.
+
+### Warum kein `mail.message.reply` mehr?
+
+- Der Versand erfolgt über die UI (MCP‑UI) deterministisch per Endpoint. Der Agent soll nicht zusätzlich ein Reply‑Tool ausführen. In ClaimAI ist das Reply‑Tool für den Agenten ausgeblendet; der Versandweg ist UI‑gesteuert.
+
+### Testen
+
+1) `npm run watch-app` starten.
+2) Prompt: „Bitte eine Antwort auf die letzte E‑Mail … entwerfen“ → Card erscheint.
+3) “Senden” klicken → Backend antwortet `{ status:'sent'|'handled' }`, Chat zeigt kurze Bestätigung.
+4) UI startet (Option A) eine Folge‑Runde: “Kontext: … gesendet …”. Agent schlägt nächsten Schritt vor.
+5) Bei Fehler `{ status:'error' }` erscheint eine kompakte Fehlermeldung.
+
+### Pitfalls & Lösungen (ClaimAI)
+
+- Ungültige Empfänger (z. B. `user@example.com)`): UI validieren und Backend zusätzlich normalisieren.
+- `text/uri-list` mit relativen Pfaden: immer absolute http(s) oder `rawHtml` verwenden.
+- Doppelter Text im Chat: Wenn `uiResource` vorliegt, keine lange Textvorschau rendern.
+- CSP/CDN: Für Produktion UI5 Web Components lokal hosten; im PoC sind CDN‑Imports ok.
+
+---
+
+## TL;DR – Minimaler Referenz‑Flow (ClaimAI)
+
+1) Tool `draft.mail.compose` → `createUIResource({ type: 'rawHtml' })` zurückgeben.
+2) callLLM liefert `{ response, uiResource }`.
+3) UI rendert `<ui-resource-renderer>` und verarbeitet `onUIAction`.
+4) `/service/claims/ui/action` führt `email.send`/`email.discard` deterministisch aus (Graph / Mock / Dry‑Run).
+5) UI zeigt kurze Bestätigung und (Option A) startet Folge‑Runde, damit der Agent den Kontext kennt.
+
