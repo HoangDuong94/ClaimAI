@@ -795,6 +795,8 @@ sap.ui.define([
             this.chatModel.setProperty("/chatHistory", history);
             this.chatModel.refresh(true);
             this.scrollToBottomEnhanced();
+            // Re-apply MCP-UI renderer bindings after list updates
+            try { setTimeout(() => this.rebindAllMcpUiRenderers(), 0); } catch (_) {}
         }
 
         // Remove last "Thinking..." message
@@ -849,6 +851,7 @@ sap.ui.define([
         // Ensure MCP-UI web component is registered and available
         async ensureMcpUiLibLoaded() {
             if (window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer')) {
+                try { this.attachMcpUiMutationObserver(); } catch (_) {}
                 return;
             }
             // Load process shim if missing
@@ -875,9 +878,10 @@ sap.ui.define([
             if (!ok1) {
                 await tryLoad('https://cdn.jsdelivr.net/npm/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
             }
+            try { this.attachMcpUiMutationObserver(); } catch (_) {}
         }
 
-        // Rebind resources for all MCP-UI renderers that lost their resource due to list re-rendering
+        // Rebind resources and enforce native styling (borderless + auto-height)
         async rebindAllMcpUiRenderers() {
             try {
                 await this.ensureMcpUiLibLoaded();
@@ -886,6 +890,13 @@ sap.ui.define([
                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                 nodes.forEach((node) => {
                     try {
+                        // Always enforce htmlProps to avoid iframe borders/scrollbars
+                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                        node.htmlProps = {
+                            autoResizeIframe: { height: true },
+                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                            iframeProps: { scrolling: 'no' }
+                        };
                         if (!node.resource) {
                             const key = node.getAttribute('data-uiid');
                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
@@ -896,6 +907,28 @@ sap.ui.define([
                         }
                     } catch (_) {}
                 });
+            } catch (_) {}
+        }
+
+        // Observe chat list DOM mutations to re-apply binding/styling after UI5 re-renders
+        attachMcpUiMutationObserver() {
+            try {
+                if (window.__mcpUiObserverAttached) return;
+                const attach = () => {
+                    const target = document.getElementById('chatMessagesList');
+                    if (!target) {
+                        setTimeout(attach, 400);
+                        return;
+                    }
+                    const obs = new MutationObserver(() => {
+                        // Debounce a little to allow batch rendering to complete
+                        clearTimeout(window.__mcpUiRebindTimer);
+                        window.__mcpUiRebindTimer = setTimeout(() => this.rebindAllMcpUiRenderers(), 50);
+                    });
+                    obs.observe(target, { childList: true, subtree: true });
+                    window.__mcpUiObserverAttached = true;
+                };
+                attach();
             } catch (_) {}
         }
 
@@ -1399,8 +1432,8 @@ sap.ui.define([
                     const data = await res.json();
                     const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
 
-                    // Insert the renderer placeholder into the chat (fixed height for visibility)
-                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:180px;height:180px;"></ui-resource-renderer>`;
+                    // Insert the renderer placeholder into the chat (borderless; height auto via ui-size-change)
+                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;border:0;"></ui-resource-renderer>`;
                     chatManager.addMessage("assistant", html);
 
                     // Configure the renderer after UI5 rendered the HTML
@@ -1449,6 +1482,13 @@ sap.ui.define([
                                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                                 nodes.forEach((node) => {
                                     try {
+                                        // Always enforce native look
+                                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                                        node.htmlProps = {
+                                            autoResizeIframe: { height: true },
+                                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                            iframeProps: { scrolling: 'no' }
+                                        };
                                         if (!node.resource) {
                                             const key = node.getAttribute('data-uiid');
                                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
@@ -1465,6 +1505,7 @@ sap.ui.define([
                         if (!(window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer'))) {
                             await ensureComponentLoaded();
                         }
+                        try { chatManager.attachMcpUiMutationObserver(); } catch (_) {}
                         bindAllRenderers();
                         setTimeout(bindAllRenderers, 250);
                     }, 200);
@@ -1559,6 +1600,7 @@ sap.ui.define([
                         if (!(window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer'))) {
                             await ensureComponentLoaded();
                         }
+                        try { chatManager.attachMcpUiMutationObserver(); } catch (_) {}
                         bindAllRenderers();
                         setTimeout(bindAllRenderers, 250);
                     }, 200);
