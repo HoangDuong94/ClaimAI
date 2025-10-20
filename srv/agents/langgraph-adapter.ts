@@ -225,11 +225,9 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         // Always hide reply tools – sending happens via UI flow, not via MCP reply
         const blockedM365Tools = new Set<string>([
           'mail.message.reply',
+          // Always keep calendar send hidden – creation handled deterministically via UI flow
+          'calendar.event.create',
         ]);
-        // Optionally block calendar sending when not enabled
-        if (!enableSendTools) {
-          blockedM365Tools.add('calendar.event.create');
-        }
         const filteredTools = manifest.tools.filter((toolDef) => {
           if (blockedM365Tools.has(toolDef.name)) {
             this.logger.log(`⛔️ Hiding Microsoft 365 tool from agent: ${toolDef.name}`);
@@ -328,6 +326,9 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
             <script type="module">
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              // Load localization assets so calendar types (Gregorian) & CLDR data are available
+              import 'https://esm.sh/@ui5/webcomponents-localization@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents-localization@1.24.0/dist/features/calendar/Gregorian.js';
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Input.js';
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TextArea.js';
@@ -432,10 +433,277 @@ export class LangGraphAgentAdapter implements AgentAdapter {
               createdAt: new Date().toISOString()
             };
 
+            // Build an interactive UI card (UI5 Web Components) for calendar composing
+            const subject0 = preview.subject || '';
+            const start0 = preview.startDateTime || '';
+            const end0 = preview.endDateTime || '';
+            const tz0 = preview.timezone || 'UTC';
+            const attendees0 = Array.isArray(preview.attendees) ? preview.attendees.join(', ') : '';
+            const location0 = preview.location || '';
+            const body0 = preview.body || '';
+            const jsSubject = JSON.stringify(subject0);
+            const jsStart = JSON.stringify(start0);
+            const jsEnd = JSON.stringify(end0);
+            const jsTz = JSON.stringify(tz0);
+            const jsAttendees = JSON.stringify(attendees0);
+            const jsLocation = JSON.stringify(location0);
+            const jsBody = JSON.stringify(body0);
+
+            const html = `
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            .card-shell { font-family: var(--sapFontFamily, Arial, sans-serif); font-size: var(--sapFontSize, 14px); color: var(--sapTextColor, #1d2d3e); padding: 0; margin: 0; }
+            .grid { display: grid; grid-template-columns: 140px 1fr; gap: 12px; width: 100%; box-sizing: border-box; }
+            .row { display: contents; }
+            .label { color: var(--sapContent_LabelColor, #556b82); font-size: 12px; font-weight: 600; align-self: center; text-transform: uppercase; letter-spacing: .4px; padding: 12px 0; }
+            .value { padding: 8px 0; }
+            .divider { grid-column: 1 / -1; height: 1px; background: var(--sapContent_ForegroundBorderColor, #758ca4); opacity: .25; }
+            ui5-card { width: 100%; }
+            ui5-input, ui5-textarea, input[type="date"], input[type="time"] { width: 100%; box-sizing: border-box; }
+            .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+            .actions { display: flex; gap: 8px; padding-top: 12px; }
+
+            /* UI5-like styles for native date/time inputs */
+            .ui5-like-input {
+              background: var(--sapField_Background, #fff);
+              color: var(--sapField_TextColor, var(--sapTextColor, #1d2d3e));
+              border: var(--sapElement_BorderWidth, 1px) solid var(--sapField_BorderColor, var(--sapContent_ForegroundBorderColor, #758ca4));
+              border-radius: var(--sapElement_BorderCornerRadius, .5rem);
+              min-height: var(--sapElement_Height, 2.25rem);
+              height: var(--sapElement_Height, 2.25rem);
+              padding: 0 .625rem;
+              line-height: calc(var(--sapElement_Height, 2.25rem) - 2 * var(--sapElement_BorderWidth, 1px));
+              outline: none;
+              box-shadow: var(--sapContent_Interaction_Shadow, inset 0 0 0 1px rgba(85,107,129,.25));
+              transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
+            }
+            .ui5-like-input::placeholder { color: var(--sapField_PlaceholderTextColor, #6a788e); opacity: .8; }
+            .ui5-like-input:hover {
+              background: var(--sapField_Hover_Background, var(--sapHoverColor, #eaecee));
+              border-color: var(--sapField_Hover_BorderColor, var(--sapContent_ForegroundBorderColor, #758ca4));
+            }
+            .ui5-like-input:focus {
+              border-color: var(--sapContent_FocusColor, #0032a5);
+              box-shadow: 0 0 0 var(--sapContent_FocusWidth, .125rem) var(--sapContent_FocusColor, #0032a5);
+            }
+            .ui5-like-input[aria-invalid="true"] { border-color: var(--sapErrorBorderColor, #e90b0b); }
+            .ui5-like-input:disabled { opacity: var(--sapContent_DisabledOpacity, .4); cursor: not-allowed; }
+          </style>
+          <div class="card-shell">
+            <ui5-card id="calCard" accessible-name="Calendar draft">
+              <div class="grid">
+                <div class="label">BETREFF</div>
+                <div class="value"><ui5-input id="subjectInput" placeholder="Titel des Termins" required></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label">ZEITRAUM</div>
+                <div class="value">
+                  <div class="two-col" style="margin-bottom: 6px;">
+                    <input class="ui5-like-input" id="startDate" type="date" placeholder="Start-Datum (YYYY-MM-DD)" />
+                    <input class="ui5-like-input" id="startTime" type="time" placeholder="Start-Zeit (HH:mm)" />
+                  </div>
+                  <div class="two-col" style="margin-bottom: 6px;">
+                    <input class="ui5-like-input" id="endDate" type="date" placeholder="End-Datum (YYYY-MM-DD)" />
+                    <input class="ui5-like-input" id="endTime" type="time" placeholder="End-Zeit (HH:mm)" />
+                  </div>
+                  <div id="periodPreview" style="color:#475569; font-size: 12px;">–</div>
+                </div>
+                <div class="divider"></div>
+
+                <div class="label">ZEITZONE</div>
+                <div class="value"><ui5-input id="tzInput" placeholder="Europe/Berlin"></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label">TEILNEHMER</div>
+                <div class="value"><ui5-input id="attendeesInput" placeholder="email1@example.com; email2@example.com"></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label">ORT</div>
+                <div class="value"><ui5-input id="locationInput" placeholder="MS Teams / Online"></ui5-input></div>
+                <div class="divider"></div>
+
+                <div class="label">BESCHREIBUNG</div>
+                <div class="value"><ui5-textarea id="bodyInput" rows="6" placeholder="Agenda oder Beschreibung…"></ui5-textarea></div>
+                <div class="divider"></div>
+
+                <div class="label">ONLINE</div>
+                <div class="value"><ui5-switch id="teamsSwitch" accessible-name="Online-Meeting (Teams)"></ui5-switch></div>
+              </div>
+            </ui5-card>
+
+            <div class="actions">
+              <ui5-button id="createBtn" design="Emphasized">Termin erstellen</ui5-button>
+              <ui5-button id="discardBtn" design="Transparent">Verwerfen</ui5-button>
+            </div>
+
+            <script type="module">
+              // Minimal UI5 footprint – no date/time pickers to avoid calendar deps
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Input.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TextArea.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Switch.js';
+
+              const subject = ${jsSubject};
+              const startDT = ${jsStart};
+              const endDT = ${jsEnd};
+              const tz = ${jsTz};
+              const attendees = ${jsAttendees};
+              const location = ${jsLocation};
+              const body = ${jsBody};
+
+              const subjectInput = document.getElementById('subjectInput');
+              const startDate = document.getElementById('startDate');
+              const startTime = document.getElementById('startTime');
+              const endDate = document.getElementById('endDate');
+              const endTime = document.getElementById('endTime');
+              const tzInput = document.getElementById('tzInput');
+              const attendeesInput = document.getElementById('attendeesInput');
+              const locationInput = document.getElementById('locationInput');
+              const bodyInput = document.getElementById('bodyInput');
+              const createBtn = document.getElementById('createBtn');
+              const discardBtn = document.getElementById('discardBtn');
+              const teamsSwitch = document.getElementById('teamsSwitch');
+
+              const splitDate = (dt) => { const s = String(dt||''); const i = s.indexOf('T'); return i>0 ? [s.slice(0,i), s.slice(i+1)] : [s,'']; };
+              const setInitialValues = () => {
+                subjectInput.value = subject;
+                tzInput.value = tz;
+                attendeesInput.value = attendees;
+                locationInput.value = location;
+                bodyInput.value = body;
+                // For UI5 elements, ensure property set occurs after upgrade
+                const [sd, st] = splitDate(startDT);
+                const [ed, et] = splitDate(endDT);
+                try { startDate.value = sd; } catch(_) {}
+                try { startTime.value = (st||'').slice(0,5); } catch(_) {}
+                try { endDate.value = ed; } catch(_) {}
+                try { endTime.value = (et||'').slice(0,5); } catch(_) {}
+                try {
+                  if (teamsSwitch) {
+                    const shouldCheck = /teams/i.test(String(location)) || /online/i.test(String(location));
+                    if (shouldCheck) {
+                      teamsSwitch.checked = true;
+                      teamsSwitch.setAttribute('checked', '');
+                    } else {
+                      teamsSwitch.checked = false;
+                      teamsSwitch.removeAttribute('checked');
+                    }
+                  }
+                } catch(_) {}
+                // Trigger preview + state sync after values applied
+                try { updatePeriodPreview(); } catch(_) {}
+                try { onChange(); } catch(_) {}
+              };
+              const afterNextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+              Promise.all([
+                customElements.whenDefined('ui5-input'),
+                customElements.whenDefined('ui5-textarea'),
+                customElements.whenDefined('ui5-switch'),
+              ])
+              .then(setInitialValues)
+              .catch(() => setTimeout(() => { try { setInitialValues(); } catch(_) {} }, 200));
+
+              const normalizeList = (s) => String(s || '').split(/[;,]/g).map(x => x.trim()).filter(Boolean);
+              const composeIso = (d, t) => {
+                const dd = String(d || '').trim();
+                let tt = String(t || '').trim();
+                if (!dd || !tt) return '';
+                if (/^\d{2}:\d{2}$/.test(tt)) tt = tt + ':00';
+                return dd + 'T' + tt;
+              };
+              const isIso = (v) => {
+                const s = String(v || '').trim();
+                if (!s || s.indexOf('T') < 0) return false;
+                const d = new Date(s);
+                return !isNaN(d.getTime());
+              };
+              const isEmail = (v) => { const s = String(v || '').trim(); return !!s && s.includes('@') && !s.includes(' ') && s.includes('.'); };
+              const validAttendees = (s) => normalizeList(s).every(x => isEmail(x.replace(/[<>()]/g, '').replace(/^.*<([^>]+)>.*/, '$1')));
+              const isValid = () => {
+                const okSub = String(subjectInput.value).trim().length > 0;
+                const okStart = isIso(composeIso(startDate.value, startTime.value));
+                const okEnd = isIso(composeIso(endDate.value, endTime.value));
+                const okTz = String(tzInput.value).trim().length > 0;
+                const okAtt = !attendeesInput.value || validAttendees(attendeesInput.value);
+                const setVS = (el, ok) => { try { if (el && 'valueState' in el) el.valueState = ok ? 'None' : 'Negative'; else if (el && el.toggleAttribute) el.toggleAttribute('aria-invalid', !ok); } catch(_) {} };
+                setVS(subjectInput, okSub);
+                setVS(startDate, okStart);
+                setVS(startTime, okStart);
+                setVS(endDate, okEnd);
+                setVS(endTime, okEnd);
+                setVS(tzInput, okTz);
+                setVS(attendeesInput, okAtt);
+                return okSub && okStart && okEnd && okTz && okAtt;
+              };
+
+              const currentDraft = () => ({
+                subject: subjectInput.value,
+                startDateTime: composeIso(startDate.value, startTime.value),
+                endDateTime: composeIso(endDate.value, endTime.value),
+                timezone: tzInput.value,
+                attendees: normalizeList(attendeesInput.value),
+                location: locationInput.value,
+                body: bodyInput.value,
+                contentType: 'Text',
+                teams: Boolean(teamsSwitch?.checked)
+              });
+              const periodPreviewEl = document.getElementById('periodPreview');
+              const updatePeriodPreview = () => {
+                try {
+                  const s = composeIso(startDate.value, startTime.value).trim();
+                  const e = composeIso(endDate.value, endTime.value).trim();
+                  const tzv = String(tzInput.value || '');
+                  if (!s && !e) { periodPreviewEl.textContent = '–'; return; }
+                  const left = s || '?';
+                  const right = e ? ('–' + e) : '';
+                  const tzs = tzv ? (' (' + tzv + ')') : '';
+                  periodPreviewEl.textContent = left + right + tzs;
+                } catch(_) { periodPreviewEl.textContent = '–'; }
+              };
+              const post = (type, payload) => { try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {} };
+              const onChange = () => { post('ui-state-change', currentDraft()); };
+              subjectInput.addEventListener('input', onChange);
+              startDate.addEventListener('change', () => { onChange(); updatePeriodPreview(); });
+              startTime.addEventListener('change', () => { onChange(); updatePeriodPreview(); });
+              endDate.addEventListener('change', () => { onChange(); updatePeriodPreview(); });
+              endTime.addEventListener('change', () => { onChange(); updatePeriodPreview(); });
+              tzInput.addEventListener('input', () => { onChange(); updatePeriodPreview(); });
+              attendeesInput.addEventListener('input', onChange);
+              locationInput.addEventListener('input', onChange);
+              bodyInput.addEventListener('input', onChange);
+
+              createBtn.addEventListener('click', () => { if (!isValid()) return; post('tool', { toolName: 'calendar.create', params: currentDraft() }); });
+              discardBtn.addEventListener('click', () => post('tool', { toolName: 'calendar.discard', params: { draft: currentDraft() } }));
+
+              try {
+                const ro = new ResizeObserver((entries) => {
+                  for (const entry of entries) {
+                    const h = Math.ceil(entry.contentRect.height);
+                    window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+                  }
+                });
+                ro.observe(document.documentElement);
+              } catch (_) {}
+            </script>
+          </div>`;
+
+            const ui = createUIResource({
+              uri: `ui://draft/calendar/${Date.now()}`,
+              content: { type: 'rawHtml', htmlString: html },
+              encoding: 'text',
+              metadata: {
+                title: 'Draft Calendar – Composer',
+                'mcpui.dev/ui-preferred-frame-size': ['100%', '560px']
+              }
+            });
+
             return JSON.stringify({
               status: 'draft-prepared',
               channel: 'calendar',
-              draft: preview
+              draft: preview,
+              uiResource: ui.resource
             });
           }
         });
