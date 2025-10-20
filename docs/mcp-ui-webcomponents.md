@@ -96,3 +96,135 @@ setTimeout(() => {
 2) Client: `<ui-resource-renderer>` einfügen und `el.resource = …` setzen.
 3) Optional: `onUIAction` an Backend weiterreichen.
 
+---
+
+## Best‑Practice: UIResource direkt aus dem Tool liefern (mcp‑ui)
+
+Statt UI über Freitext zu „signalisieren“, sollte das Tool selbst eine `UIResource` zurückgeben. Host/Frontend rendert diese direkt und verarbeitet UI‑Aktionen via `onUIAction`.
+
+### Server (Tool) – UIResource erzeugen
+
+```ts
+// Beispiel: draft.mail.compose liefert zusätzlich uiResource
+import { createUIResource } from '@mcp-ui/server';
+
+const preview = { to, subject, body, contentType: 'Text', createdAt: new Date().toISOString() };
+
+// Variante A (empfohlen für lokale Assets): rawHtml
+const html = `<!-- hier vollständiges UI5 Composer HTML inkl. <script type="module"> ... -->`;
+const ui = createUIResource({
+  uri: `ui://draft/email/${Date.now()}`,
+  content: { type: 'rawHtml', htmlString: html },
+  encoding: 'text',
+  metadata: { 'mcpui.dev/ui-preferred-frame-size': ['100%', '520px'] }
+});
+
+// Variante B (nur wenn absoluter http(s) Link vorliegt): externalUrl
+// ACHTUNG: Für mimeType 'text/uri-list' muss die URL absolut sein – relative Pfade schlagen im Renderer fehl!
+// const ui = createUIResource({
+//   uri: `ui://draft/email/${Date.now()}`,
+//   content: { type: 'externalUrl', iframeUrl: `https://example.com/service/claims/ui/webc?to=...` },
+//   encoding: 'text'
+// });
+
+return JSON.stringify({ status: 'draft-prepared', channel: 'mail', draft: preview, uiResource: ui.resource });
+```
+
+### Client – UIResource aus Agenten‑Antwort rendern
+
+```js
+// 1) Antworttext anzeigen (wie bisher)
+chatManager.addMessage('assistant', responseText);
+
+// 2) UIResource extrahieren und rendern (direkt)
+const tryRenderResource = async (responseText) => {
+  // a) Robuste Marker‑Erkennung (falls Freitext verändert wurde)
+  const re = /\[MCP-UI-RESOURCE-B64:([A-Za-z0-9+/=]+)\]/g; // oder HTML‑Kommentar‑Marker
+  let m;
+  while ((m = re.exec(responseText)) !== null) {
+    const json = new TextDecoder('utf-8').decode(Uint8Array.from(atob(m[1]), c => c.charCodeAt(0)));
+    const obj = JSON.parse(json);
+    const res = obj.resource || obj.uiResource;
+    if (res) return render(res);
+  }
+  // b) Direkte JSON‑Objekte als Fallback scannen
+  // ... (optional)
+};
+
+async function render(resource) {
+  // uri-list: relative → absolut normalisieren
+  if (resource.mimeType === 'text/uri-list' && /^\//.test(resource.text || '')) {
+    resource = { ...resource, text: window.location.origin + resource.text };
+  }
+  const uiId = `mcpui_${Date.now()}`;
+  chatManager.addMessage('assistant', `<ui-resource-renderer data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;border:0;"></ui-resource-renderer>`);
+  setTimeout(() => {
+    const el = document.querySelector(`ui-resource-renderer[data-uiid="${uiId}"]`);
+    if (!el) return;
+    el.htmlProps = { autoResizeIframe: { height: true }, iframeProps: { scrolling: 'no' } };
+    el.resource = resource;
+    el.addEventListener('onUIAction', async (evt) => {
+      const a = evt.detail;
+      if (a?.type === 'tool' && a.payload?.toolName) {
+        await fetch('/service/claims/ui/action', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolName: a.payload.toolName, params: a.payload.params })
+        });
+      }
+    });
+  }, 150);
+}
+```
+
+### Backend – UI‑Aktionen empfangen
+
+```ts
+// srv/service.ts
+app.post('/service/claims/ui/action', express.json(), async (req, res) => {
+  const b = req.body || {};
+  const action = b.toolName ? b : (b.payload && b.payload.toolName ? b.payload : null);
+  if (!action?.toolName) return res.status(400).json({ error: 'Invalid payload' });
+  if (action.toolName === 'email.send') {
+    // Optional realer Versand (Feature‑Flag)
+    // if (process.env.ENABLE_M365_SEND === 'true') await graph.sendMail({ to, subject, body, contentType: 'Text' });
+    return res.json({ status: 'handled' });
+  }
+  if (action.toolName === 'email.discard') return res.json({ status: 'handled' });
+  res.json({ status: 'ignored' });
+});
+```
+
+## UI5 Composer (Auszug)
+
+Der Composer sendet standardisierte mcp‑ui Events:
+
+```html
+<ui5-button id="sendBtn" design="Emphasized">E‑Mail senden</ui5-button>
+<ui5-button id="discardBtn" design="Transparent">Verwerfen</ui5-button>
+<script type="module">
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Input.js';
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TextArea.js';
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
+  const currentDraft = () => ({ from, to: toInput.value, subject: subjectInput.value, body: bodyInput.value });
+  sendBtn.addEventListener('click', () => window.parent.postMessage({ type: 'tool', payload: { toolName: 'email.send', params: currentDraft() } }, '*'));
+  discardBtn.addEventListener('click', () => window.parent.postMessage({ type: 'tool', payload: { toolName: 'email.discard', params: { draft: currentDraft() } } }, '*'));
+  new ResizeObserver(es => es.forEach(e => window.parent.postMessage({ type: 'ui-size-change', payload: { height: Math.ceil(e.contentRect.height) } }, '*'))).observe(document.documentElement);
+</script>
+```
+
+## Wichtige Stolpersteine & Lösungen
+
+- URL‑Fehler bei `text/uri-list`:
+  - Ursache: relative Pfade → „Failed to construct 'URL'“. Lösung: immer absolute http(s)‑URL übergeben oder stattdessen `text/html` (rawHtml) verwenden.
+- Freitext‑Parsing von JSON:
+  - Markdown/Linkifier zerstören JSON (z. B. `mailto:`). Best‑Practice ist eine separate UIResource im Tool‑Ergebnis. Falls nicht möglich: Base64‑Marker als Kommentar/Tag mitschicken und im Client dekodieren.
+- „process is not defined“:
+  - Vor Laden des Web Components ein kleines `process.env`‑Shim injizieren.
+- Flackern/„Resource not provided“:
+  - Renderer einmalig konfigurieren (`htmlProps` setzen, `dataset`‑Flag) und Ressourcen per ID zwischenspeichern; mit MutationObserver bei UI‑Re‑Renders neu binden.
+
+## Feature‑Flags & Umgebungsvariablen
+
+- `ENABLE_M365_SEND=true` → realer Versand über Microsoft Graph möglich (Guard im Backend‑Endpoint).
+- `CLAIMAI_BASE_URL` → Basis‑URL für absolute Links (z. B. `https://localhost:4004`).
+
