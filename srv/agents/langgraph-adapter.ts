@@ -1007,7 +1007,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
   <script type="module">
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
-    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+    import 'https://cdn.jsdelivr.net/npm/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Tab.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Table.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TableRow.js';
@@ -1128,6 +1128,183 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         }
       });
       allTools.push(excelPreviewTool);
+
+      // Claims report card tool: renders a Chart.js visualization inside a UI5 Card
+      const claimsReportCardTool = new DynamicStructuredTool({
+        name: 'claims.report.card.compose',
+        description:
+          'Erzeugt eine UI5-Card mit einem Chart.js-Report auf Basis einer CAP-Entität (z. B. kfz.claims.Claims).',
+        schema: z.object({
+          prompt: z.string().min(1).describe('Freitext-Beschreibung der gewünschten Visualisierung.'),
+          entity: z.string().optional().describe('CAP-Entität, Standard: kfz.claims.Claims.'),
+          columns: z.array(z.string()).optional().describe('Liste von Spalten. Erste Textspalte wird als Label verwendet, übrige als Datensätze.'),
+          chartType: z.enum(['bar', 'line', 'pie']).optional().describe('Diagrammtyp (Standard: bar).'),
+          where: z.record(z.any()).optional().describe('Optionale Filterbedingung für die Abfrage.'),
+          limit: z.number().int().min(1).max(500).optional().describe('Limit der Zeilen (Standard: 200).'),
+          title: z.string().optional().describe('Titel der Karte.'),
+          subtitle: z.string().optional().describe('Untertitel der Karte.'),
+        }),
+        func: async (input) => {
+          const entity = (input.entity && input.entity.trim()) || 'kfz.claims.Claims';
+          const chartType = (input.chartType as string) || 'bar';
+          const limit = Number.isFinite(input.limit as number) ? Number(input.limit) : 200;
+          const requestedCols = Array.isArray(input.columns) && input.columns.length ? input.columns : ['fraud_score', 'estimated_cost', 'description_short'];
+
+          // Prefer description_short as label, then any *description* field, else fallback
+          const preferLabelCandidates = ['description_short', 'short_description', 'description'];
+          let labelField = requestedCols.find(c => preferLabelCandidates.includes(c))
+            || requestedCols.find(c => /description/i.test(c))
+            || 'description_short';
+          if (!requestedCols.includes(labelField)) {
+            requestedCols.push(labelField);
+          }
+          // Value fields = all except label. Fallback to fraud_score + estimated_cost
+          let valueFields = requestedCols.filter(c => c !== labelField);
+          if (!valueFields.length) {
+            valueFields = ['fraud_score', 'estimated_cost'];
+          }
+          const columns = Array.from(new Set([labelField, ...valueFields]));
+
+          // Read data via CAP MCP (active instances)
+          const args: any = { entity, columns, limit, draft: 'active' };
+          if (input.where && typeof input.where === 'object') {
+            args.where = input.where;
+          }
+          const readOut = await clients.cap.callTool({ name: 'cap.cqn.read', arguments: args });
+          // Coerce MCP tool output into JSON and extract rows
+          const toText = (out: any): string => {
+            if (!out) return '';
+            const s = (out as any).structuredContent;
+            if (typeof s === 'string') return s;
+            if (Array.isArray(s)) return s.map((p) => (typeof p === 'string' ? p : (p?.text || ''))).join('\n');
+            const c = (out as any).content;
+            if (typeof c === 'string') return c;
+            if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : (p?.text || ''))).join('\n');
+            if (typeof out === 'string') return out;
+            if ((out as any)?.text) return String((out as any).text);
+            try { return JSON.stringify(out); } catch { return String(out); }
+          };
+          const coerceRows = (out: any): any[] => {
+            if (!out) return [];
+            if (Array.isArray((out as any).rows)) return (out as any).rows as any[];
+            if (Array.isArray(out)) return out as any[];
+            // try parse stringified JSON in content/text
+            const txt = toText(out).trim();
+            if (txt) {
+              try {
+                const j = JSON.parse(txt);
+                if (Array.isArray((j as any).rows)) return (j as any).rows as any[];
+                if (Array.isArray(j)) return j as any[];
+              } catch { /* not JSON */ }
+            }
+            return [];
+          };
+          const rows: any[] = coerceRows(readOut);
+
+          const labels = rows.map(r => String((r && r[labelField]) ?? ''));
+          const series = valueFields.map((vf) => ({
+            field: vf,
+            data: rows.map(r => {
+              const v = (r && r[vf]) as any;
+              const n = typeof v === 'number' ? v : parseFloat(String(v ?? '0').replace(',', '.'));
+              return Number.isFinite(n) ? n : 0;
+            }),
+          }));
+
+          const palette = [
+            ['rgba(54, 162, 235, 0.7)', 'rgba(54, 162, 235, 1)'],
+            ['rgba(255, 99, 132, 0.7)', 'rgba(255, 99, 132, 1)'],
+            ['rgba(255, 206, 86, 0.7)', 'rgba(255, 206, 86, 1)'],
+            ['rgba(75, 192, 192, 0.7)', 'rgba(75, 192, 192, 1)'],
+            ['rgba(153, 102, 255, 0.7)', 'rgba(153, 102, 255, 1)'],
+            ['rgba(255, 159, 64, 0.7)', 'rgba(255, 159, 64, 1)'],
+          ];
+
+          const jsDatasets = series.map((s, i) => {
+            const [bg, border] = palette[i % palette.length];
+            return {
+              label: s.field,
+              data: s.data,
+              backgroundColor: bg,
+              borderColor: border,
+              borderWidth: 1,
+            };
+          });
+
+          const datasetsForType = chartType === 'pie' && jsDatasets.length > 1 ? [jsDatasets[0]] : jsDatasets;
+
+          const cardTitle = (input.title && input.title.trim()) || 'Schadenfälle – Report';
+          const cardSubtitle = (input.subtitle && input.subtitle.trim()) || (input.prompt || '').slice(0, 120);
+
+          const html = `
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            .card-shell { font-family: Arial, sans-serif; padding: 0; margin: 0; }
+            ui5-card { width: 100%; }
+            #chartWrap { padding: 8px 12px 16px; }
+            #chart { width: 100%; height: 360px; }
+          </style>
+          <div class="card-shell">
+            <ui5-card>
+              <ui5-card-header slot="header" title-text="${cardTitle.replace(/\"/g, '&quot;')}" subtitle-text="${(cardSubtitle || '').replace(/\"/g, '&quot;')}"></ui5-card-header>
+              <div id="chartWrap">
+                <canvas id="chart"></canvas>
+              </div>
+            </ui5-card>
+
+            <script>
+              // Minimal process shim to avoid "process is not defined" in UI5 ESM bundles
+              (function(){ try { if (!window.process) { window.process = { env: {} }; } } catch(e) {} })();
+            </script>
+            <script type="module">
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+              import 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+
+              const labels = ${JSON.stringify(labels)};
+              const datasets = ${JSON.stringify(datasetsForType)};
+              const type = ${JSON.stringify(chartType)};
+
+              const ctx = document.getElementById('chart').getContext('2d');
+              const config = {
+                type,
+                data: { labels, datasets },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+                  scales: (type === 'bar' || type === 'line') ? {
+                    x: { ticks: { autoSkip: true, maxRotation: 0, minRotation: 0 } },
+                    y: { beginAtZero: true },
+                  } : undefined,
+                }
+              };
+              new window.Chart(ctx, config);
+
+              try {
+                const ro = new ResizeObserver((entries) => {
+                  for (const entry of entries) {
+                    const h = Math.ceil(entry.contentRect.height);
+                    window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+                  }
+                });
+                ro.observe(document.documentElement);
+              } catch (_) {}
+            </script>
+          </div>`;
+
+          const ui = createUIResource({
+            uri: `ui://claims/report/${Date.now()}`,
+            content: { type: 'rawHtml', htmlString: html },
+            encoding: 'text',
+            metadata: { title: cardTitle, 'mcpui.dev/ui-preferred-frame-size': ['100%', '460px'] },
+          });
+
+          return JSON.stringify({ status: 'ok', uiResource: ui.resource });
+        },
+      });
+      allTools.push(claimsReportCardTool);
 
       // Local Vision tool to describe images (aligns with productive service behavior)
       const imageDescribeTool = new DynamicStructuredTool({

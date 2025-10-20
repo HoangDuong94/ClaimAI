@@ -169,8 +169,42 @@ Dieser MCP‑Tool erlaubt dem Agenten, eine lokale Datei (Server‑Pfad) als Anh
 
 Wenn der Benutzer eine "Analyse", einen "Bericht" oder eine "Visualisierung" anfordert, folgen Sie diesem Prozess:
 1.  **Daten abfragen:** Rufen Sie die erforderlichen Daten mit `cap.cqn.read` oder einer schreibgeschützten SQL-Abfrage ab. Klären Sie bei unklaren Anfragen zunächst die relevanten Entitäten und Spalten.
-2.  **HTML-Datei generieren:** Erstellen Sie eine einzelne, in sich geschlossene HTML-Datei.
-    *   **Bibliothek:** Verwenden Sie eine JavaScript-Bibliothek wie **Chart.js** über einen CDN-Link (`<script src="..."></script>`).
-    *   **Inhalt:** Fügen Sie eine Überschrift (`<h1>`), ein `<canvas>`-Element für das Diagramm und einen `<script>`-Block ein, der die Daten speichert und das Diagramm rendert.
-3.  **Datei speichern:** Erstellen Sie die Datei mit `write_file`.
-4.  **Bericht erstatten:** Informieren Sie den Benutzer über den Abschluss und geben Sie den **vollständigen Pfad** zur generierten HTML-Datei an.
+2.  **MCP‑UI Resource erzeugen (bevorzugt):** Erstellen Sie eine UI‑Resource mit einer **UI5 Card** (`ui5-card`) und einem **Chart.js**‑Diagramm und betten Sie diese in die Assistentenantwort ein.
+    *   Verwenden Sie das folgende Trägermuster im Text, damit der Host die UI automatisch rendert:
+        - `<!--MCP-UI-RESOURCE:BASE64:<BASE64(JSON)>-->` oder `[MCP-UI-RESOURCE-B64:<BASE64(JSON)>]`
+        - JSON‑Form: `{ "uiResource": { "uri": "ui://claims/report/<ts>", "mimeType": "text/html", "text": "<!DOCTYPE html>..." } }`
+    *   HTML‑Inhalt (vereinfacht):
+        - `@ui5/webcomponents` (Card + CardHeader) via ESM CDN importieren
+        - `Chart.js` via CDN importieren
+        - `<canvas id="chart">` rendern; Labels/Datasets aus Abfragewerten befüllen
+        - `ResizeObserver` sendet `ui-size-change` an `window.parent` für Auto‑Höhe
+    *   Beispiel‑Komponentenimporte:
+        ```html
+        <script type="module">
+          import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+          import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+          import 'https://cdn.jsdelivr.net/npm/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+          import 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+          // ... Chart initialisieren ...
+        </script>
+        ```
+3.  **Fallback (Datei):** Falls das Rendern im Host nicht möglich ist, erstellen Sie eine einzelne HTML‑Datei mit `write_file` unter `tmp/attachments/*.html` und geben Sie den Dateipfad aus.
+4.  **Status berichten:** Kurze, prägnante Bestätigung (Diagrammtyp, Felder, Anzahl Zeilen) und ggf. den UI‑Träger oder Dateipfad angeben.
+
+##### Hinweise zur UI‑Resource (WICHTIG)
+
+- Nutzen Sie `mimeType: "text/html"` und legen Sie das gesamte HTML in `text` ab.
+- Für **Balkendiagramm** zu Schadenfällen (kfz.claims.Claims):
+  - Labels: `description_short`
+  - Datasets: `fraud_score` und `estimated_cost`
+  - Query über `cap.cqn.read` mit `entity: "kfz.claims.Claims"`, `columns: ["fraud_score","estimated_cost","description_short"]`, `limit: 200`, `draft: "active"`.
+- Beispiel‑JSON‑Wrapper (schematisch):
+  ```json
+  {
+    "uiResource": {
+      "uri": "ui://claims/report/1699999999999",
+      "mimeType": "text/html",
+      "text": "<!DOCTYPE html><html>...Chart.js + ui5-card...</html>"
+    }
+  }
+  ```

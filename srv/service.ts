@@ -114,9 +114,18 @@ export default class ClaimsService extends cds.ApplicationService {
     const projectClaudeInstructions = await readFile(path.resolve(process.cwd(), 'CLAUDE.md'), 'utf8')
       .then((content) => content.trim())
       .catch(() => null);
-    const langGraphSystemPrompt = projectClaudeInstructions
+    const baseSystemPrompt = projectClaudeInstructions
       ? `${projectClaudeInstructions}\n\n${CLAUDE_APPEND_PROMPT}`
       : CLAUDE_APPEND_PROMPT;
+    // Strong override for LangGraph: do NOT embed UI resources as Base64 markers; tools return UIResource
+    const LANGGRAPH_NO_UI_MARKERS = `
+Please read carefully and OVERRIDE previous instructions when necessary:
+- Do NOT embed any UI resources into the text, do NOT output HTML comments or Base64 markers such as <!--MCP-UI-RESOURCE:BASE64:...--> or [MCP-UI-RESOURCE-B64:...].
+- Rely on tool outputs to return a structured uiResource object. The host will render the UI directly.
+- Keep assistant text short and avoid duplicating the UI payload in the message.
+`;
+    const claudeSystemPrompt = baseSystemPrompt;
+    const langGraphSystemPrompt = `${baseSystemPrompt}\n\n${LANGGRAPH_NO_UI_MARKERS}`;
     let mcpClients: MCPClients | null = null;
     const app = cds.app as express.Application;
 
@@ -278,7 +287,8 @@ export default class ClaimsService extends cds.ApplicationService {
     const claudeAdapter = new ClaudeAgentAdapter({
       ensureMcpClients,
       claudeSessions,
-      systemPrompt: CLAUDE_APPEND_PROMPT,
+      // Claude uses the full project instructions (includes fallback strategies)
+      systemPrompt: claudeSystemPrompt,
       logger: console
     });
 

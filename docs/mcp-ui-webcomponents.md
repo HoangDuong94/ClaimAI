@@ -21,8 +21,8 @@ app.get('/service/claims/ui/webc', async (_req, res) => {
       <ui5-button id="webcBtn" design="Emphasized">UI5 Button</ui5-button>
       <span id="webcOut" style="margin-left:8px;"></span>
       <script type="module">
-        import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
-        import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+  import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
         const btn = document.getElementById('webcBtn');
         const out = document.getElementById('webcOut');
         btn?.addEventListener('click', () => {
@@ -407,3 +407,43 @@ Empfängernormalisierung (robuster): Strings wie `"Name <mail@example.com>"` auf
 4) `/service/claims/ui/action` führt `email.send`/`email.discard` deterministisch aus (Graph / Mock / Dry‑Run).
 5) UI zeigt kurze Bestätigung und (Option A) startet Folge‑Runde, damit der Agent den Kontext kennt.
 
+## Calendar Compose (analog zur E‑Mail)
+
+- Tool: `draft.calendar.compose` liefert zusätzlich eine `uiResource` (rawHtml) für einen Termin‑Composer mit `ui5-datetime-picker`, `ui5-input` (Attendees als Komma/Semikolon‑Liste), optional `ui5-switch` für Teams.
+- UI‑Aktionen:
+  - `calendar.create` → Backend legt Termin via Microsoft Graph an (Feature‑Flag `ENABLE_M365_SEND`), Rückgabe `{ status:'created', webLink }` oder im Testmodus `{ status:'handled' }`.
+  - `calendar.discard` → Backend `{ status:'handled' }`.
+- Frontend: zeigt kurze Bestätigung (Betreff, Zeitraum, Teilnehmer, Link) und triggert (Option A) eine Folge‑Runde: „Kontext: Der Termin wurde erstellt …“.
+- Agent: `calendar.event.create` ist ausgeblendet; Erstellung läuft deterministisch über UI.
+
+Beispiel Aktion aus dem Iframe:
+
+```html
+<ui5-button id="createBtn" design="Emphasized">Termin erstellen</ui5-button>
+<script type="module">
+  const params = { subject, startDateTime, endDateTime, timezone, attendees: ['a@b.ch'], location, body, contentType: 'Text', teams: true };
+  createBtn.addEventListener('click', () => window.parent.postMessage({ type: 'tool', payload: { toolName: 'calendar.create', params } }, '*'));
+  // Verwerfen:
+  // window.parent.postMessage({ type: 'tool', payload: { toolName: 'calendar.discard', params: { draft: params } } }, '*')
+</script>
+```
+
+## Claims Report Card (Chart.js in UI5 Card)
+
+- Tool: `claims.report.card.compose` erzeugt eine `UIResource` mit einer `ui5-card`, in der ein Chart.js‑Diagramm angezeigt wird.
+- Parameter:
+  - `prompt`: Beschreibung der gewünschten Visualisierung (z. B. „Balkendiagramm Betrugsindikator vs. Schadenbetrag“).
+  - `entity`: CAP‑Entität (Standard: `kfz.claims.Claims`).
+  - `columns`: Spaltenliste. Erste Textspalte wird als Label genutzt, restliche als numerische Datensätze. Standard: `["fraud_score","estimated_cost","description_short"]`.
+  - `chartType`: `bar|line|pie` (Standard: `bar`).
+  - `limit`: max. Zeilen (Standard: 200), `where`: optionales Filterobjekt.
+  - `title`, `subtitle`: Überschriften für den Card‑Header.
+- Datenzugriff: via MCP `cap.cqn.read` mit `draft: "active"`.
+- Rendering: `@ui5/webcomponents` (`Card`,`CardHeader`) + `Chart.js@4` per CDN (PoC); in Produktion lokal bundeln.
+- Iframe‑Integration: Auto‑Resize via `ResizeObserver` und `ui-size-change` Message.
+
+Beispiel‑Prompt:
+
+> „Kannst du mir bitte visuell einen Balkendiagramm erstellen zu allen Schadenfälle, wo wir den Betrugsindikator und der Schadenbetrag und die Kurzbeschreibung sehen“
+
+Ergebnis: Eine UI‑Card mit einem Balkendiagramm, Labels = `description_short`, Datensätze = `fraud_score` und `estimated_cost`.

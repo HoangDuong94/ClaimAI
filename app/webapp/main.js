@@ -1107,6 +1107,55 @@ sap.ui.define([
                                 } catch (e) {
                                     console.warn('Follow-up LLM call failed', e);
                                 }
+                            } else if (pl.toolName === 'calendar.create') {
+                                const subj = (pl.params && pl.params.subject) || (j && j.subject) || '';
+                                const start = (pl.params && pl.params.startDateTime) || '';
+                                const end = (pl.params && pl.params.endDateTime) || '';
+                                const tz = (pl.params && pl.params.timezone) || '';
+                                const loc = (pl.params && pl.params.location) || '';
+                                const attendees = (j && Array.isArray(j.attendees)) ? j.attendees : (Array.isArray(pl.params && pl.params.attendees) ? pl.params.attendees : []);
+                                const list = Array.isArray(attendees) ? attendees.join(', ') : '';
+                                if (j && j.status === 'created') {
+                                    const link = j.webLink || '';
+                                    const line = `Termin erstellt${subj ? `: ${subj}` : ''}${start && end ? ` • ${start}–${end}${tz ? ` (${tz})` : ''}` : ''}${loc ? ` @ ${loc}` : ''}${list ? ` • Teilnehmer: ${list}` : ''}.`;
+                                    this.addMessage('assistant', line + (link ? `\n${link}` : ''));
+                                    try {
+                                        this.chatModel.setProperty('/isTyping', true);
+                                        this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                        const followUp = `Kontext: Der Termin wurde soeben erstellt${subj ? ` (Betreff: ${subj})` : ''}${start && end ? `, ${start}–${end}${tz ? ` (${tz})` : ''}` : ''}${list ? `, Teilnehmer: ${list}` : ''}${loc ? `, Ort: ${loc}` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                        const followRes = await this.callLLMViaOperationBinding(followUp);
+                                        await this.handleAIResponse(followRes);
+                                    } catch (e) {
+                                        console.warn('Follow-up LLM call failed', e);
+                                    }
+                                } else if (j && j.status === 'handled') {
+                                    const line = `Termin (Testmodus) verarbeitet${subj ? `: ${subj}` : ''}${start && end ? ` • ${start}–${end}${tz ? ` (${tz})` : ''}` : ''}${loc ? ` @ ${loc}` : ''}${list ? ` • Teilnehmer: ${list}` : ''}.`;
+                                    this.addMessage('assistant', line);
+                                    try {
+                                        this.chatModel.setProperty('/isTyping', true);
+                                        this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                        const followUp = `Kontext: Der Termin wurde soeben (Testmodus) verarbeitet${subj ? ` (Betreff: ${subj})` : ''}${start && end ? `, ${start}–${end}${tz ? ` (${tz})` : ''}` : ''}${list ? `, Teilnehmer: ${list}` : ''}${loc ? `, Ort: ${loc}` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                        const followRes = await this.callLLMViaOperationBinding(followUp);
+                                        await this.handleAIResponse(followRes);
+                                    } catch (e) {
+                                        console.warn('Follow-up LLM call failed', e);
+                                    }
+                                } else if (j && j.status === 'error') {
+                                    this.addMessage('assistant', `Termin-Erstellung fehlgeschlagen: ${j.error || 'Unbekannter Fehler'}`);
+                                }
+                            } else if (pl.toolName === 'calendar.discard') {
+                                this.addMessage('assistant', 'Termin-Entwurf verworfen.');
+                                try {
+                                    this.chatModel.setProperty('/isTyping', true);
+                                    this.setStatusMessage('Kontext wird aktualisiert…', 0);
+                                    const draft = (pl.params && pl.params.draft) || {};
+                                    const subj = draft.subject || '';
+                                    const followUp = `Kontext: Der Termin-Entwurf wurde verworfen${subj ? ` (Betreff: ${subj})` : ''}. Bitte nächsten Schritt vorschlagen.`;
+                                    const followRes = await this.callLLMViaOperationBinding(followUp);
+                                    await this.handleAIResponse(followRes);
+                                } catch (e) {
+                                    console.warn('Follow-up LLM call failed', e);
+                                }
                             }
                         }
                     } catch (e) { console.error('MCP-UI action failed', e); }
