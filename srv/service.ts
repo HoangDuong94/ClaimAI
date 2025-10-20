@@ -943,10 +943,10 @@ ${safeContent}`;
     app.get('/service/claims/ui/webc', async (_req: ClaimsRequest, res: Response) => {
       try {
         const html = `
-          <div style=\"font-family: Arial, sans-serif; padding: 12px;\">\n
-            <h3 style=\"margin:0 0 8px 0;\">UI5 Web Components – Card</h3>
-            <p style=\"margin:0 12px 12px 0;color:#475569;\">Dies ist ein <code>ui5-card</code>, gerendert im MCP‑UI Iframe.</p>
-
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+          </style>
+          <div style=\"font-family: Arial, sans-serif; padding: 0; margin: 0;\">\n
             <ui5-card style=\"width:100%;\" id=\"demoCard\" accessible-name=\"Contacts\"> 
               <ui5-card-header slot=\"header\" title-text=\"Contacts\" subtitle-text=\"Top people\" interactive>
                 <ui5-button slot=\"action\" id=\"viewAllBtn\" design=\"Transparent\">View All</ui5-button>
@@ -977,6 +977,17 @@ ${safeContent}`;
                   window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'ui5-card-view-all' } }, '*');
                 } catch (_) {}
               });
+
+              // Auto-resize: notify host about height changes
+              try {
+                const ro = new ResizeObserver((entries) => {
+                  for (const entry of entries) {
+                    const h = Math.ceil(entry.contentRect.height);
+                    window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+                  }
+                });
+                ro.observe(document.documentElement);
+              } catch (_) {}
 
             <\/script>
           </div>

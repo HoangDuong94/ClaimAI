@@ -1491,7 +1491,7 @@ sap.ui.define([
                     const data = await res.json();
                     const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
 
-                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:280px;height:280px;"></ui-resource-renderer>`;
+                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;border:0;"></ui-resource-renderer>`;
                     chatManager.addMessage("assistant", html);
 
                     setTimeout(async () => {
@@ -1537,6 +1537,12 @@ sap.ui.define([
                                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                                 nodes.forEach((node) => {
                                     try {
+                                        // Always ensure native-feel: no border/scrollbar + auto-height
+                                        node.htmlProps = {
+                                            autoResizeIframe: { height: true },
+                                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                            iframeProps: { scrolling: 'no' }
+                                        };
                                         if (!node.resource) {
                                             const key = node.getAttribute('data-uiid');
                                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
