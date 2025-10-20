@@ -976,8 +976,8 @@ ${safeContent}`;
             </ui5-card>
 
             <div class=\"actions\">
-              <ui5-button id=\"sendBtn\" design=\"Emphasized\" disabled>Send email<\/ui5-button>
-              <ui5-button id=\"discardBtn\" design=\"Transparent\">Discard<\/ui5-button>
+              <ui5-button id=\"sendBtn\" design=\"Emphasized\" disabled>E-Mail senden<\/ui5-button>
+              <ui5-button id=\"discardBtn\" design=\"Transparent\">Verwerfen<\/ui5-button>
             </div>
 
             <script type=\"module\">\n
