@@ -895,10 +895,11 @@ sap.ui.define([
                     try {
                         const a = evt?.detail || {};
                         if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                            const pl = (a && a.toolName) ? a : (a && a.payload && a.payload.toolName ? a.payload : a);
                             await fetch('/service/claims/ui/action', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ type: 'tool', payload: a.payload })
+                                body: JSON.stringify(pl)
                             });
                         }
                     } catch (e) { console.error('MCP-UI action failed', e); }
@@ -1503,10 +1504,11 @@ sap.ui.define([
                                     try {
                                         const a = evt?.detail || {};
                                         if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                                            const pl = (a && a.toolName) ? a : (a && a.payload && a.payload.toolName ? a.payload : a);
                                             await fetch('/service/claims/ui/action', {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ type: 'tool', payload: a.payload })
+                                                body: JSON.stringify(pl)
                                             });
                                         }
                                     } catch (e) { console.error('MCP-UI action failed', e); }
@@ -1615,10 +1617,11 @@ sap.ui.define([
                             try {
                                 const a = evt?.detail || {};
                                 if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                                    const pl = (a && a.toolName) ? a : (a && a.payload && a.payload.toolName ? a.payload : a);
                                     await fetch('/service/claims/ui/action', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ type: 'tool', payload: a.payload })
+                                        body: JSON.stringify(pl)
                                     });
                                 }
                             } catch (e) { console.error('MCP-UI action failed', e); }

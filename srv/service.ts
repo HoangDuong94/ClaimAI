@@ -992,7 +992,7 @@ ${safeContent}`;
 
               const q = new URLSearchParams(window.location.search);
               const from = q.get('from') || 'hoang.duong@purecons.net';
-              const to = q.get('to') || '';
+              const to = q.get('to') || 'hoang.duong@pureconsulting.ch';
               const subject = q.get('subject') || '';
               const body = q.get('body') || '';
 
@@ -1077,7 +1077,7 @@ ${safeContent}`;
     });
 
     // UI action endpoint to receive events from MCP-UI iframes
-    app.post('/service/claims/ui/action', async (req: ClaimsRequest, res: Response) => {
+    app.post('/service/claims/ui/action', express.json(), async (req: ClaimsRequest, res: Response) => {
       try {
         const body = (req.body ?? {}) as any;
         // Be lenient with shapes coming from different hosts
