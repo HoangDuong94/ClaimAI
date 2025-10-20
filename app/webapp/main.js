@@ -940,11 +940,14 @@ sap.ui.define([
         // Handle AI response
         async handleAIResponse(responseText) {
             this.removeThinkingMessage();
-            this.addMessage("assistant", responseText);
+            let renderedUI = false;
+            try { renderedUI = await this.maybeRenderDraftComposerFromResponse(responseText) || false; } catch (_) { renderedUI = false; }
+            if (!renderedUI) {
+                const cleaned = this.stripMcpUiMarkers ? this.stripMcpUiMarkers(responseText) : responseText;
+                this.addMessage("assistant", cleaned);
+            }
             this.chatModel.setProperty("/isTyping", false);
             this.chatModel.setProperty("/statusMessage", "");
-            // Attempt to render a draft email composer if a draft-prepared JSON is present
-            try { await this.maybeRenderDraftComposerFromResponse(responseText); } catch (_) {}
         }
 
         // Handle AI errors
@@ -953,6 +956,17 @@ sap.ui.define([
             this.addMessage("assistant", `I apologize, but I encountered an error: ${errorMessage}`);
             this.chatModel.setProperty("/isTyping", false);
             this.setStatusMessage("Error occurred", 5000);
+        }
+
+        // Remove visible MCP-UI markers or TOOL_OUTPUT regions from response text
+        stripMcpUiMarkers(text) {
+            if (typeof text !== 'string') return text;
+            try {
+                let out = text.replace(/\[MCP-UI-RESOURCE-B64:[A-Za-z0-9+/=]+\]/g, '');
+                out = out.replace(/<!--MCP-UI-RESOURCE:BASE64:[A-Za-z0-9+/=]+-->/g, '');
+                out = out.replace(/<TOOL_OUTPUT>[\s\S]*?<\/TOOL_OUTPUT>/g, '');
+                return out;
+            } catch (_) { return text; }
         }
 
         // Modern clipboard copy with fallback
@@ -1993,17 +2007,15 @@ sap.ui.define([
         // Erweiterte AI Response Handler
         async handleAIResponseEnhanced(responseText) {
             this.removeThinkingMessage();
-
-            // Verwende enhanced addMessage für HTML-Content
-            this.addMessageEnhanced("assistant", responseText);
-
+            let renderedUI = false;
+            try { renderedUI = await this.maybeRenderDraftComposerFromResponse(responseText) || false; } catch (_) { renderedUI = false; }
+            if (!renderedUI) {
+                const cleaned = this.stripMcpUiMarkers ? this.stripMcpUiMarkers(responseText) : responseText;
+                this.addMessageEnhanced("assistant", cleaned);
+                this.enhanceRenderedHTMLContent();
+            }
             this.chatModel.setProperty("/isTyping", false);
             this.chatModel.setProperty("/statusMessage", "");
-
-            // Zusätzliche UI-Updates für HTML-Content
-            this.enhanceRenderedHTMLContent();
-            // Try composer as well
-            try { await this.maybeRenderDraftComposerFromResponse(responseText); } catch (_) {}
         },
 
         // Post-Processing für gerenderten HTML-Content
