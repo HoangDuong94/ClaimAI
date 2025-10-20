@@ -864,6 +864,271 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       });
       allTools.push(attachmentsGalleryTool);
 
+      // Excel preview card tool: renders an Excel attachment inside a UI5 Card with TabContainer + Table
+      const excelPreviewTool = new DynamicStructuredTool({
+        name: 'excel.preview.card',
+        description:
+          'Erzeugt eine UI-Karte (UI5 Web Components) zur Vorschau einer Excel-Datei mit Reitern je Tabellenblatt und einer Tabellenansicht der ersten Zeilen.',
+        schema: z.object({
+          fileAbsolutePath: z.string().min(1).describe('Absoluter Pfad zur Excel-/CSV-Datei.'),
+          maxRows: z.number().int().min(1).max(200).optional().describe('Maximale Anzahl Zeilen pro Blatt (Standard: 20).'),
+          sheets: z.array(z.string()).optional().describe('Optionale Liste von Blattnamen, die vorzubereiten sind. Standard: alle Blätter.'),
+        }),
+        func: async (input) => {
+          const abs = String((input as any).fileAbsolutePath || '').trim();
+          if (!abs) return 'fileAbsolutePath fehlt';
+          const maxRows = Number.isFinite((input as any).maxRows) ? Math.max(1, Math.min(200, Number((input as any).maxRows))) : 20;
+          const wantedSheets: string[] | null = Array.isArray((input as any).sheets) ? (input as any).sheets : null;
+
+          // Helper to coerce MCP tool response to plain text
+          const toText = (out: any): string => {
+            if (!out) return '';
+            const s = (out as any).structuredContent;
+            if (typeof s === 'string') return s;
+            if (Array.isArray(s)) return s.map((p) => (typeof p === 'string' ? p : (p?.text || ''))).join('\n');
+            const c = (out as any).content;
+            if (typeof c === 'string') return c;
+            if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : (p?.text || ''))).join('\n');
+            if (out?.text) return String(out.text);
+            try { return JSON.stringify(out); } catch { return String(out); }
+          };
+
+          // Describe sheets (be defensive with server schema)
+          const tryDescribe = async (): Promise<string[]> => {
+            try {
+              const manifest = await clients.excel.listTools({}, { timeout: 120000 });
+              const available = new Set((manifest.tools || []).map((t) => t.name));
+              if (!available.has('excel_describe_sheets')) return [];
+              const candidates = ['Sheet1', 'Tabelle1', 'Sheet 1', 'Blatt1', 'ClaimHeader'];
+              for (const nm of candidates) {
+                try {
+                  // Inspect schema to decide arg names
+                  const toolDef = (manifest.tools || []).find((t) => t.name === 'excel_describe_sheets');
+                  const props = (toolDef && (toolDef as any).inputSchema && (toolDef as any).inputSchema.properties) || {};
+                  const args: any = { fileAbsolutePath: abs };
+                  if (props.sheetName) { args.sheetName = nm; }
+                  if (props.srcSheetName) { args.srcSheetName = nm; }
+                  if (props.dstSheetName) { args.dstSheetName = nm; }
+                  const res = await clients.excel.callTool({ name: 'excel_describe_sheets', arguments: args }, undefined, { timeout: 120000 });
+                  const txt = toText(res);
+                  // Try to parse JSON if present; otherwise attempt to extract names from plain text
+                  let names: string[] = [];
+                  try {
+                    const json = JSON.parse(txt);
+                    if (Array.isArray(json?.sheets)) names = json.sheets.map((s: any) => String(s?.name || s?.sheetName || s || '')).filter(Boolean);
+                    else if (Array.isArray(json?.sheetNames)) names = json.sheetNames.filter((s: any) => typeof s === 'string');
+                    else if (typeof json?.sheetName === 'string') names = [json.sheetName];
+                  } catch {
+                    // fallback: simple regex for sheet names in logs
+                    const m = txt.match(/sheet\s*names?\s*:\s*\[(.*?)\]/i);
+                    if (m && m[1]) {
+                      names = m[1].split(',').map((p) => p.replace(/[\"'\s]/g, '')).filter(Boolean);
+                    }
+                  }
+                  if (names.length) return names;
+                } catch { /* try next */ }
+              }
+            } catch { /* ignore */ }
+            return [];
+          };
+
+          let sheetNames = wantedSheets && wantedSheets.length ? wantedSheets : await tryDescribe();
+          if (!sheetNames || sheetNames.length === 0) {
+            sheetNames = ['Sheet1'];
+          }
+
+          // Limit number of prepared sheets to avoid huge payloads
+          const MAX_SHEETS = 8;
+          const prepared: Array<{ name: string; rawHtml: string }> = [];
+          for (const sheetName of sheetNames.slice(0, MAX_SHEETS)) {
+            try {
+              const manifest = await clients.excel.listTools({}, { timeout: 120000 });
+              const toolDef = (manifest.tools || []).find((t) => t.name === 'excel_read_sheet');
+              const props = (toolDef && (toolDef as any).inputSchema && (toolDef as any).inputSchema.properties) || {};
+              const args: any = { fileAbsolutePath: abs };
+              if (props.sheetName) { args.sheetName = sheetName; }
+              if (props.srcSheetName) { args.srcSheetName = sheetName; }
+              if (props.dstSheetName) { args.dstSheetName = sheetName; }
+              // Provide a conservative range if supported
+              // Do not set a default range; some servers error if the range exceeds used range
+              const res = await clients.excel.callTool({ name: 'excel_read_sheet', arguments: args }, undefined, { timeout: 180000 });
+              const html = toText(res);
+              prepared.push({ name: sheetName, rawHtml: html });
+            } catch (e) {
+              prepared.push({ name: sheetName, rawHtml: `<div style=\"color:#b00020\">Fehler beim Lesen des Blatts ${sheetName}: ${String((e as any)?.message || e)}<\/div>` });
+            }
+          }
+
+          const path = await import('node:path');
+          const fsPath = await import('node:fs');
+          const absPath = path.default.resolve(abs);
+          const fileName = path.default.basename(absPath);
+          const attachmentsRoot = path.default.resolve(process.cwd(), 'tmp', 'attachments');
+          let relForDownload: string | null = null;
+          try {
+            const rel = path.default.relative(attachmentsRoot, absPath).split(path.default.sep).join('/');
+            if (!rel.startsWith('..') && !path.default.isAbsolute(rel) && fsPath.existsSync(path.default.join(attachmentsRoot, rel))) {
+              relForDownload = rel;
+            }
+          } catch { relForDownload = null; }
+
+          const clientModel = {
+            fileName,
+            fileAbsolutePath: absPath,
+            maxRows,
+            downloadUrl: relForDownload ? `/service/claims/ui/attachment?file=${encodeURIComponent(relForDownload)}` : null,
+            sheets: prepared,
+          };
+
+          const html = `
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  .card-shell { font-family: var(--sapFontFamily, Arial, sans-serif); padding: 0; margin: 0; }
+  ui5-card { width: 100%; box-sizing: border-box; }
+  ui5-table { width: 100%; }
+  .toolbar { padding: 6px 12px; display:flex; gap:8px; align-items:center; }
+  .muted { color: var(--sapContent_LabelColor, #556b82); font-size: 12px; }
+  .grow { flex: 1; }
+</style>
+<div class="card-shell">
+  <ui5-card>
+    <ui5-card-header slot="header" title-text="Excel – Vorschau" subtitle-text="${fileName}"></ui5-card-header>
+    <div class="toolbar">
+      <span class="muted">Reiter wechseln, um Blätter zu sehen</span>
+      <span class="grow"></span>
+      ${clientModel.downloadUrl ? `<ui5-button id="btnDownload" design="Transparent" icon="download">Download</ui5-button>` : ''}
+    </div>
+    <ui5-tabcontainer id="tabs" tab-layout="Inline" tabs-overflow-mode="End"></ui5-tabcontainer>
+  </ui5-card>
+  <script>
+    // Minimal process shim before module imports (prevents "process is not defined")
+    (function(){ try { if (!window.process) { window.process = { env: {} }; } } catch(e) {} })();
+  </script>
+  <script type="module">
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Tab.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Table.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TableRow.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TableCell.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TableColumn.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Label.js';
+    // Icons collection loader (needed for button icons like "download")
+    import 'https://esm.sh/@ui5/webcomponents-icons@1.24.0/dist/AllIcons.js';
+
+    const model = ${JSON.stringify(clientModel)};
+
+    function parseHtmlTable(html) {
+      try {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const table = doc.querySelector('table');
+        if (!table) return { headers: [], rows: [] };
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (!rows.length) return { headers: [], rows: [] };
+        // Find first non-empty row as header
+        let headerCells = Array.from(rows[0].querySelectorAll('th,td')).map((c) => c.textContent?.trim() || '').filter(Boolean);
+        let dataStart = 1;
+        if (headerCells.length === 0 && rows.length > 1) {
+          headerCells = Array.from(rows[1].querySelectorAll('th,td')).map((c) => c.textContent?.trim() || '').filter(Boolean);
+          dataStart = 2;
+        }
+        const bodyRows = [];
+        for (let i = dataStart; i < rows.length; i++) {
+          const cols = Array.from(rows[i].querySelectorAll('td')).map((c) => (c.textContent || '').trim());
+          if (cols.length) bodyRows.push(cols);
+        }
+        return { headers: headerCells, rows: bodyRows };
+      } catch (_) {
+        return { headers: [], rows: [] };
+      }
+    }
+
+    function buildTable(sheet) {
+      const { headers, rows } = parseHtmlTable(sheet.rawHtml);
+      const limit = Math.max(1, Math.min(${maxRows}, rows.length));
+      const table = document.createElement('ui5-table');
+      const effectiveHeaders = (headers && headers.length) ? headers : Array.from({ length: (rows[0] || []).length }, (_, i) => ('Col ' + (i + 1)));
+
+      // Create columns with header slot labels
+      effectiveHeaders.forEach(h => {
+        const col = document.createElement('ui5-table-column');
+        const hl = document.createElement('ui5-label');
+        hl.setAttribute('slot', 'header');
+        hl.textContent = h || '';
+        col.appendChild(hl);
+        table.appendChild(col);
+      });
+
+      // Append rows
+      for (let i = 0; i < limit; i++) {
+        const r = rows[i] || [];
+        const tr = document.createElement('ui5-table-row');
+        for (let c = 0; c < effectiveHeaders.length; c++) {
+          const tc = document.createElement('ui5-table-cell');
+          const lb = document.createElement('ui5-label');
+          lb.textContent = String(r[c] ?? '');
+          tc.appendChild(lb);
+          tr.appendChild(tc);
+        }
+        table.appendChild(tr);
+      }
+      return table;
+    }
+
+    function render() {
+      const tabs = document.getElementById('tabs');
+      if (!tabs) return;
+      tabs.innerHTML = '';
+      (model.sheets || []).forEach((s, idx) => {
+        const tab = document.createElement('ui5-tab');
+        tab.setAttribute('text', s.name || 'Sheet');
+        const table = buildTable(s);
+        tab.appendChild(table);
+        if (idx === 0 && !tab.hasAttribute('selected')) {
+          tab.setAttribute('selected', ''); // ensure the first tab is active by default
+        }
+        tabs.appendChild(tab);
+      });
+      // no further selection handling needed; ui5-tab[selected] takes precedence
+    }
+
+    render();
+
+    const btn = document.getElementById('btnDownload');
+    if (btn && model.downloadUrl) {
+      btn.addEventListener('click', () => {
+        try { window.open(model.downloadUrl, '_blank'); } catch (_) {}
+      });
+    }
+
+    try {
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const h = Math.ceil(entry.contentRect.height);
+          window.parent.postMessage({ type: 'ui-size-change', payload: { height: h } }, '*');
+        }
+      });
+      ro.observe(document.documentElement);
+    } catch (_) {}
+  </script>
+</div>`;
+
+          const ui = createUIResource({
+            uri: `ui://excel/preview/${Date.now()}`,
+            content: { type: 'rawHtml', htmlString: html },
+            encoding: 'text',
+            metadata: {
+              title: 'Excel – Vorschau',
+              'mcpui.dev/ui-preferred-frame-size': ['100%', '520px']
+            }
+          });
+
+          return JSON.stringify({ status: 'ok', uiResource: ui.resource });
+        }
+      });
+      allTools.push(excelPreviewTool);
+
       // Local Vision tool to describe images (aligns with productive service behavior)
       const imageDescribeTool = new DynamicStructuredTool({
         name: 'image.describe',
