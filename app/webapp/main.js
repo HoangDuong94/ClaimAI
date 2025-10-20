@@ -891,6 +891,18 @@ sap.ui.define([
             } catch (_) {}
             try {
                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                const handleAction = async (evt) => {
+                    try {
+                        const a = evt?.detail || {};
+                        if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                            await fetch('/service/claims/ui/action', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ type: 'tool', payload: a.payload })
+                            });
+                        }
+                    } catch (e) { console.error('MCP-UI action failed', e); }
+                };
                 nodes.forEach((node) => {
                     try {
                         // Enforce native look only once per node to avoid re-renders
@@ -907,9 +919,10 @@ sap.ui.define([
                             const key = node.getAttribute('data-uiid');
                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
                             if (res) node.resource = res;
-                            node.addEventListener('onUIAction', (evt) => {
-                                console.log('MCP-UI action:', evt.detail);
-                            }, { once: false });
+                        }
+                        if (!node.__mcpUiBound) {
+                            node.addEventListener('onUIAction', handleAction, { once: false });
+                            node.__mcpUiBound = true;
                         }
                     } catch (_) {}
                 });
@@ -1486,6 +1499,18 @@ sap.ui.define([
                         const bindAllRenderers = () => {
                             try {
                                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                                const handleAction = async (evt) => {
+                                    try {
+                                        const a = evt?.detail || {};
+                                        if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                                            await fetch('/service/claims/ui/action', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ type: 'tool', payload: a.payload })
+                                            });
+                                        }
+                                    } catch (e) { console.error('MCP-UI action failed', e); }
+                                };
                                 nodes.forEach((node) => {
                                     try {
                                         // Enforce native look once
@@ -1502,9 +1527,10 @@ sap.ui.define([
                                             const key = node.getAttribute('data-uiid');
                                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
                                             if (res) node.resource = res;
-                                            node.addEventListener('onUIAction', (evt) => {
-                                                console.log('MCP-UI action:', evt.detail);
-                                            }, { once: false });
+                                        }
+                                        if (!node.__mcpUiBound) {
+                                            node.addEventListener('onUIAction', handleAction, { once: false });
+                                            node.__mcpUiBound = true;
                                         }
                                     } catch (_) {}
                                 });
@@ -1584,29 +1610,42 @@ sap.ui.define([
 
                         const bindAllRenderers = () => {
                             try {
-                                const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
-                                nodes.forEach((node) => {
-                                    try {
-                                        // Ensure native-feel once: no border/scrollbar + auto-height
-                                        if (!node.dataset || node.dataset.mcpuiInitialized !== '1') {
-                                            try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
-                                            node.htmlProps = {
-                                                autoResizeIframe: { height: true },
-                                                style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
-                                                iframeProps: { scrolling: 'no' }
-                                            };
-                                            if (node.dataset) node.dataset.mcpuiInitialized = '1';
-                                        }
-                                        if (!node.resource) {
-                                            const key = node.getAttribute('data-uiid');
-                                            const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
-                                            if (res) node.resource = res;
-                                            node.addEventListener('onUIAction', (evt) => {
-                                                console.log('MCP-UI action:', evt.detail);
-                                            }, { once: false });
-                                        }
-                                    } catch (_) {}
-                                });
+                        const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                        const handleAction = async (evt) => {
+                            try {
+                                const a = evt?.detail || {};
+                                if (a.type === 'tool' && a.payload && a.payload.toolName) {
+                                    await fetch('/service/claims/ui/action', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ type: 'tool', payload: a.payload })
+                                    });
+                                }
+                            } catch (e) { console.error('MCP-UI action failed', e); }
+                        };
+                        nodes.forEach((node) => {
+                            try {
+                                // Ensure native-feel once: no border/scrollbar + auto-height
+                                if (!node.dataset || node.dataset.mcpuiInitialized !== '1') {
+                                    try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                                    node.htmlProps = {
+                                        autoResizeIframe: { height: true },
+                                        style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                        iframeProps: { scrolling: 'no' }
+                                    };
+                                    if (node.dataset) node.dataset.mcpuiInitialized = '1';
+                                }
+                                if (!node.resource) {
+                                    const key = node.getAttribute('data-uiid');
+                                    const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
+                                    if (res) node.resource = res;
+                                }
+                                if (!node.__mcpUiBound) {
+                                    node.addEventListener('onUIAction', handleAction, { once: false });
+                                    node.__mcpUiBound = true;
+                                }
+                            } catch (_) {}
+                        });
                             } catch (_) {}
                         };
 

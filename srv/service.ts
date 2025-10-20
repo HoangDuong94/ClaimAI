@@ -1042,9 +1042,9 @@ ${safeContent}`;
 
               sendBtn.addEventListener('click', () => {
                 if (!isValid()) return;
-                post('email.send', currentDraft());
+                post('tool', { toolName: 'email.send', params: currentDraft() });
               });
-              discardBtn.addEventListener('click', () => post('email.discard', { draft: currentDraft() }));
+              discardBtn.addEventListener('click', () => post('tool', { toolName: 'email.discard', params: { draft: currentDraft() } }));
 
               // Auto-resize: notify host about height changes
               try {
@@ -1070,6 +1070,30 @@ ${safeContent}`;
           }
         });
         return res.json({ type: 'resource', resource: ui.resource });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: msg });
+      }
+    });
+
+    // UI action endpoint to receive events from MCP-UI iframes
+    app.post('/service/claims/ui/action', async (req: ClaimsRequest, res: Response) => {
+      try {
+        const { type, payload } = (req.body ?? {}) as { type?: string; payload?: any };
+        if (type !== 'tool' || !payload || !payload.toolName) {
+          return res.status(400).json({ error: 'Invalid payload. Expect { type:"tool", payload:{ toolName, params } }' });
+        }
+        const { toolName, params } = payload;
+        if (toolName === 'email.send') {
+          console.log('[MCP-UI] email.send requested via UI action', params);
+          return res.json({ status: 'handled', action: toolName });
+        }
+        if (toolName === 'email.discard') {
+          console.log('[MCP-UI] email.discard requested via UI action', params);
+          return res.json({ status: 'handled', action: toolName });
+        }
+        console.log('[MCP-UI] unhandled tool action', toolName, params);
+        return res.json({ status: 'ignored', action: toolName });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return res.status(500).json({ error: msg });
