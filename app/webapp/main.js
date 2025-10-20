@@ -795,8 +795,11 @@ sap.ui.define([
             this.chatModel.setProperty("/chatHistory", history);
             this.chatModel.refresh(true);
             this.scrollToBottomEnhanced();
-            // Re-apply MCP-UI renderer bindings after list updates
-            try { setTimeout(() => this.rebindAllMcpUiRenderers(), 0); } catch (_) {}
+            // Re-apply MCP-UI renderer bindings after list updates (debounced)
+            try {
+                clearTimeout(window.__mcpUiRebindTimer);
+                window.__mcpUiRebindTimer = setTimeout(() => this.rebindAllMcpUiRenderers(), 150);
+            } catch (_) {}
         }
 
         // Remove last "Thinking..." message
@@ -890,13 +893,16 @@ sap.ui.define([
                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                 nodes.forEach((node) => {
                     try {
-                        // Always enforce htmlProps to avoid iframe borders/scrollbars
-                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
-                        node.htmlProps = {
-                            autoResizeIframe: { height: true },
-                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
-                            iframeProps: { scrolling: 'no' }
-                        };
+                        // Enforce native look only once per node to avoid re-renders
+                        if (!node.dataset || node.dataset.mcpuiInitialized !== '1') {
+                            try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                            node.htmlProps = {
+                                autoResizeIframe: { height: true },
+                                style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                iframeProps: { scrolling: 'no' }
+                            };
+                            if (node.dataset) node.dataset.mcpuiInitialized = '1';
+                        }
                         if (!node.resource) {
                             const key = node.getAttribute('data-uiid');
                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
@@ -921,9 +927,9 @@ sap.ui.define([
                         return;
                     }
                     const obs = new MutationObserver(() => {
-                        // Debounce a little to allow batch rendering to complete
+                        // Debounce to allow batch rendering to complete and avoid flicker
                         clearTimeout(window.__mcpUiRebindTimer);
-                        window.__mcpUiRebindTimer = setTimeout(() => this.rebindAllMcpUiRenderers(), 50);
+                        window.__mcpUiRebindTimer = setTimeout(() => this.rebindAllMcpUiRenderers(), 180);
                     });
                     obs.observe(target, { childList: true, subtree: true });
                     window.__mcpUiObserverAttached = true;
@@ -1482,13 +1488,16 @@ sap.ui.define([
                                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                                 nodes.forEach((node) => {
                                     try {
-                                        // Always enforce native look
-                                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
-                                        node.htmlProps = {
-                                            autoResizeIframe: { height: true },
-                                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
-                                            iframeProps: { scrolling: 'no' }
-                                        };
+                                        // Enforce native look once
+                                        if (!node.dataset || node.dataset.mcpuiInitialized !== '1') {
+                                            try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                                            node.htmlProps = {
+                                                autoResizeIframe: { height: true },
+                                                style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                                iframeProps: { scrolling: 'no' }
+                                            };
+                                            if (node.dataset) node.dataset.mcpuiInitialized = '1';
+                                        }
                                         if (!node.resource) {
                                             const key = node.getAttribute('data-uiid');
                                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
@@ -1578,13 +1587,16 @@ sap.ui.define([
                                 const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
                                 nodes.forEach((node) => {
                                     try {
-                                        // Always ensure native-feel: no border/scrollbar + auto-height
-                                        try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
-                                        node.htmlProps = {
-                                            autoResizeIframe: { height: true },
-                                            style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
-                                            iframeProps: { scrolling: 'no' }
-                                        };
+                                        // Ensure native-feel once: no border/scrollbar + auto-height
+                                        if (!node.dataset || node.dataset.mcpuiInitialized !== '1') {
+                                            try { node.style.border = '0'; node.style.width = '100%'; } catch (_) {}
+                                            node.htmlProps = {
+                                                autoResizeIframe: { height: true },
+                                                style: { border: '0', width: '100%', minHeight: '0px', height: 'auto', overflow: 'hidden' },
+                                                iframeProps: { scrolling: 'no' }
+                                            };
+                                            if (node.dataset) node.dataset.mcpuiInitialized = '1';
+                                        }
                                         if (!node.resource) {
                                             const key = node.getAttribute('data-uiid');
                                             const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
