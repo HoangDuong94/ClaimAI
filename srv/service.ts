@@ -1079,11 +1079,26 @@ ${safeContent}`;
     // UI action endpoint to receive events from MCP-UI iframes
     app.post('/service/claims/ui/action', async (req: ClaimsRequest, res: Response) => {
       try {
-        const { type, payload } = (req.body ?? {}) as { type?: string; payload?: any };
-        if (type !== 'tool' || !payload || !payload.toolName) {
+        const body = (req.body ?? {}) as any;
+        // Be lenient with shapes coming from different hosts
+        // Supported:
+        // 1) { type: 'tool', payload: { toolName, params } }
+        // 2) { toolName, params }
+        // 3) { payload: { toolName, params } }
+        let action = null as null | { toolName?: string; params?: any };
+        if (body && typeof body === 'object') {
+          if (body.type === 'tool' && body.payload && typeof body.payload === 'object') {
+            action = body.payload;
+          } else if (body.toolName) {
+            action = body as { toolName?: string; params?: any };
+          } else if (body.payload && typeof body.payload === 'object' && body.payload.toolName) {
+            action = body.payload;
+          }
+        }
+        if (!action || !action.toolName) {
           return res.status(400).json({ error: 'Invalid payload. Expect { type:"tool", payload:{ toolName, params } }' });
         }
-        const { toolName, params } = payload;
+        const { toolName, params } = action;
         if (toolName === 'email.send') {
           console.log('[MCP-UI] email.send requested via UI action', params);
           return res.json({ status: 'handled', action: toolName });
