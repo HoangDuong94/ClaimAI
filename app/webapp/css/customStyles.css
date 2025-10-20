@@ -46,6 +46,10 @@
   --sapHorizon-BorderRadius-Small: 0.25rem;
   --sapHorizon-BorderRadius-Medium: 0.5rem;
   --sapHorizon-BorderRadius-Large: 0.75rem;
+  /* Chat bubble layout tokens */
+  --chat-bubble-min-width: 320px;
+  --chat-bubble-max-width: 1200px;
+  --chat-bubble-width-pct: 0.92; /* take 92% of row width */
 }
 
 /* Container Styles */
@@ -107,10 +111,13 @@
 }
 
 .modernMessagesWrapper {
-  max-width: 768px;
-  margin: 0 auto;
+  /* Scale with side panel width */
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
   padding: var(--sapHorizon-Space-XLarge);
   min-height: 100%;
+  box-sizing: border-box;
 }
 
 .modernMessagesList {
@@ -126,6 +133,16 @@
 .modernMessageRow {
   align-items: flex-start;
   gap: var(--sapHorizon-Space-Medium);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modernAssistantMessageContainer,
+.modernUserMessageContainer,
+.modernSystemMessageContainer,
+.modernInfoMessageContainer,
+.modernWarningMessageContainer {
+  width: 100%;
 }
 
 /* User Messages */
@@ -138,7 +155,8 @@
   color: var(--sapHorizon-Neutral-100);
   padding: var(--sapHorizon-Space-Medium) var(--sapHorizon-Space-Large);
   border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small) var(--sapHorizon-BorderRadius-Large);
-  max-width: 70%;
+  /* Scale bubble with container width */
+  width: clamp(var(--chat-bubble-min-width), calc(100% * var(--chat-bubble-width-pct)), var(--chat-bubble-max-width));
   box-shadow: var(--sapHorizon-Shadow-Level1);
 }
 
@@ -174,7 +192,7 @@
   border: 1px solid var(--sapHorizon-Neutral-300);
   padding: var(--sapHorizon-Space-Large);
   border-radius: var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Large) var(--sapHorizon-BorderRadius-Small);
-  max-width: 75%;
+  width: clamp(var(--chat-bubble-min-width), calc(100% * var(--chat-bubble-width-pct)), var(--chat-bubble-max-width));
   box-shadow: var(--sapHorizon-Shadow-Level1);
   position: relative;
 }
@@ -194,6 +212,10 @@
   color: var(--sapHorizon-Neutral-800) !important;
   word-wrap: break-word;
 }
+
+/* Ensure embedded renderers stretch within assistant bubble */
+ui-resource-renderer { display: block; width: 100%; }
+.ai-response-container { display: block; width: 100%; }
 
 .modernMessageFooter {
   margin-top: var(--sapHorizon-Space-Small);
@@ -237,7 +259,7 @@
   border: 1px solid var(--sapHorizon-Blue-Primary);
   padding: var(--sapHorizon-Space-Small) var(--sapHorizon-Space-Large);
   border-radius: var(--sapHorizon-BorderRadius-Large);
-  max-width: 80%;
+  width: clamp(var(--chat-bubble-min-width), calc(100% * var(--chat-bubble-width-pct)), var(--chat-bubble-max-width));
 }
 
 .modernSystemText {
@@ -455,7 +477,7 @@
 
   .modernUserMessage,
   .modernAssistantMessage {
-    max-width: 85%;
+    max-width: 100%;
   }
 
   .modernInputContainer {

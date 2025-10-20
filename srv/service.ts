@@ -4,6 +4,7 @@ import cds from '@sap/cds';
 import express from 'express';
 import type { Request, Response } from 'express';
 import { AzureOpenAiChatClient } from "@sap-ai-sdk/langchain";
+import { createUIResource } from '@mcp-ui/server';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
@@ -896,6 +897,86 @@ ${safeContent}`;
       } catch (e) {
         console.error('markRead failed:', e);
         return res.status(500).json({ error: getErrorMessage(e) });
+      }
+    });
+
+    // Lightweight PoC endpoint to return an MCP-UI resource
+    app.get('/service/claims/ui/poc', async (_req: ClaimsRequest, res: Response) => {
+      try {
+        const html = `
+          <div style="font-family: Arial, sans-serif; padding: 12px;">
+            <h3 style="margin: 0 0 8px 0;">MCP‑UI PoC</h3>
+            <p style="margin: 0 0 12px 0; color: #475569;">Server-rendered UIResource (rawHtml) from CAP.</p>
+            <button id="pocBtn" style="padding:8px 12px;border-radius:6px;border:1px solid #cbd5e1;background:#eef2ff;cursor:pointer;">Ping</button>
+            <span id="pocOut" style="margin-left:8px;color:#334155;"></span>
+            <script>
+              const btn = document.getElementById('pocBtn');
+              const out = document.getElementById('pocOut');
+              if (btn) {
+                btn.addEventListener('click', () => {
+                  out.textContent = 'pong';
+                  try {
+                    window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'poc-button-clicked' } }, '*');
+                  } catch (e) { /* noop */ }
+                });
+              }
+            <\/script>
+          </div>
+        `;
+        const ui = createUIResource({
+          uri: 'ui://poc/hello',
+          content: { type: 'rawHtml', htmlString: html },
+          encoding: 'text',
+          metadata: {
+            title: 'MCP‑UI PoC',
+            'mcpui.dev/ui-preferred-frame-size': ['100%', '180px']
+          }
+        });
+        return res.json({ type: 'resource', resource: ui.resource });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: msg });
+      }
+    });
+
+    // PoC endpoint to render UI5 Web Components inside the MCP-UI iframe
+    app.get('/service/claims/ui/webc', async (_req: ClaimsRequest, res: Response) => {
+      try {
+        const html = `
+          <div style=\"font-family: Arial, sans-serif; padding: 12px;\">
+            <h3 style=\"margin:0 0 8px 0;\">UI5 Web Components – PoC</h3>
+            <p style=\"margin:0 0 12px 0;color:#475569;\">Loaded via ESM imports inside sandboxed iframe.</p>
+            <ui5-button id=\"webcBtn\" design=\"Emphasized\">UI5 Button</ui5-button>
+            <span id=\"webcOut\" style=\"margin-left:8px;color:#334155;\"></span>
+            <script type=\"module\">\n
+              // Load theming assets and the Button element via esm.sh (resolves bare specifiers)
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
+
+              const btn = document.getElementById('webcBtn');
+              const out = document.getElementById('webcOut');
+              btn?.addEventListener('click', () => {
+                out.textContent = 'clicked';
+                try {
+                  window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'ui5-webc-click' } }, '*');
+                } catch (_) {}
+              });
+            <\/script>
+          </div>
+        `;
+        const ui = createUIResource({
+          uri: 'ui://poc/webc',
+          content: { type: 'rawHtml', htmlString: html },
+          encoding: 'text',
+          metadata: {
+            title: 'UI5 Web Components – PoC',
+            'mcpui.dev/ui-preferred-frame-size': ['100%', '220px']
+          }
+        });
+        return res.json({ type: 'resource', resource: ui.resource });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: msg });
       }
     });
 

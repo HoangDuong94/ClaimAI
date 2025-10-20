@@ -24,6 +24,10 @@
         data-sap-ui-async="true"
         data-sap-ui-frameOptions="trusted"
     ></script>
+    <!-- Provide a minimal `process.env` shim for browser builds that rely on it -->
+    <script src="thirdparty/process-shim.js"></script>
+    <!-- MCP-UI Web Component (PoC): loads the UI resource renderer as a module -->
+    <script type="module" src="https://unpkg.com/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js"></script>
 </head>
 <body class="sapUiBody sapUiSizeCompact">
     <!-- Platzhalter für unsere App-Struktur, die von main.js gefüllt wird -->

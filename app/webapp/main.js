@@ -846,6 +846,59 @@ sap.ui.define([
             }
         }
 
+        // Ensure MCP-UI web component is registered and available
+        async ensureMcpUiLibLoaded() {
+            if (window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer')) {
+                return;
+            }
+            // Load process shim if missing
+            try {
+                if (!window.process || !window.process.env) {
+                    await new Promise((resolve) => {
+                        const shim = document.createElement('script');
+                        shim.src = 'thirdparty/process-shim.js';
+                        shim.onload = resolve;
+                        document.head.appendChild(shim);
+                    });
+                }
+            } catch (_) {}
+            // Load web component module from CDN
+            const tryLoad = (src) => new Promise((res) => {
+                const s = document.createElement('script');
+                s.type = 'module';
+                s.src = src;
+                s.onload = () => res(true);
+                s.onerror = () => res(false);
+                document.head.appendChild(s);
+            });
+            const ok1 = await tryLoad('https://unpkg.com/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+            if (!ok1) {
+                await tryLoad('https://cdn.jsdelivr.net/npm/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+            }
+        }
+
+        // Rebind resources for all MCP-UI renderers that lost their resource due to list re-rendering
+        async rebindAllMcpUiRenderers() {
+            try {
+                await this.ensureMcpUiLibLoaded();
+            } catch (_) {}
+            try {
+                const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                nodes.forEach((node) => {
+                    try {
+                        if (!node.resource) {
+                            const key = node.getAttribute('data-uiid');
+                            const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
+                            if (res) node.resource = res;
+                            node.addEventListener('onUIAction', (evt) => {
+                                console.log('MCP-UI action:', evt.detail);
+                            }, { once: false });
+                        }
+                    } catch (_) {}
+                });
+            } catch (_) {}
+        }
+
         // Modern speech recognition
         startVoiceInput() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -909,6 +962,8 @@ sap.ui.define([
                     if (chatList) {
                         chatList.getModel("chat").refresh(true);
                     }
+                    // Attempt to rebind MCP-UI renderers in case list items were re-rendered
+                    this.rebindAllMcpUiRenderers?.();
                 }, 150);
             }
         }
@@ -1329,6 +1384,186 @@ sap.ui.define([
 
             // Add user message
             chatManager.addMessage("user", userInput);
+
+            // Special PoC command: render MCP-UI resource (basic HTML)
+            if (userInput.trim().toLowerCase() === '/poc-ui') {
+                try {
+                    chatManager.chatModel.setProperty("/userInput", "");
+                    chatManager.chatModel.setProperty("/isTyping", false);
+                    chatManager.setStatusMessage("Loading UI…", 0);
+
+                    const res = await fetch('/service/claims/ui/poc');
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
+
+                    // Insert the renderer placeholder into the chat (fixed height for visibility)
+                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:180px;height:180px;"></ui-resource-renderer>`;
+                    chatManager.addMessage("assistant", html);
+
+                    // Configure the renderer after UI5 rendered the HTML
+                    setTimeout(async () => {
+                        // Store resource for re-binding in case UI5 re-renders the list
+                        try {
+                            if (!window.__mcpUiResources) window.__mcpUiResources = {};
+                            window.__mcpUiResources[uiId] = data.resource;
+                        } catch (_) {}
+                        const ensureComponentLoaded = () => {
+                            return new Promise((resolve) => {
+                                if (window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer')) {
+                                    resolve(true);
+                                    return;
+                                }
+                                // Try to load from CDN dynamically as a fallback
+                                const tryLoad = (src) => new Promise((res) => {
+                                    const s = document.createElement('script');
+                                    s.type = 'module';
+                                    s.src = src;
+                                    s.onload = () => res(true);
+                                    s.onerror = () => res(false);
+                                    document.head.appendChild(s);
+                                });
+                                (async () => {
+                                    // Ensure `process.env` shim exists before loading the module
+                                    try {
+                                        if (!window.process || !window.process.env) {
+                                            const shim = document.createElement('script');
+                                            shim.src = 'thirdparty/process-shim.js';
+                                            document.head.appendChild(shim);
+                                            await new Promise(r => shim.onload = r);
+                                        }
+                                    } catch (_) {}
+                                    const ok1 = await tryLoad('https://unpkg.com/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+                                    if (!ok1) {
+                                        await tryLoad('https://cdn.jsdelivr.net/npm/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+                                    }
+                                    resolve(true);
+                                })();
+                            });
+                        };
+
+                        const bindAllRenderers = () => {
+                            try {
+                                const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                                nodes.forEach((node) => {
+                                    try {
+                                        if (!node.resource) {
+                                            const key = node.getAttribute('data-uiid');
+                                            const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
+                                            if (res) node.resource = res;
+                                            node.addEventListener('onUIAction', (evt) => {
+                                                console.log('MCP-UI action:', evt.detail);
+                                            }, { once: false });
+                                        }
+                                    } catch (_) {}
+                                });
+                            } catch (_) {}
+                        };
+
+                        if (!(window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer'))) {
+                            await ensureComponentLoaded();
+                        }
+                        bindAllRenderers();
+                        setTimeout(bindAllRenderers, 250);
+                    }, 200);
+
+                    chatManager.setStatusMessage("UI ready", 2000);
+                } catch (error) {
+                    console.error('PoC UI fetch failed:', error);
+                    chatManager.handleAIError(error.message || 'PoC UI failed');
+                }
+                return;
+            }
+
+            // Special PoC command: render UI5 Web Components content
+            if (userInput.trim().toLowerCase() === '/poc-webc') {
+                try {
+                    chatManager.chatModel.setProperty("/userInput", "");
+                    chatManager.chatModel.setProperty("/isTyping", false);
+                    chatManager.setStatusMessage("Loading UI5 WebC…", 0);
+
+                    const res = await fetch('/service/claims/ui/webc');
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
+
+                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:220px;height:220px;"></ui-resource-renderer>`;
+                    chatManager.addMessage("assistant", html);
+
+                    setTimeout(async () => {
+                        // Store resource for re-binding in case UI5 re-renders the list
+                        try {
+                            if (!window.__mcpUiResources) window.__mcpUiResources = {};
+                            window.__mcpUiResources[uiId] = data.resource;
+                        } catch (_) {}
+                        const ensureComponentLoaded = () => {
+                            return new Promise((resolve) => {
+                                if (window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer')) {
+                                    resolve(true);
+                                    return;
+                                }
+                                const tryLoad = (src) => new Promise((res) => {
+                                    const s = document.createElement('script');
+                                    s.type = 'module';
+                                    s.src = src;
+                                    s.onload = () => res(true);
+                                    s.onerror = () => res(false);
+                                    document.head.appendChild(s);
+                                });
+                                (async () => {
+                                    try {
+                                        if (!window.process || !window.process.env) {
+                                            const shim = document.createElement('script');
+                                            shim.src = 'thirdparty/process-shim.js';
+                                            document.head.appendChild(shim);
+                                            await new Promise(r => shim.onload = r);
+                                        }
+                                    } catch (_) {}
+                                    const ok1 = await tryLoad('https://unpkg.com/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+                                    if (!ok1) {
+                                        await tryLoad('https://cdn.jsdelivr.net/npm/@mcp-ui/client@5.13.0/dist/ui-resource-renderer.wc.js');
+                                    }
+                                    resolve(true);
+                                })();
+                            });
+                        };
+
+                        const bindAllRenderers = () => {
+                            try {
+                                const nodes = document.querySelectorAll('ui-resource-renderer[data-uiid]');
+                                nodes.forEach((node) => {
+                                    try {
+                                        if (!node.resource) {
+                                            const key = node.getAttribute('data-uiid');
+                                            const res = key && window.__mcpUiResources ? window.__mcpUiResources[key] : null;
+                                            if (res) node.resource = res;
+                                            node.addEventListener('onUIAction', (evt) => {
+                                                console.log('MCP-UI action:', evt.detail);
+                                            }, { once: false });
+                                        }
+                                    } catch (_) {}
+                                });
+                            } catch (_) {}
+                        };
+
+                        if (!(window.customElements && window.customElements.get && window.customElements.get('ui-resource-renderer'))) {
+                            await ensureComponentLoaded();
+                        }
+                        bindAllRenderers();
+                        setTimeout(bindAllRenderers, 250);
+                    }, 200);
+
+                    chatManager.setStatusMessage("UI5 WebC ready", 2000);
+                } catch (error) {
+                    console.error('PoC UI5 WebC fetch failed:', error);
+                    chatManager.handleAIError(error.message || 'PoC UI5 WebC failed');
+                }
+                return;
+            }
 
             // Clear input and set loading state
             chatManager.chatModel.setProperty("/userInput", "");
