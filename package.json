@@ -11,6 +11,8 @@
     "@langchain/core": "^0.3.58",
     "@langchain/langgraph": "^0.3.2",
     "@langchain/mcp-adapters": "^0.5.2",
+    "@mcp-ui/client": "^5.13.0",
+    "@mcp-ui/server": "^5.12.0",
     "@modelcontextprotocol/sdk": "^1.11.0",
     "@openai/codex-sdk": "^0.45.0",
     "@sap-ai-sdk/langchain": "^2.1.0",

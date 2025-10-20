@@ -142,7 +142,7 @@ Dieser MCP‑Tool erlaubt dem Agenten, eine lokale Datei (Server‑Pfad) als Anh
 
 *   **ID-Generierung:** Lassen Sie IDs vorzugsweise von CAP/DB-Standards erstellen.
 *   **Validierung:**
-    *   Stellen Sie sicher, dass der `status` einem der gültigen Werte entspricht: `{Eingegangen, In Prüfung, FregegeBen, Abgelehnt}`.
+    *   Stellen Sie sicher, dass der `status` einem der gültigen Werte entspricht: `{Eingegangen, In Prüfung, Freigegeben, Abgelehnt}`.
     *   Normalisieren Sie Währungswerte in `estimated_cost` auf zwei Dezimalstellen.
     *   Beschränken Sie `severity_score` und `fraud_score` auf den Bereich 0–100.
 
