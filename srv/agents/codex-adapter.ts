@@ -1,7 +1,7 @@
 import path from 'node:path';
 import MarkdownConverter from '../utils/markdown-converter.js';
 import { CodexAgent } from '../lib/codex-agent.js';
-import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
+import type { AgentAdapter, AgentCallOptions, AgentCallResult } from './agent-adapter.js';
 import type { CodexOptions, SandboxMode, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 
 interface CodexAdapterDependencies {
@@ -16,7 +16,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     this.logger = deps.logger ?? console;
   }
 
-  async call(options: AgentCallOptions): Promise<string> {
+  async call(options: AgentCallOptions): Promise<AgentCallResult> {
     const { prompt, userId } = options;
     const agent = this.ensureCodexAgent();
     this.logger.log('🤖 Invoking Codex SDK for prompt');
@@ -37,7 +37,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     const normalizedResponse =
       rawResponse.trim().length > 0 ? rawResponse : 'Keine Antwort vom Codex-Agenten erhalten.';
 
-    return MarkdownConverter.convertForClaims(normalizedResponse);
+    return { response: MarkdownConverter.convertForClaims(normalizedResponse) };
   }
 
   private ensureCodexAgent(): CodexAgent {

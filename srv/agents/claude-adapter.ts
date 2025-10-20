@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
+import type { AgentAdapter, AgentCallOptions, AgentCallResult } from './agent-adapter.js';
 import MarkdownConverter from '../utils/markdown-converter.js';
 import { runClaudeAgent } from '../lib/claude-agent.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
@@ -25,7 +25,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     this.logger = deps.logger ?? console;
   }
 
-  async call(options: AgentCallOptions): Promise<string> {
+  async call(options: AgentCallOptions): Promise<AgentCallResult> {
     const { prompt, userId, capContext } = options;
     if (!capContext) {
       throw new Error('capContext is required for Claude agent execution.');
@@ -60,6 +60,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       this.claudeSessions.set(userId, agentResult.sessionId);
     }
 
-    return MarkdownConverter.convertForClaims(agentResult.result);
+    const response = MarkdownConverter.convertForClaims(agentResult.result);
+    return { response };
   }
 }

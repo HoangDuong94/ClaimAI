@@ -3,6 +3,13 @@ using from '../app/annotations';
 
 service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
 
+    // Structured UI resource to transport MCP-UI content via OData
+    type UIResource {
+        uri      : String;
+        mimeType : String;
+        text     : LargeString; // rawHtml or external URL, depending on mimeType
+    };
+
     @odata.draft.enabled
     entity Claims as projection on ClaimsModel.Claims {
         *,
@@ -27,7 +34,7 @@ service ClaimsService @(path: '/service/claims', impl: 'gen/srv/service.js') {
     action callLLM (
         prompt: String,
         sessionId: String
-    ) returns { response: String };
+    ) returns { response: String; uiResource: UIResource; };
 
     action triageLatestMail(
         folder   : String,

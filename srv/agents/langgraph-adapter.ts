@@ -10,7 +10,7 @@ import MarkdownConverter from '../utils/markdown-converter.js';
 import { createUIResource } from '@mcp-ui/server';
 import { jsonSchemaToZod } from '../m365-mcp/mcp-jsonschema.js';
 import type { initAllMCPClients } from '../lib/mcp-client.js';
-import type { AgentAdapter, AgentCallOptions } from './agent-adapter.js';
+import type { AgentAdapter, AgentCallOptions, AgentCallResult } from './agent-adapter.js';
 import { analyzeImageAttachment } from '../utils/vision.js';
 
 const isTruthy = (value: string | undefined): boolean => {
@@ -52,7 +52,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
     await this.ensureAgentExecutor();
   }
 
-  async call(options: AgentCallOptions): Promise<string> {
+  async call(options: AgentCallOptions): Promise<AgentCallResult> {
     const { prompt, capContext, userId } = options;
     if (!capContext) {
       throw new Error('capContext is required for LangGraph agent execution.');
@@ -84,6 +84,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
       const finalResponseParts: string[] = [];
       let lastToolOutputText = '';
       let lastImageDescription = '';
+      let detectedUiResource: any | null = null;
       this.logger.log('\n\n---- AGENT STREAM START ----\n');
 
       for await (const chunk of stream) {
@@ -133,6 +134,13 @@ export class LangGraphAgentAdapter implements AgentAdapter {
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).description === 'string') {
                 lastImageDescription = (parsed as any).description as string;
               }
+              // Detect UIResource returned by tools such as draft.mail.compose
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                const maybeRes = (parsed as any).uiResource || (parsed as any).resource || null;
+                if (maybeRes && typeof maybeRes === 'object' && (maybeRes as any).uri) {
+                  detectedUiResource = maybeRes;
+                }
+              }
             }
           } catch { }
         }
@@ -151,23 +159,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
         }
       }
 
-      // Best practice: surface important tool output (e.g., draft-prepared with UIResource)
-      // Embed a Base64 carrier that survives Markdown/linkification.
-      try {
-        const trimmed = (lastToolOutputText || '').trim();
-        if (trimmed.startsWith('{')) {
-          const parsed = JSON.parse(trimmed);
-          if (parsed && parsed.status === 'draft-prepared') {
-            const carrier = JSON.stringify({
-              draft: parsed.draft || null,
-              resource: parsed.uiResource || parsed.resource || null
-            });
-            const b64 = Buffer.from(carrier, 'utf8').toString('base64');
-            rawResponse += `\n\n<!--MCP-UI-RESOURCE:BASE64:${b64}-->\n[MCP-UI-RESOURCE-B64:${b64}]`;
-          }
-        }
-      } catch { /* ignore */ }
-      return MarkdownConverter.convertForClaims(rawResponse);
+      return { response: MarkdownConverter.convertForClaims(rawResponse), uiResource: detectedUiResource || undefined };
     });
   }
 

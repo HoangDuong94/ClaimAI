@@ -741,7 +741,7 @@ sap.ui.define([
                 const result = oContext.getObject();
 
                 console.log("Claude operation result:", result);
-                return result.response || "No response received";
+                return result;
 
             } catch (error) {
                 console.error("Error in callLLMViaOperationBinding:", error);
@@ -938,8 +938,25 @@ sap.ui.define([
         }
 
         // Handle AI response
-        async handleAIResponse(responseText) {
+        async handleAIResponse(resultOrText) {
             this.removeThinkingMessage();
+            try {
+                // Prefer structured UIResource if present
+                if (resultOrText && typeof resultOrText === 'object') {
+                    const ui = resultOrText.uiResource;
+                    if (ui && ui.uri) {
+                        await this.renderMcpUiResource(ui);
+                        // Optional: show only a short note instead of full text
+                        // const short = (resultOrText.response && String(resultOrText.response).slice(0, 160)) || '';
+                        // if (short) this.addMessage('assistant', short);
+                        this.chatModel.setProperty("/isTyping", false);
+                        this.chatModel.setProperty("/statusMessage", "");
+                        return;
+                    }
+                }
+            } catch (_) { /* fall back to text path */ }
+
+            const responseText = (resultOrText && typeof resultOrText === 'object') ? (resultOrText.response || '') : (resultOrText || '');
             let renderedUI = false;
             try { renderedUI = await this.maybeRenderDraftComposerFromResponse(responseText) || false; } catch (_) { renderedUI = false; }
             if (!renderedUI) {

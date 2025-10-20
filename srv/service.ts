@@ -1148,13 +1148,26 @@ ${safeContent}`;
       const capContext = buildCapContext(req as CapRequestContext);
 
       try {
-        const response = await adapter.call({
+        const result: any = await adapter.call({
           prompt: userPrompt,
           userId: effectiveUserKey,
           capContext,
           request: req,
         });
-        return { response };
+        if (typeof result === 'string') {
+          return { response: result };
+        }
+        const responseText = (result && typeof result.response === 'string') ? result.response : '';
+        let uiResource = undefined as undefined | { uri?: string; mimeType?: string; text?: string };
+        if (result && result.uiResource) {
+          const r = result.uiResource as any;
+          uiResource = {
+            uri: r?.uri,
+            mimeType: r?.mimeType,
+            text: r?.text,
+          };
+        }
+        return { response: responseText, uiResource };
       } catch (error) {
         console.error('💥 Error during agent execution:', error);
         const backendLabel =
