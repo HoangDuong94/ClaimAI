@@ -943,24 +943,41 @@ ${safeContent}`;
     app.get('/service/claims/ui/webc', async (_req: ClaimsRequest, res: Response) => {
       try {
         const html = `
-          <div style=\"font-family: Arial, sans-serif; padding: 12px;\">
-            <h3 style=\"margin:0 0 8px 0;\">UI5 Web Components – PoC</h3>
-            <p style=\"margin:0 0 12px 0;color:#475569;\">Loaded via ESM imports inside sandboxed iframe.</p>
-            <ui5-button id=\"webcBtn\" design=\"Emphasized\">UI5 Button</ui5-button>
-            <span id=\"webcOut\" style=\"margin-left:8px;color:#334155;\"></span>
+          <div style=\"font-family: Arial, sans-serif; padding: 12px;\">\n
+            <h3 style=\"margin:0 0 8px 0;\">UI5 Web Components – Card</h3>
+            <p style=\"margin:0 12px 12px 0;color:#475569;\">Dies ist ein <code>ui5-card</code>, gerendert im MCP‑UI Iframe.</p>
+
+            <ui5-card style=\"width:100%;\" id=\"demoCard\" accessible-name=\"Contacts\"> 
+              <ui5-card-header slot=\"header\" title-text=\"Contacts\" subtitle-text=\"Top people\" interactive>
+                <ui5-button slot=\"action\" id=\"viewAllBtn\" design=\"Transparent\">View All</ui5-button>
+              </ui5-card-header>
+
+              <ui5-list separators=\"None\"> 
+                <ui5-li>Richard Wilson</ui5-li>
+                <ui5-li>Elena Petrova</ui5-li>
+                <ui5-li>John Miller</ui5-li>
+              </ui5-list>
+            </ui5-card>
+
             <script type=\"module\">\n
-              // Load theming assets and the Button element via esm.sh (resolves bare specifiers)
+              // Theme & CLDR assets
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
+
+              // Components used on the page
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/List.js';
+              import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/StandardListItem.js';
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Button.js';
 
-              const btn = document.getElementById('webcBtn');
-              const out = document.getElementById('webcOut');
-              btn?.addEventListener('click', () => {
-                out.textContent = 'clicked';
+              // Wire sample interactions
+              const viewAll = document.getElementById('viewAllBtn');
+              viewAll?.addEventListener('click', () => {
                 try {
-                  window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'ui5-webc-click' } }, '*');
+                  window.parent && window.parent.postMessage({ type: 'notify', payload: { message: 'ui5-card-view-all' } }, '*');
                 } catch (_) {}
               });
+
             <\/script>
           </div>
         `;
@@ -970,7 +987,7 @@ ${safeContent}`;
           encoding: 'text',
           metadata: {
             title: 'UI5 Web Components – PoC',
-            'mcpui.dev/ui-preferred-frame-size': ['100%', '220px']
+            'mcpui.dev/ui-preferred-frame-size': ['100%', '280px']
           }
         });
         return res.json({ type: 'resource', resource: ui.resource });

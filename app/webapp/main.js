@@ -1491,7 +1491,7 @@ sap.ui.define([
                     const data = await res.json();
                     const uiId = `mcpui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
 
-                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:220px;height:220px;"></ui-resource-renderer>`;
+                    const html = `<ui-resource-renderer id="${uiId}" data-uiid="${uiId}" style="display:block;width:100%;max-width:100%;min-height:280px;height:280px;"></ui-resource-renderer>`;
                     chatManager.addMessage("assistant", html);
 
                     setTimeout(async () => {
