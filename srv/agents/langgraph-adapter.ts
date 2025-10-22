@@ -773,17 +773,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
             images.push({ name: path.basename(abs), mime, rel: rel.split(path.sep).join('/') });
           }
 
-          // Vision descriptions for each image (compact)
-          const descriptions: string[] = [];
-          for (const img of images) {
-            try {
-              const abs = path.resolve(attachmentsRoot, img.rel);
-              const vr = await analyzeImageAttachment(abs, { maxTokens: 120 });
-              descriptions.push(vr?.description ? String(vr.description) : '');
-            } catch (_) {
-              descriptions.push('');
-            }
-          }
+          // Skip generating image descriptions to improve performance.
 
           const itemHtml = images
             .map((img, idx) => {
@@ -800,7 +790,6 @@ export class LangGraphAgentAdapter implements AgentAdapter {
             html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
             .card-shell { font-family: var(--sapFontFamily, Arial, sans-serif); font-size: var(--sapFontSize, 14px); color: var(--sapTextColor, #1d2d3e); padding: 0; margin: 0; }
             ui5-card { width: 100%; box-sizing: border-box; }
-            #captionArea { padding: 6px 2px 8px; color: var(--sapContent_LabelColor, #556b82); font-size: 12px; line-height: 1.35; }
           </style>
           <div class="card-shell">
             <ui5-card id="attCard" accessible-name="Attachments gallery">
@@ -808,7 +797,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
                 <span style="font-weight:600; color: var(--sapTitleColor, #1d2d3e);">${title}</span>
                 <span style="color: var(--sapContent_LabelColor, #556b82); font-size:12px;">(${images.length})</span>
               </div>
-              ${images.length ? `<ui5-media-gallery id="gallery" show-all-thumbnails layout="Vertical">${itemHtml}</ui5-media-gallery><div id="captionArea" ></div>` : emptyHtml}
+              ${images.length ? `<ui5-media-gallery id="gallery" show-all-thumbnails layout="Vertical">${itemHtml}</ui5-media-gallery>` : emptyHtml}
             </ui5-card>
             <script type="module">
               import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
@@ -816,12 +805,8 @@ export class LangGraphAgentAdapter implements AgentAdapter {
               import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/Assets.js';
               import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/MediaGallery.js';
               import 'https://esm.sh/@ui5/webcomponents-fiori@1.24.0/dist/MediaGalleryItem.js';
-              const descriptions = ${JSON.stringify(descriptions)};
               const post = (type, payload) => { try { window.parent && window.parent.postMessage({ type, payload }, '*'); } catch (_) {} };
               const gallery = document.getElementById('gallery');
-              const captionArea = document.getElementById('captionArea');
-              const updateCaption = (idx) => { try { if (captionArea) captionArea.textContent = (descriptions[idx] || ''); } catch(_) {} };
-              if (descriptions && descriptions.length) updateCaption(0);
               if (gallery) {
                 gallery.addEventListener('click', (e) => {
                   const item = e.target?.closest?.('ui5-media-gallery-item');
@@ -829,15 +814,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
                     const name = item.getAttribute('data-name');
                     const path = item.getAttribute('data-path');
                     post('tool', { toolName: 'attachment.open', params: { name, path } });
-                    const items = Array.from(gallery.querySelectorAll('ui5-media-gallery-item'));
-                    const idx = items.indexOf(item);
-                    if (idx >= 0) updateCaption(idx);
                   }
-                });
-                gallery.addEventListener('selection-change', (e) => {
-                  const d = e?.detail || {};
-                  const idx = (typeof d.selectedIndex === 'number') ? d.selectedIndex : (typeof d.itemIndex === 'number' ? d.itemIndex : 0);
-                  updateCaption(idx);
                 });
               }
               try {
@@ -1007,7 +984,7 @@ export class LangGraphAgentAdapter implements AgentAdapter {
   <script type="module">
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
-    import 'https://cdn.jsdelivr.net/npm/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+    import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Tab.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Table.js';
     import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/TableRow.js';
