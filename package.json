@@ -58,7 +58,9 @@
     "server": {
       "body_parser": {
         "limit": "10mb"
-      }
+      },
+      "hostname": "localhost",
+      "port": 9999
     },
     "requires": {
       "db": {
