@@ -1,4 +1,5 @@
 import { loadMcpTools } from '@langchain/mcp-adapters';
+import cds from '@sap/cds';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { AzureOpenAiChatClient } from '@sap-ai-sdk/langchain';
 import { OrchestrationClient } from '@sap-ai-sdk/langchain';
@@ -14,6 +15,32 @@ import type { AgentAdapter, AgentCallOptions, AgentCallResult } from './agent-ad
 import { analyzeImageAttachment } from '../utils/vision.js';
 import { promises as fs } from 'fs';
 import path from 'path';
+
+// Resolve an absolute public base URL for building stable iframe/image URLs.
+// Priority:
+// 1) CLAIMAI_PUBLIC_BASE_URL (e.g., https://myhost:1234)
+// 2) cds.env.server.hostname/port (fallback to localhost:9999)
+function resolvePublicBaseUrl(): string {
+  const rawEnv = (process.env.CLAIMAI_PUBLIC_BASE_URL || '').trim();
+  if (rawEnv) {
+    try {
+      const u = new URL(rawEnv.includes('://') ? rawEnv : `http://${rawEnv}`);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // Best effort fallback: assume it's a host:port
+      return rawEnv.startsWith('http') ? rawEnv : `http://${rawEnv}`;
+    }
+  }
+  try {
+    const cfg: any = (cds as any)?.env?.server || (cds as any)?.env?.serve || {};
+    let host = cfg.hostname || cfg.host || 'localhost';
+    let port = Number(cfg.port) || 9999;
+    if (host === '0.0.0.0' || host === '::') host = 'localhost';
+    return `http://${host}:${port}`;
+  } catch {
+    return 'http://localhost:9999';
+  }
+}
 
 const isTruthy = (value: string | undefined): boolean => {
   if (!value) return false;
@@ -775,11 +802,12 @@ export class LangGraphAgentAdapter implements AgentAdapter {
 
           // Skip generating image descriptions to improve performance.
 
+          const baseUrl = resolvePublicBaseUrl();
           const itemHtml = images
             .map((img, idx) => {
               const safeAlt = img.name.replace(/\"/g, '&quot;');
-              const src = `/service/claims/ui/attachment?file=${encodeURIComponent(img.rel)}`;
-              return `<ui5-media-gallery-item data-name=\"${safeAlt}\" data-path=\"${img.rel}\" data-index=\"${idx}\"><img src=\"${src}\" alt=\"${safeAlt}\" loading=\"lazy\" style=\"max-width:100%;height:auto;display:block\" /></ui5-media-gallery-item>`;
+              const src = `${baseUrl}/service/claims/ui/attachment?file=${encodeURIComponent(img.rel)}`;
+              return `<ui5-media-gallery-item data-name=\"${safeAlt}\" data-path=\"${img.rel}\" data-index=\"${idx}\"><img src=\"${src}\" alt=\"${safeAlt}\" loading=\"eager\" style=\"max-width:100%;height:auto;display:block\" /></ui5-media-gallery-item>`;
             })
             .join('\n');
 
@@ -949,11 +977,12 @@ export class LangGraphAgentAdapter implements AgentAdapter {
             }
           } catch { relForDownload = null; }
 
+          const baseUrl = resolvePublicBaseUrl();
           const clientModel = {
             fileName,
             fileAbsolutePath: absPath,
             maxRows,
-            downloadUrl: relForDownload ? `/service/claims/ui/attachment?file=${encodeURIComponent(relForDownload)}` : null,
+            downloadUrl: relForDownload ? `${baseUrl}/service/claims/ui/attachment?file=${encodeURIComponent(relForDownload)}` : null,
             sheets: prepared,
           };
 
