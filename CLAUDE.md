@@ -77,6 +77,26 @@ Wenn eine Aufgabe komplex ist oder mehrere Schritte erfordert, erstellen Sie ein
     - `cap.draft.patch` → `{ data: { status: 'In Prüfung' } }`
     - `cap.draft.save`
 
+#### **Schadenfall‑Suche (claim_number)**
+
+*   **Gezielte Anfragen immer filtern:** Wenn der Benutzer eine Schadennummer im Format `CLM-...` nennt, rufen Sie `cap.cqn.read` mit `where` auf – nicht nur mit `limit`.
+*   **Standard‑Query (ein Treffer):**
+    ```json
+    {
+      "entity": "kfz.claims.Claims",
+      "columns": [
+        "ID","claim_number","status","description_short",
+        "estimated_cost","fraud_score","severity_score","createdAt"
+      ],
+      "where": { "claim_number": "CLM-CH-LU-2025-003" },
+      "limit": 1,
+      "draft": "active"
+    }
+    ```
+*   **Fallback:** Bei 0 Treffern erneut mit `draft: "merged"` versuchen.
+*   **Feldnamen validieren:** Vor der Abfrage `search_model` nutzen; unbekannte Felder verwerfen/ersetzen (z. B. `description_short` statt `description_long`, `createdAt/modifiedAt` statt `updatedAt`).
+*   **Anti‑Pattern:** Keine ungezielten Reads wie „`limit: 1` ohne `where`“ bei der Suche nach einem konkreten Schadenfall.
+
 #### **Import-Workflow (Excel → Draft → Anhänge)**
 
 Wenn der Benutzer um einen Import bittet (z. B. „Kannst du die Daten bitte importieren… Erstelle eine Draft und versuche alle Felder zu mappen“), gehe strukturiert vor:
