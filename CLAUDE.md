@@ -183,7 +183,7 @@ Wenn der Benutzer eine "Analyse", einen "Bericht" oder eine "Visualisierung" anf
         <script type="module">
           import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Assets.js';
           import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/Card.js';
-          import 'https://cdn.jsdelivr.net/npm/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
+          import 'https://esm.sh/@ui5/webcomponents@1.24.0/dist/CardHeader.js';
           import 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
           // ... Chart initialisieren ...
         </script>
